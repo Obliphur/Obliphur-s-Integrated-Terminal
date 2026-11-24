@@ -3,6 +3,7 @@
 import configparser
 import ctypes
 import functools
+import json
 import os
 import platform
 import re
@@ -10,7 +11,9 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
+import uuid
 import webbrowser
 from pathlib import Path
 
@@ -29,6 +32,115 @@ CLI_INSTALLERS = {
     # Antigravity CLI 随官方安装器发布，不存在可验证的官方 npm 包。
     "antigravity": ("Antigravity CLI", None, "agy"),
 }
+
+
+def _obsidian_config_path():
+    appdata = os.environ.get("APPDATA")
+    return Path(appdata) / "obsidian" / "obsidian.json" if appdata else None
+
+
+def _obsidian_running():
+    if os.name != "nt":
+        return False
+    from ctypes import wintypes
+
+    class _PE(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
+                    ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PE)]
+    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PE)]
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return False
+    try:
+        entry = _PE()
+        entry.dwSize = ctypes.sizeof(_PE)
+        ok = k32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            if str(entry.szExeFile).lower() == "obsidian.exe":
+                return True
+            ok = k32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        k32.CloseHandle(snap)
+    return False
+
+
+def _norm_path(path):
+    return os.path.normcase(os.path.normpath(str(Path(path).resolve())))
+
+
+def _find_obsidian_vault(vaults, target):
+    tnorm = _norm_path(target)
+    best = None
+    best_len = -1
+    for vault_id, entry in vaults.items():
+        if not isinstance(entry, dict) or not entry.get("path"):
+            continue
+        try:
+            vpath = Path(entry["path"]).resolve()
+            vnorm = _norm_path(vpath)
+            if os.path.commonpath([tnorm, vnorm]) == vnorm and len(vnorm) > best_len:
+                best = (str(vault_id), vpath)
+                best_len = len(vnorm)
+        except (OSError, ValueError):
+            continue
+    return best
+
+
+def _infer_obsidian_vault_root(target):
+    if target.is_dir() or (not target.exists() and target.suffix.lower() != ".md"):
+        return target
+    for parent in target.parents:
+        if (parent / ".oit_kb").is_dir() or (parent / ".obsidian").is_dir():
+            return parent
+    return target.parent
+
+
+def _ensure_obsidian_uri(path):
+    target = Path(path).resolve()
+    cfg_path = _obsidian_config_path()
+    if cfg_path is None:
+        return "obsidian://open?path=" + urllib.parse.quote(str(target), safe="")
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.is_file() else {}
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    vaults = data.get("vaults")
+    if not isinstance(vaults, dict):
+        vaults = {}
+        data["vaults"] = vaults
+    match = _find_obsidian_vault(vaults, target)
+    if match is None:
+        vault_root = _infer_obsidian_vault_root(target)
+        if _obsidian_running():
+            raise ValueError(tr(
+                "该知识库目录尚未在 Obsidian 中注册，且 Obsidian 正在运行。请先关闭 Obsidian 后重试，或在 Obsidian 中打开文件夹：{path}",
+                path=str(vault_root),
+            ))
+        vault_root.mkdir(parents=True, exist_ok=True)
+        vault_id = uuid.uuid4().hex[:16]
+        while vault_id in vaults:
+            vault_id = uuid.uuid4().hex[:16]
+        vaults[vault_id] = {"path": str(vault_root), "ts": int(time.time() * 1000)}
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cfg_path.with_name(cfg_path.name + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, cfg_path)
+        match = (vault_id, vault_root)
+    vault_id, vault_path = match
+    uri = "obsidian://open?vault=" + urllib.parse.quote(vault_id, safe="")
+    if _norm_path(target) != _norm_path(vault_path) and not target.is_dir():
+        rel = os.path.relpath(str(target), str(vault_path)).replace("\\", "/")
+        uri += "&file=" + urllib.parse.quote(rel, safe="")
+    return uri
 
 
 def _official_url(url):
@@ -235,9 +347,7 @@ class ExternalSoftware:
 
     def open_obsidian(self, path=None):
         """直接启动识别到的程序；非默认安装仍可通过已注册的 URI 打开。"""
-        uri = "obsidian://open"
-        if path is not None:
-            uri += "?path=" + urllib.parse.quote(str(Path(path).resolve()), safe="")
+        uri = _ensure_obsidian_uri(path) if path is not None else "obsidian://open"
         directory = self.obsidian_dir
         if directory:
             subprocess.Popen([os.path.join(directory, "Obsidian.exe"), uri], creationflags=NO_WINDOW)

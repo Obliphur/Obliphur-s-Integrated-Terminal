@@ -52,6 +52,56 @@ auto_obsidian = E.ExternalSoftware(str(base / "auto-data"))
 with patch.dict(os.environ, {"LOCALAPPDATA": str(base / "LocalAppData")}, clear=False):
     assert auto_obsidian.obsidian_dir == str(local_default)
 
+import json as _json
+appdata_dir = base / "AppData"
+obs_cfg = appdata_dir / "obsidian" / "obsidian.json"
+obs_cfg.parent.mkdir(parents=True)
+existing_vault = base / "existing-vault"
+existing_vault.mkdir()
+obs_cfg.write_text(_json.dumps({"vaults": {"1122334455667788": {"path": str(existing_vault), "ts": 1000, "open": True}}}), encoding="utf-8")
+kb_vault = base / "knowledge_vault"
+(kb_vault / ".oit_kb").mkdir(parents=True)
+card_md = kb_vault / "技巧性" / "数学" / "示例.md"
+card_md.parent.mkdir(parents=True)
+card_md.write_text("# test\n", encoding="utf-8")
+launched = []
+def fake_popen(args, **kwargs):
+    launched.append(args)
+
+with patch.dict(os.environ, {"APPDATA": str(appdata_dir)}, clear=False), \
+        patch.object(E.subprocess, "Popen", side_effect=fake_popen):
+    # 未注册且 Obsidian 运行中：不修改 obsidian.json，不启动，报明确提示
+    with patch.object(E, "_obsidian_running", return_value=True):
+        try:
+            u.open_obsidian(kb_vault)
+            raise AssertionError("Obsidian 运行中打开未注册库应提示关闭或手动添加")
+        except ValueError as err:
+            assert str(kb_vault.resolve()) in str(err)
+    assert not launched
+    assert len(_json.loads(obs_cfg.read_text(encoding="utf-8"))["vaults"]) == 1
+
+    # 未注册且 Obsidian 未运行：自动注册到 obsidian.json 并以 vault ID 启动
+    with patch.object(E, "_obsidian_running", return_value=False):
+        u.open_obsidian(kb_vault)
+    cfg_after = _json.loads(obs_cfg.read_text(encoding="utf-8"))
+    assert "1122334455667788" in cfg_after["vaults"]
+    new_ids = [k for k in cfg_after["vaults"] if k != "1122334455667788"]
+    assert len(new_ids) == 1
+    new_id = new_ids[0]
+    assert Path(cfg_after["vaults"][new_id]["path"]).resolve() == kb_vault.resolve()
+    assert launched[-1] == [str(obsidian_dir / "Obsidian.exe"), f"obsidian://open?vault={new_id}"]
+
+    # 已注册库内文件（即使 Obsidian 正在运行）：直接用 vault + file URI 打开
+    with patch.object(E, "_obsidian_running", return_value=True):
+        u.open_obsidian(card_md)
+    assert launched[-1][0] == str(obsidian_dir / "Obsidian.exe")
+    assert launched[-1][1].startswith(f"obsidian://open?vault={new_id}&file=")
+    assert "技巧性" not in launched[-1][1]  # 已 URL 编码
+
+    # path=None 直接打开
+    u.open_obsidian(None)
+    assert launched[-1] == [str(obsidian_dir / "Obsidian.exe"), "obsidian://open"]
+
 for url in ("http://bitsum.com/x", "https://bitsum.com.evil.test/x", "https://evil.test/x", "https://user@bitsum.com/x"):
     assert not E._official_url(url)
     try:

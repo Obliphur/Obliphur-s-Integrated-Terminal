@@ -691,6 +691,7 @@ EN = {
     "无法打开 Obsidian，请在「额外功能」中选择安装目录。": "Could not open Obsidian. Choose its installation folder under Extras.",
     "Obsidian 安装目录: {path}": "Obsidian installation folder: {path}",
     "未识别到 Obsidian，请选择安装目录。": "Obsidian was not detected. Choose its installation folder.",
+    "该知识库目录尚未在 Obsidian 中注册，且 Obsidian 正在运行。请先关闭 Obsidian 后重试，或在 Obsidian 中打开文件夹：{path}": "This knowledge vault is not registered in Obsidian yet and Obsidian is currently running. Close Obsidian and try again, or open the folder in Obsidian: {path}",
     "知识库帮助": "Knowledge base help",
     "帮助": "Help",
     "选择文件夹": "Choose folder",
