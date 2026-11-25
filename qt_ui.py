@@ -16,6 +16,7 @@ from datetime import datetime
 import config
 from config import COLORS, IDLE, ON_BREAK, READY_BREAK, RUNNING
 from i18n import is_en, tr
+from settings_manager import SETTINGS_PAGES, page_specs
 
 try:
     from PySide6.QtCore import QTimer, Qt
@@ -25,7 +26,10 @@ try:
         QHBoxLayout,
         QGridLayout,
         QLabel,
+        QComboBox,
+        QLineEdit,
         QListWidget,
+        QScrollArea,
         QTabWidget,
         QMainWindow,
         QPushButton,
@@ -267,6 +271,191 @@ if QApplication is not None:
             if not getattr(dm, "violations", None):
                 self.violations.addItem(tr("暂无违规记录"))
 
+    class QtSettingsPage(QWidget):
+        """Qt settings editor using SettingsManager's validation and staging."""
+
+        def __init__(self, model, parent=None):
+            super().__init__(parent)
+            self.model = model
+            self.sm = getattr(model, "settings", None)
+            self._rows = {}
+            self._loading = False
+            root = QVBoxLayout(self)
+            root.setContentsMargins(28, 22, 28, 18)
+            title = QLabel(tr("⚙  设置"), self)
+            title.setObjectName("pageTitle")
+            root.addWidget(title)
+            self.tabs = QTabWidget(self)
+            root.addWidget(self.tabs, 1)
+            for key, label in SETTINGS_PAGES:
+                page = self._make_page(key)
+                self.tabs.addTab(page, tr(label))
+            self.notice = QLabel(self)
+            self.notice.setWordWrap(True)
+            self.notice.setObjectName("settingsNotice")
+            root.addWidget(self.notice)
+            self.refresh()
+
+        def _make_page(self, page_key):
+            scroll = QScrollArea(self)
+            scroll.setWidgetResizable(True)
+            body = QWidget(scroll)
+            layout = QVBoxLayout(body)
+            layout.setContentsMargins(8, 8, 8, 8)
+            choices, nums = page_specs(page_key)
+            for spec in choices:
+                self._add_choice(layout, spec)
+            for spec in nums:
+                self._add_number(layout, spec)
+            layout.addStretch(1)
+            scroll.setWidget(body)
+            return scroll
+
+        def _row_layout(self, layout, label_text):
+            row = QHBoxLayout()
+            name = QLabel(tr(label_text), self)
+            name.setMinimumWidth(190)
+            name.setWordWrap(True)
+            row.addWidget(name)
+            layout.addLayout(row)
+            return row
+
+        def _add_choice(self, layout, spec):
+            key = spec["key"]
+            row = self._row_layout(layout, spec["label"])
+            combo = QComboBox(self)
+            values = list(self.sm.labeled_values(key, translate=True)) if self.sm else []
+            for raw, label in values:
+                combo.addItem(label, raw)
+            if not values:
+                combo.setEditable(True)
+            row.addWidget(combo, 1)
+            apply_button = QPushButton(tr("提交"), self)
+            apply_button.clicked.connect(lambda _checked=False, k=key: self._stage_choice(k))
+            row.addWidget(apply_button)
+            pending = QLabel(self)
+            pending.setObjectName("settingsPending")
+            pending.setWordWrap(True)
+            layout.addWidget(pending)
+            self._rows[key] = {"spec": spec, "combo": combo, "pending": pending, "input": combo}
+
+        def _add_number(self, layout, spec):
+            key = spec["key"]
+            row = self._row_layout(layout, spec.get("short") or spec["label"])
+            entry = QLineEdit(self)
+            entry.setMinimumWidth(110)
+            row.addWidget(entry)
+            unit = QLabel(str(spec.get("unit") or ""), self)
+            row.addWidget(unit)
+            apply_button = QPushButton(tr("提交"), self)
+            apply_button.clicked.connect(lambda _checked=False, k=key: self._stage_number(k))
+            row.addWidget(apply_button)
+            current = QLabel(self)
+            current.setObjectName("settingsCurrent")
+            row.addWidget(current, 1)
+            pending = QLabel(self)
+            pending.setObjectName("settingsPending")
+            pending.setWordWrap(True)
+            layout.addWidget(pending)
+            self._rows[key] = {"spec": spec, "entry": entry, "current": current, "pending": pending, "input": entry}
+
+        def _choice_value(self, key):
+            row = self._rows[key]
+            combo = row["combo"]
+            value = combo.currentData()
+            return combo.currentText() if value is None else value
+
+        def _stage_choice(self, key):
+            if self._loading:
+                return
+            self._stage(key, self._choice_value(key))
+
+        def _stage_number(self, key):
+            if self._loading:
+                return
+            spec = self._rows[key]["spec"]
+            text = self._rows[key]["entry"].text().strip()
+            try:
+                if spec.get("time"):
+                    hh, mm = text.split(":", 1)
+                    raw = int(hh) * 60 + int(mm)
+                else:
+                    value = float(text)
+                    raw = value * float(spec.get("scale", 1))
+                    if spec.get("integer"):
+                        raw = int(round(raw))
+            except (TypeError, ValueError):
+                self.notice.setText(tr("{label}: 请填写有效数值.").format(label=tr(spec["label"])))
+                return
+            self._stage(key, raw)
+
+        def _stage(self, key, value):
+            status, message = self.sm.stage(key, value)
+            if status == "invalid":
+                self.notice.setText(str(message))
+                return
+            if hasattr(self.model, "on_settings_changed"):
+                self.model.on_settings_changed(status, key)
+            if status == "instant":
+                hooks = {
+                    "LANGUAGE": "on_language_changed",
+                    "FONT_SCALE": "on_font_scale_changed",
+                    "THEME": "on_theme_changed",
+                    "CONTRACT_THEME": "rebuild_ui",
+                }
+                hook = getattr(self.model, hooks.get(key, ""), None)
+                if callable(hook):
+                    hook()
+                # Theme and font changes update config in the model; repaint
+                # the visible Qt shell without rebuilding the window object.
+                host = self.window()
+                if hasattr(host, "_apply_palette"):
+                    host._apply_palette()
+                self._apply_retranslated_text()
+            self.notice.setText(str(message or tr("已保存.")))
+            self.refresh()
+
+        def _apply_retranslated_text(self):
+            for i, (_key, label) in enumerate(SETTINGS_PAGES):
+                self.tabs.setTabText(i, tr(label))
+            for row in self._rows.values():
+                spec = row["spec"]
+                if "combo" in row:
+                    combo = row["combo"]
+                    for i in range(combo.count()):
+                        raw = combo.itemData(i)
+                        label = self.sm.label_for(spec["key"], raw, translate=True)
+                        if label is not None:
+                            combo.setItemText(i, label)
+
+        def refresh(self):
+            if self.sm is None:
+                return
+            self._loading = True
+            try:
+                for key, row in self._rows.items():
+                    spec = row["spec"]
+                    current = self.sm.value(key)
+                    if "combo" in row:
+                        combo = row["combo"]
+                        idx = combo.findData(current)
+                        if idx >= 0:
+                            combo.setCurrentIndex(idx)
+                        elif combo.isEditable():
+                            combo.setEditText(str(current))
+                    else:
+                        row["entry"].setText(self.sm.ui_number(key))
+                        row["current"].setText(tr("当前: {value}").format(value=self.sm.display(key)))
+                    pending = self.sm.staged(key)
+                    row["pending"].setText(
+                        tr("待生效: {value} · {when}").format(
+                            value=self.sm.display_value(key, pending["value"]),
+                            when=self.sm.apply_at_text(key)) if pending else "")
+                n = self.sm.staged_count()
+                self.notice.setText(tr("待生效修改 {n} 项").format(n=n) if n else tr("当前没有待生效的修改."))
+            finally:
+                self._loading = False
+
     class QtOitWindow(QMainWindow):
         """Visible Qt shell backed by the existing OIT application model."""
 
@@ -318,7 +507,8 @@ if QApplication is not None:
             for key in order:
                 if key != "timer":
                     page = (QtCalendarPage(self.model, self._stack) if key == "cal" else
-                            QtStatsPage(self.model, self._stack) if key == "stats" else QLabel(
+                            QtStatsPage(self.model, self._stack) if key == "stats" else
+                            QtSettingsPage(self.model, self._stack) if key == "settings" else QLabel(
                         tr("正在迁移此页面到 Qt6"), self._stack))
                     if isinstance(page, QLabel):
                         page.setAlignment(Qt.AlignCenter)
@@ -399,6 +589,8 @@ if QApplication is not None:
             if key == "cal":
                 self._pages[key].refresh()
             elif key == "stats":
+                self._pages[key].refresh()
+            elif key == "settings":
                 self._pages[key].refresh()
             for name, button in self._nav.items():
                 button.setProperty("active", name == key)
