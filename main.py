@@ -94,8 +94,6 @@ def main():
     except Exception:
         use_qt = False
     root = tk.Tk()
-    if use_qt:
-        root.withdraw()
     app = BreakTimerApp(root)
     if use_qt:
         qt_ui.run(app, root)

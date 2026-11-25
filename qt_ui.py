@@ -20,8 +20,8 @@ from i18n import is_en, tr
 from settings_manager import SETTINGS_PAGES, page_specs
 
 try:
-    from PySide6.QtCore import QTimer, Qt
-    from PySide6.QtGui import QCloseEvent, QColor, QFontDatabase, QPixmap
+    from PySide6.QtCore import QTimer, QSize, Qt
+    from PySide6.QtGui import QCloseEvent, QColor, QFont, QFontDatabase, QFontMetrics, QPainter, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QHBoxLayout,
@@ -62,6 +62,137 @@ def _tk_text(widget, default: str = "") -> str:
 
 
 if QApplication is not None:
+    class QtFocusTimeline(QWidget):
+        """Seven-day focus chart matching the original statistics timeline."""
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.rows = []
+            self.setMinimumHeight(config.scaled(280))
+            self.setMouseTracking(True)
+
+        def set_rows(self, rows):
+            self.rows = list(rows)
+            self.update()
+
+        def sizeHint(self):
+            return QSize(config.scaled(900), config.scaled(330))
+
+        def paintEvent(self, _event):
+            if not self.rows:
+                return
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            width, height = self.width(), self.height()
+            left, right = config.scaled(118), config.scaled(128)
+            top, bottom = config.scaled(28), config.scaled(8)
+            x0, x1 = left, max(left + config.scaled(240), width - right)
+            slot = (x1 - x0) / 24.0
+            gap = config.scaled(12)
+            row_h = max(config.scaled(26), min(config.scaled(48),
+                           (height - top - bottom - gap * (len(self.rows) - 1)) / len(self.rows)))
+            colors = getattr(config, "COLORS", {})
+            study = QColor(colors.get("focus_study", "#5aa3d6"))
+            rest = QColor(colors.get("focus_break", "#e3a24f"))
+            empty = QColor(colors.get("chart_empty", "#39434b"))
+            future = QColor(colors.get("chart_future", "#20282f"))
+            text = QColor(colors.get("text", "#ffffff"))
+            muted = QColor(colors.get("text_dim", "#a0a8af"))
+            painter.setFont(self.font())
+            for hour in range(0, 25, 3):
+                x = x0 + hour * slot
+                painter.setPen(muted)
+                painter.drawText(int(x), int(top - config.scaled(8)), f"{hour:02d}")
+            now = datetime.now()
+            for index, (day, hours, label) in enumerate(self.rows):
+                y = top + index * (row_h + gap)
+                painter.setPen(text if index == 0 else muted)
+                painter.drawText(config.scaled(12), int(y + row_h * 0.65), label)
+                total_study = total_rest = 0.0
+                for hour, (focus_seconds, break_seconds) in enumerate(hours):
+                    x = x0 + hour * slot + slot * 0.11
+                    bar_w = max(2.0, slot * 0.78)
+                    start = day.replace(hour=hour, minute=0, second=0, microsecond=0)
+                    painter.fillRect(int(x), int(y), max(1, int(bar_w)), int(row_h),
+                                     future if start > now else empty)
+                    focus_h = row_h * max(0.0, min(3600.0, focus_seconds)) / 3600.0
+                    break_h = row_h * max(0.0, min(3600.0 - focus_seconds, break_seconds)) / 3600.0
+                    if focus_h:
+                        painter.fillRect(int(x), int(y + row_h - focus_h), max(1, int(bar_w)), int(focus_h), study)
+                    if break_h:
+                        painter.fillRect(int(x), int(y + row_h - focus_h - break_h), max(1, int(bar_w)), int(break_h), rest)
+                    total_study += focus_seconds
+                    total_rest += break_seconds
+                painter.setPen(study)
+                painter.drawText(int(x1 + config.scaled(10)), int(y + row_h * 0.38),
+                                 tr("专注 {t}").format(t=self._fmt(total_study)))
+                painter.setPen(rest)
+                painter.drawText(int(x1 + config.scaled(10)), int(y + row_h * 0.82),
+                                 tr("休息 {t}").format(t=self._fmt(total_rest)))
+
+        @staticmethod
+        def _fmt(seconds):
+            minutes = int(round(max(0.0, seconds) / 60.0))
+            return tr("{h}小时{m:02d}分").format(h=minutes // 60, m=minutes % 60)
+
+    class QtGlowText(QLabel):
+        """Match the instruction code's original h2 font and eight-way glow."""
+
+        _OFFSETS = ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1))
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._font_spec = config.font("h2", bold=True)
+            self._foreground = COLORS.get("accent", "#A5F3FF")
+            self._glow = "#2C6670"
+            self._reserve = ""
+            self.setAlignment(Qt.AlignCenter)
+
+        def set_glow_text(self, text, reserve=""):
+            self.setText(text)
+            self._reserve = reserve or text
+            self.updateGeometry()
+            self.update()
+
+        def set_accent(self, color):
+            self._foreground = color
+            self.update()
+
+        def set_font_spec(self, spec):
+            if tuple(spec) == tuple(self._font_spec):
+                return
+            self._font_spec = spec
+            self.updateGeometry()
+            self.update()
+
+        def _font(self):
+            family, size, *style = self._font_spec
+            font = QFont(str(family))
+            if int(size) < 0:
+                font.setPixelSize(abs(int(size)))
+            else:
+                font.setPointSize(max(1, int(size)))
+            if style and style[0] == "bold":
+                font.setBold(True)
+            return font
+
+        def sizeHint(self):
+            font = self._font()
+            metrics = QFontMetrics(font)
+            width = max(metrics.horizontalAdvance(self.text()), metrics.horizontalAdvance(self._reserve))
+            return QSize(width + 8, metrics.height() + 8)
+
+        def paintEvent(self, _event):
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.TextAntialiasing, True)
+            painter.setFont(self._font())
+            rect = self.rect().adjusted(4, 4, -4, -4)
+            for dx, dy in self._OFFSETS:
+                painter.setPen(QColor(self._glow))
+                painter.drawText(rect.translated(dx, dy), Qt.AlignCenter, self.text())
+            painter.setPen(QColor(self._foreground))
+            painter.drawText(rect, Qt.AlignCenter, self.text())
+
     class QtCalendarPage(QWidget):
         """Qt calendar view backed by the existing DataManager calendar rules."""
 
@@ -203,11 +334,26 @@ if QApplication is not None:
         def __init__(self, model, parent=None):
             super().__init__(parent)
             self.model = model
+            self.legacy = getattr(model, "pages", {}).get("stats")
+            self._updating = False
             root = QVBoxLayout(self)
             root.setContentsMargins(28, 22, 28, 22)
             title = QLabel(tr("📊  统计"), self)
             title.setObjectName("pageTitle")
             root.addWidget(title)
+            controls = QHBoxLayout()
+            self.month = QComboBox(self)
+            self.month.addItem(tr("本月"), "this")
+            self.month.addItem(tr("上月"), "last")
+            self.mode = QComboBox(self)
+            self.mode.addItem(tr("占比"), "pct")
+            self.mode.addItem(tr("总时间"), "total")
+            self.device = QComboBox(self)
+            controls.addWidget(self.month)
+            controls.addWidget(self.mode)
+            controls.addWidget(self.device)
+            controls.addStretch(1)
+            root.addLayout(controls)
             self.tabs = QTabWidget(self)
             root.addWidget(self.tabs, 1)
             self.summary = QWidget(self.tabs)
@@ -223,10 +369,41 @@ if QApplication is not None:
             summary_layout.addStretch(1)
             self.tabs.addTab(self.summary, tr("概览"))
 
+            self.journal_note = QLabel(self.tabs)
+            self.journal_note.setWordWrap(True)
+            self.journal = QListWidget(self.tabs)
+            journal_page = QWidget(self.tabs)
+            journal_layout = QVBoxLayout(journal_page)
+            journal_layout.addWidget(self.journal_note)
+            journal_layout.addWidget(self.journal, 1)
+            self.tabs.addTab(journal_page, tr("日志"))
+
+            self.activity = self._make_table((tr("时段 / 项目"), tr("时长"), tr("占比")))
+            self.tabs.addTab(self.activity, tr("整点记录"))
+            self.network = self._make_table((tr("联网理由"), tr("时长"), tr("占比")))
+            self.tabs.addTab(self.network, tr("联网理由"))
+            self.focus = QtFocusTimeline(self.tabs)
+            self.tabs.addTab(self.focus, tr("专注计时"))
+            self.windows = self._make_table((tr("程序 / 设备"), tr("时长"), tr("占比")))
+            self.tabs.addTab(self.windows, tr("窗口"))
+
             self.contracts = QListWidget(self.tabs)
             self.violations = QListWidget(self.tabs)
             self.tabs.addTab(self.contracts, tr("合约记录"))
             self.tabs.addTab(self.violations, tr("违规记录"))
+            self.month.currentIndexChanged.connect(self.refresh)
+            self.mode.currentIndexChanged.connect(self.refresh)
+            self.device.currentIndexChanged.connect(self.refresh)
+            self.tabs.currentChanged.connect(self.refresh)
+            self.tabs.setTabEnabled(2, bool(getattr(getattr(model, "dm", None), "hour_enabled", False)))
+
+        def _make_table(self, headers):
+            table = QTableWidget(0, len(headers), self.tabs)
+            table.setHorizontalHeaderLabels(list(headers))
+            table.horizontalHeader().setStretchLastSection(True)
+            table.setEditTriggers(QTableWidget.NoEditTriggers)
+            table.setSelectionBehavior(QTableWidget.SelectRows)
+            return table
 
         def _month_prefixes(self):
             now = datetime.now()
@@ -237,10 +414,37 @@ if QApplication is not None:
                 last = f"{now.year}-{now.month - 1:02d}"
             return this, last
 
-        def refresh(self):
+        def refresh(self, *_):
+            if self._updating:
+                return
+            self._updating = True
+            try:
+                self._refresh()
+            finally:
+                self._updating = False
+
+        def activate(self):
+            target = {"log": 2, "net": 3}.get(getattr(self.legacy, "page", "log"), 2)
+            if not getattr(getattr(self.model, "dm", None), "hour_enabled", False) and target == 2:
+                target = 3
+            self.tabs.setCurrentIndex(target)
+            self.refresh()
+
+        def _refresh(self):
+            latest = getattr(self.model, "pages", {}).get("stats")
+            if latest is not None:
+                self.legacy = latest
             dm = getattr(self.model, "dm", None)
             if dm is None:
                 return
+            legacy = self.legacy
+            if legacy is not None:
+                if legacy.fog() is not None:
+                    self.month.setEnabled(False)
+                else:
+                    self.month.setEnabled(True)
+                self._refresh_device_choices()
+                self._refresh_detail(legacy, dm)
             this, last = self._month_prefixes()
             try:
                 today = float(dm.get_today_hours())
@@ -278,6 +482,107 @@ if QApplication is not None:
                 self.violations.addItem(f"{rec.get('at', '')} · {rec.get('text', '')}")
             if not getattr(dm, "violations", None):
                 self.violations.addItem(tr("暂无违规记录"))
+
+        def _refresh_device_choices(self):
+            legacy = self.legacy
+            if legacy is None:
+                return
+            devices = [("all", tr("全部设备")), *[
+                (key, tr("本机") if key == "self" else name)
+                for key, name in legacy.dm.window_devices()]]
+            previous = legacy.device
+            self.device.blockSignals(True)
+            self.device.clear()
+            for key, name in devices:
+                self.device.addItem(name, key)
+            index = self.device.findData(previous)
+            self.device.setCurrentIndex(max(0, index))
+            self.device.blockSignals(False)
+            self.device.setVisible(self.tabs.currentIndex() == 5 and len(devices) > 2)
+
+        @staticmethod
+        def _duration(seconds):
+            return tr("{h:.1f} 小时").format(h=max(0.0, float(seconds or 0)) / 3600.0)
+
+        def _fill_breakdown(self, table, data):
+            table.setRowCount(0)
+            total = sum(max(0.0, float(value or 0)) for value in data.values())
+            for name, seconds in sorted(data.items(), key=lambda item: -float(item[1] or 0)):
+                seconds = max(0.0, float(seconds or 0))
+                row = table.rowCount()
+                table.insertRow(row)
+                values = (str(name), self._duration(seconds), f"{(seconds / total * 100):.1f}%" if total else "0.0%")
+                for column, value in enumerate(values):
+                    table.setItem(row, column, QTableWidgetItem(value))
+
+        def _refresh_detail(self, legacy, dm):
+            key = {1: "journal", 2: "log", 3: "net", 4: "focus", 5: "window", 6: "contracts", 7: "violations"}.get(
+                self.tabs.currentIndex(), "")
+            if self.tabs.currentIndex() == 0:
+                legacy.page = "log"
+                self.month.setVisible(False)
+                self.mode.setVisible(False)
+                return
+            if key == "journal":
+                self.month.setVisible(False)
+                self.mode.setVisible(False)
+                legacy.page = "journal"
+                legacy.refresh()
+                self.journal_note.setText(_tk_text(legacy.journal_text) + "  " + _tk_text(legacy.journal_note))
+                self.journal.clear()
+                if legacy.fog() is not None:
+                    self.journal.addItem("???")
+                else:
+                    logs = legacy.journal_logs()
+                    for day, text in logs:
+                        item = QListWidgetItem(f"{day}\n{text}")
+                        item.setToolTip(str(text))
+                        self.journal.addItem(item)
+                    if not logs:
+                        self.journal.addItem(tr("还没有日志."))
+                return
+            if key in ("log", "net", "window"):
+                self.month.setVisible(True)
+                self.mode.setVisible(True)
+                legacy.page = key
+                legacy.month = self.month.currentData() or "this"
+                legacy.device = self.device.currentData() or "all"
+                legacy.mode[key] = self.mode.currentData() or "pct"
+                legacy.refresh()
+                this, last = self._month_prefixes()
+                prefix = last if legacy.month == "last" else this
+                data = legacy._data(prefix)
+                self._fill_breakdown({"log": self.activity, "net": self.network, "window": self.windows}[key], data)
+                return
+            if key == "focus":
+                self.month.setVisible(False)
+                self.mode.setVisible(False)
+                legacy.page = "focus"
+                legacy.refresh()
+                fogged = legacy.fog() is not None
+                self.focus.set_rows([
+                    (day, hours, legacy._day_label(day, index == 0, fogged))
+                    for index, (day, hours) in enumerate(legacy._focus_days)
+                ])
+                return
+            if key in ("contracts", "violations"):
+                self.month.setVisible(False)
+                self.mode.setVisible(False)
+                legacy.page = "contracts"
+                legacy.refresh()
+                self.contracts.clear()
+                if key == "contracts":
+                    for (orig, level), terms, _marks, who in legacy._contract_rows_data():
+                        names = " · ".join(f"{term[0]} {tr(contract_rules.BY_ID[term[1]][3])}" for term in terms)
+                        self.contracts.addItem(tr("危机等级 {level}（原始 {orig}）").format(level=level, orig=orig)
+                                               + (f" · {who}" if who else "") + (f"\n{names}" if names else ""))
+                    if not self.contracts.count():
+                        self.contracts.addItem(tr("还没有顺利完成的合约."))
+                self.violations.clear()
+                for row in legacy.violation_log():
+                    self.violations.addItem(f"{row.get('at', '')} · {row.get('text', '')}")
+                if not self.violations.count():
+                    self.violations.addItem(tr("暂无违规记录"))
 
     class QtSettingsPage(QWidget):
         """Qt settings editor using SettingsManager's validation and staging."""
@@ -474,6 +779,8 @@ if QApplication is not None:
             self.model = model
             self.legacy = getattr(model, "pages", {}).get("contract")
             self.page = 0
+            self._contract_palette_key = None
+            self._contract_font_id = -1
             root = QVBoxLayout(self)
             root.setContentsMargins(config.scaled(24), config.scaled(18), config.scaled(24), config.scaled(14))
             header = QHBoxLayout()
@@ -547,7 +854,39 @@ if QApplication is not None:
             for button in (self.reject, self.accept, self.start, self.end):
                 footer.addWidget(button)
             root.addLayout(footer)
+            self.start.setObjectName("contractStart")
+            self.end.setObjectName("contractStart")
+            self.accept.setObjectName("contractStart")
             self.refresh()
+
+        def _apply_contract_palette(self):
+            if self.legacy is None:
+                return
+            palette = self.legacy.P
+            key = (self.legacy.theme, config.CONTRACT_THEME, tuple(sorted(palette.items())))
+            if key == self._contract_palette_key:
+                return
+            self._contract_palette_key = key
+            family, size, *_style = config.contract_font("body")
+            if family == "Unifont" and self._contract_font_id < 0:
+                try:
+                    spec = config.THEMES["urban_will"]["font"]
+                    self._contract_font_id = QFontDatabase.addApplicationFont(config.asset_path(*spec["file"]))
+                except Exception:
+                    pass
+            body_px = abs(int(size)) if int(size) < 0 else max(8, round(float(size) * 96 / 72))
+            self.setStyleSheet(f"""
+                QtContractPage, QWidget {{ background: {palette['bg']}; color: {palette['text']}; font-family: '{family}'; font-size: {body_px}px; }}
+                QTabWidget::pane {{ background: {palette['board']}; border: 1px solid {palette['tile_rim']}; }}
+                QTabBar::tab {{ background: {palette['band']}; color: {palette['band_text']}; padding: {config.scaled(8)}px {config.scaled(12)}px; }}
+                QTabBar::tab:selected {{ background: {palette['tile_on']}; color: {palette['tile_on_text']}; }}
+                QPushButton {{ background: {palette['tile']}; color: {palette['tile_text']}; border: 1px solid {palette['tile_rim']}; }}
+                QPushButton[termState="selected"] {{ background: {palette['tile_on']}; color: {palette['tile_on_text']}; border: 2px solid {palette['tile_on_rim']}; font-weight: 700; }}
+                QPushButton[termState="off"] {{ background: {palette['tile_off']}; color: {palette['tile_off_text']}; border-color: {palette['tile_off_rim']}; }}
+                QPushButton#contractStart {{ background: {palette['start']}; color: {palette['start_text']}; border: 0; font-weight: 700; }}
+                QLabel#contractLive {{ background: {palette['live']}; border: 2px solid {palette['live_rim']}; padding: {config.scaled(12)}px; }}
+                QLabel#contractRules {{ background: {palette['rules']}; color: {palette['dim']}; padding: {config.scaled(8)}px; }}
+            """)
 
         def _set_page(self, page):
             self.page = page
@@ -578,8 +917,12 @@ if QApplication is not None:
             self.refresh()
 
         def refresh(self):
+            latest = getattr(self.model, "pages", {}).get("contract")
+            if latest is not None:
+                self.legacy = latest
             if self.legacy is None:
                 return
+            self._apply_contract_palette()
             self.legacy.refresh()
             c = self.legacy.c
             active = bool(c.active)
@@ -598,10 +941,9 @@ if QApplication is not None:
                     selected = tid in chosen
                     disabled = active or (blocked and not selected)
                     button.setEnabled(not disabled or (active and (tid in c.rand or c.can_lift(tid))))
-                    if selected:
-                        button.setStyleSheet("font-weight: 700; border-width: 2px;")
-                    else:
-                        button.setStyleSheet("")
+                    button.setProperty("termState", "selected" if selected else ("off" if disabled else "normal"))
+                    button.style().unpolish(button)
+                    button.style().polish(button)
             terms = c.terms if active else c.draft
             self.selected.setText(tr("已选词条: ") + (" · ".join(tr(contract_rules.BY_ID[t][3]) for t in terms) or tr("无")))
             self.level.setText(tr("危机等级: {n}").format(n=self.legacy.level()))
@@ -740,6 +1082,9 @@ if QApplication is not None:
             self.refresh()
 
         def refresh(self):
+            latest = getattr(self.model, "pages", {}).get("knowledge")
+            if latest is not None:
+                self.legacy = latest
             if self.legacy is None or self._syncing:
                 return
             self._syncing = True
@@ -848,10 +1193,12 @@ if QApplication is not None:
                 self.mark.setPixmap(pixmap.scaled(config.scaled(128), config.scaled(128), Qt.KeepAspectRatio,
                                                   Qt.SmoothTransformation))
             center.addWidget(self.mark)
-            self.code = QLabel(self)
-            self.code.setObjectName("prescriptCode")
-            self.code.setAlignment(Qt.AlignCenter)
-            center.addWidget(self.code)
+            self.code_box = QWidget(self)
+            self.code_layout = QVBoxLayout(self.code_box)
+            self.code_layout.setContentsMargins(0, 0, 0, 0)
+            self.code_layout.setSpacing(0)
+            self.code_lines = []
+            center.addWidget(self.code_box)
             self.body = QLabel(self)
             self.body.setObjectName("prescriptBody")
             self.body.setAlignment(Qt.AlignCenter)
@@ -905,6 +1252,9 @@ if QApplication is not None:
             self.refresh()
 
         def refresh(self):
+            latest = getattr(self.model, "pages", {}).get("prescript")
+            if latest is not None:
+                self.legacy = latest
             if self.legacy is None:
                 return
             engine = self._engine()
@@ -920,7 +1270,18 @@ if QApplication is not None:
                 codes = [pad_code(str(item.get("code") or "")) for item in self.legacy._fresh_grants()]
                 codes = codes or [pad_code("NONE")]
             self.body.setText(body)
-            self.code.setText("\n".join(codes))
+            while len(self.code_lines) < len(codes):
+                line = QtGlowText(self.code_box)
+                self.code_layout.addWidget(line, 0, Qt.AlignHCenter)
+                self.code_lines.append(line)
+            while len(self.code_lines) > len(codes):
+                line = self.code_lines.pop()
+                self.code_layout.removeWidget(line)
+                line.deleteLater()
+            for line, code in zip(self.code_lines, codes):
+                line.set_accent(COLORS.get("accent", "#A5F3FF"))
+                line.set_font_spec(config.font("h2", bold=True))
+                line.set_glow_text(code, code)
             self.receive.setEnabled(engine.can_draw() and not (current and current.get("type") == "X"))
             editing = bool(current and current.get("type") == "X")
             if editing and not self.editor.isVisible():
@@ -1044,6 +1405,9 @@ if QApplication is not None:
                 self.refresh(force=True)
 
         def refresh(self, force=False):
+            latest = getattr(self.model, "pages", {}).get("comm")
+            if latest is not None:
+                self.legacy = latest
             if self.legacy is None:
                 return
             c = self._comm()
@@ -1280,6 +1644,9 @@ if QApplication is not None:
             self.refresh()
 
         def refresh(self):
+            latest = getattr(self.model, "pages", {}).get("log")
+            if latest is not None:
+                self.legacy = latest
             if self.legacy is None:
                 return
             self._loading = True
@@ -1313,11 +1680,14 @@ if QApplication is not None:
             self._pages = {}
             self._current_key = "timer"
             self._qt_tick = 0
+            self._style_key = None
             self.setWindowTitle(self._title())
             self.setMinimumSize(config.scaled(config.MIN_WINDOW_W), config.scaled(config.MIN_WINDOW_H))
             self.resize(config.scaled(config.WINDOW_W), config.scaled(config.WINDOW_H))
+            self._font_family()
             self._build()
             self._apply_palette()
+            self._style_key = self._style_signature()
             self._timer = QTimer(self)
             self._timer.timeout.connect(self._pump)
             self._timer.start(33)
@@ -1494,7 +1864,6 @@ if QApplication is not None:
                 QPushButton#dangerButton {{ background: {COLORS.get('danger_fill', COLORS.get('danger', accent))}; color: {COLORS.get('on_danger_fill', text)}; border-color: {COLORS.get('danger', accent)}; font-weight: 700; }}
                 QLabel#resetWarning {{ color: {COLORS.get('danger', accent)}; background: {COLORS.get('danger_bg', card)}; border: 1px solid {COLORS.get('danger', accent)}; padding: {config.scaled(12)}px; font-weight: 700; }}
                 QWidget#prescriptPage {{ background: #000000; color: #ffffff; }}
-                QLabel#prescriptCode {{ color: #96c4ec; font-family: Consolas, monospace; font-size: {px('big')}px; font-weight: 700; padding: {config.scaled(10)}px; }}
                 QLabel#prescriptBody {{ color: #ffffff; font-size: {body_px}px; padding: {config.scaled(10)}px; }}
                 QPushButton#prescriptReceive {{ background: #000000; color: #ffffff; border: 0; font-size: {button_px}px; }}
                 QPushButton#prescriptExit {{ background: #000000; color: #2a3535; border: 0; padding: 2px 8px; }}
@@ -1503,6 +1872,16 @@ if QApplication is not None:
                 QLabel#calendarCell[today="true"] {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
                 QWidget#timerCard QPushButton {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
             """)
+
+        @staticmethod
+        def _style_signature():
+            return (
+                getattr(config, "THEME", ""), bool(getattr(config, "THEME_PIXEL", False)),
+                float(getattr(config, "UI_SCALE", 1.0)),
+                tuple(sorted((str(key), str(value)) for key, value in COLORS.items())),
+                tuple(sorted((str(key), str(value)) for key, value in config.FONT_SIZE.items())),
+                tuple(sorted((str(key), str(value)) for key, value in config.PIXEL_FONT_SIZE.items())),
+            )
 
         def _font_family(self):
             """Load the urban theme font into Qt; fall back to the original UI font."""
@@ -1530,31 +1909,39 @@ if QApplication is not None:
             self.sidebar.setVisible(key != "prescript")
             try:
                 self.model.show_page(key)
-            except Exception:
-                pass
+            except Exception as error:
+                self._log_ui_error(f"model.show_page({key})", error)
             self._stack.setCurrentWidget(self._pages[key])
-            if key == "cal":
-                self._pages[key].refresh()
-            elif key == "stats":
-                self._pages[key].refresh()
-            elif key == "settings":
-                self._pages[key].refresh()
-            elif key in ("net", "log"):
-                self._pages[key].refresh()
-            elif key == "contract":
-                self._pages[key].refresh()
-            elif key == "knowledge":
-                self._pages[key].refresh()
-            elif key == "reset":
-                self._pages[key].refresh()
-            elif key == "prescript":
-                self._pages[key].refresh()
-            elif key == "comm":
-                self._pages[key].refresh(force=True)
+            try:
+                self._refresh_page(key, force=(key == "comm"))
+            except Exception as error:
+                self._log_ui_error(f"refresh page {key}", error)
             for name, button in self._nav.items():
                 button.setProperty("active", name == key)
                 button.style().unpolish(button)
                 button.style().polish(button)
+
+        def _refresh_page(self, key, force=False):
+            page = self._pages.get(key)
+            if key == "stats" and callable(getattr(page, "activate", None)):
+                page.activate()
+                return
+            if page is None or not callable(getattr(page, "refresh", None)):
+                return
+            if key == "comm":
+                page.refresh(force=force)
+            else:
+                page.refresh()
+
+        def _log_ui_error(self, where, error):
+            message = f"QT UI {where}: {type(error).__name__}: {error}"
+            try:
+                self.model._log_window(message)
+            except Exception:
+                try:
+                    print(message)
+                except Exception:
+                    pass
 
         def _pump(self):
             if self._closing:
@@ -1563,14 +1950,25 @@ if QApplication is not None:
                 self.tk_root.update()
             except tk.TclError:
                 return
-            self._refresh()
+            except Exception as error:
+                self._log_ui_error("Tk compatibility pump", error)
+            try:
+                self._refresh()
+            except Exception as error:
+                self._log_ui_error("timer refresh", error)
             self._qt_tick += 1
             if self._qt_tick % 15 == 0 and self._current_key in ("net", "log", "contract", "prescript", "comm"):
-                page = self._pages[self._current_key]
-                page.refresh(force=True) if self._current_key == "comm" else page.refresh()
+                try:
+                    self._refresh_page(self._current_key, force=(self._current_key == "comm"))
+                except Exception as error:
+                    self._log_ui_error(f"periodic refresh {self._current_key}", error)
 
         def _refresh(self):
             self.setWindowTitle(self._title())
+            style_key = self._style_signature()
+            if style_key != self._style_key:
+                self._apply_palette()
+                self._style_key = style_key
             self.status.setText(_tk_text(getattr(self.model, "lbl_status", None), tr("准备就绪")))
             self.time_label.setText(_tk_text(getattr(self.model, "lbl_time", None), "0.00 min"))
             self.sub_label.setText(_tk_text(getattr(self.model, "lbl_sub", None)))
@@ -1601,6 +1999,7 @@ def run(model, tk_root: tk.Tk) -> int:
     if not available():
         raise RuntimeError("PySide6 is not installed")
     qt_app = QApplication.instance() or QApplication([])
+    tk_root.withdraw()
     window = QtOitWindow(model, tk_root)
     window.show()
     return qt_app.exec()
