@@ -12,7 +12,7 @@ SCHEMA = ('返回严格 JSON 卡片：{"kind":"conceptual 或 tactical","subject
           '"title":"简短标题（尽量8字以内，浓缩核心词，不必一眼看懂全意）","topic":"主题","aliases":[],"triggers":[],"parent_ids":[], '
           '"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
           '"generality":"universal/explain_first/non_universal",'
-          '"examples":[],"body":"概念卡的 Markdown 正文"}。标题尽量控制在8字以内（宁短勿长）；表述尽量通俗直观、说人话，少用晦涩学术腔，优先讲清直观思路和用法；公式用 LaTeX。不得臆造缺失事实。')
+          '"examples":[],"body":"概念卡的 Markdown 正文"}。概念库是十分基础的知识，只有 generality=universal（通用）的卡片才应该放入概念库（kind=conceptual），其余归入技巧库（kind=tactical）。标题尽量控制在8字以内（宁短勿长）；表述尽量通俗直观、说人话，少用晦涩学术腔，优先讲清直观思路和用法；公式用 LaTeX。不得臆造缺失事实。')
 
 
 def _loads_relaxed(text):
