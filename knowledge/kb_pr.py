@@ -4,7 +4,7 @@ import subprocess
 import threading
 import uuid
 from .kb_rank import find_similar_card
-from .kb_store import read_json, write_json, atomic_text, read_card, serialize, update_body
+from .kb_store import read_json, write_json, atomic_text, read_card, serialize, update_body, normalize_obsidian_math
 from .kb_stats import now
 
 ACTIONS = {"ADD_CARD", "ADD_DERIVED", "UPDATE_CARD", "MERGE_ALIAS", "REPARENT"}
@@ -59,6 +59,11 @@ class ProposalMixin:
                     raise ValueError("通用性无效")
                 elif not isinstance(value, (str, list)):
                     raise ValueError("提案字段无效")
+            for key in ("statement", "preconditions", "proof_sketch"):
+                if isinstance(changes.get(key), str):
+                    changes[key] = normalize_obsidian_math(changes[key])
+            if isinstance(changes.get("examples"), list):
+                changes["examples"] = [normalize_obsidian_math(x) if isinstance(x, str) else x for x in changes["examples"]]
             parents = parent_ids if parent_ids is not None else (parents if parents is not None else changes.get("parent_ids", []))
             if not isinstance(parents, list) or any(p not in self.cards or self.cards[p].get("subject") != subject for p in parents):
                 raise ValueError("父结论必须是同学科技巧卡片")

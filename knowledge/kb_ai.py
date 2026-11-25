@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 import config
 from .kb_stats import now
+from .kb_store import normalize_obsidian_math
 from .kb_trace import strip_citations
 
 FIELD_GUIDE = (
@@ -65,7 +66,9 @@ CARD_BLOCK_FORMAT = (
 )
 
 SCHEMA = (CARD_BLOCK_FORMAT + FIELD_GUIDE +
-          '表述尽量通俗直观、说人话，少用晦涩学术腔，但原笔记中的专有名词、定理名与自定义名称必须原样保留（标题同理，仅原笔记未命名时才自动起短名）；卡片正文公式用 LaTeX，review_summary 只用纯自然语言。不得臆造缺失事实。')
+          '表述尽量通俗直观、说人话，少用晦涩学术腔，但原笔记中的专有名词、定理名与自定义名称必须原样保留（标题同理，仅原笔记未命名时才自动起短名）；'
+          '卡片正文公式必须使用 Obsidian 支持的 $...$（行内，紧贴公式不要在 $ 内侧留空格）和 $$...$$（块级），严禁使用 \\(...\\) 或 \\[...\\]；'
+          'review_summary 只用纯自然语言。不得臆造缺失事实。')
 
 
 _CARD_KEYS = {
@@ -191,6 +194,11 @@ def _parse_card_blocks(text):
     for blk in blocks:
         card = _parse_single_block(blk)
         if card and (card.get("title") or card.get("excluded") or card.get("action")):
+            for key in ("statement", "preconditions", "proof_sketch", "body"):
+                if isinstance(card.get(key), str) and card[key]:
+                    card[key] = normalize_obsidian_math(card[key])
+            if isinstance(card.get("examples"), list):
+                card["examples"] = [normalize_obsidian_math(x) for x in card["examples"]]
             cards.append(card)
     return cards
 

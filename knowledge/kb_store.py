@@ -102,11 +102,40 @@ def section_fields(body):
 
 _ROMAN_ITEM_RE = re.compile(r"^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\.\s+", re.I)
 _INLINE_ROMAN_RE = re.compile(r"(?:[ \t]+|(?<=[；;。！？!?]))((?:ii|iii|iv|v|vi|vii|viii|ix|x)\.\s+)")
+_CODE_SPAN_RE = re.compile(r"(```[\s\S]*?```|`[^`\n]+`)")
+_DISPLAY_BRACKET_RE = re.compile(r"\\\[([\s\S]*?)\\\]")
+_INLINE_PAREN_RE = re.compile(r"\\\((.+?)\\\)", re.S)
+_SPACED_INLINE_DOLLAR_RE = re.compile(r"(?<!\$)\$(?!\$)([ \t]+[^$\n]+?|[ \t]*[^$\n]+?[ \t]+)(?<!\$)\$(?!\$)")
+
+
+def _trim_inline_dollar(match):
+    inner = match.group(1).strip()
+    if not inner:
+        return match.group(0)
+    if re.search(r"[\\=^_<>+\-*/]|[a-zA-Z]", inner) and not re.match(r"^\d+[\u4e00-\u9fff\s]", inner):
+        return "$" + inner + "$"
+    return match.group(0)
+
+
+def normalize_obsidian_math(text):
+    """将 \\(...\\) / \\[...\\] 转为 Obsidian 可渲染的 $...$ / $$...$$，并去掉行内 $ 内侧多余空格。"""
+    text = str(text or "")
+    if not text or ("\\" not in text and "$" not in text):
+        return text
+    parts = _CODE_SPAN_RE.split(text)
+    for i in range(0, len(parts), 2):
+        seg = parts[i]
+        seg = _DISPLAY_BRACKET_RE.sub(lambda m: "\n$$\n" + m.group(1).strip() + "\n$$\n" if m.group(1).strip() else "", seg)
+        seg = _INLINE_PAREN_RE.sub(lambda m: "$" + m.group(1).strip() + "$" if m.group(1).strip() else "", seg)
+        seg = _SPACED_INLINE_DOLLAR_RE.sub(_trim_inline_dollar, seg)
+        seg = re.sub(r"\n{3,}", "\n\n", seg)
+        parts[i] = seg
+    return "".join(parts).strip() if text == text.strip() else "".join(parts)
 
 
 def format_roman_lines(text):
     """确保多条小写罗马数字序号（i. ii. iii. ...）各自独立换行，不破坏 $...$ 公式。"""
-    text = str(text or "")
+    text = normalize_obsidian_math(text)
     if not text or not re.search(r"\bii\.\s+", text):
         return text
     parts = re.split(r"(\$\$[\s\S]*?\$\$|\$[^$\n]+\$)", text)
@@ -123,7 +152,7 @@ def update_body(body, changes):
         if isinstance(value, list):
             lines = []
             for x in value:
-                item = str(x).strip()
+                item = normalize_obsidian_math(str(x).strip())
                 if not item:
                     continue
                 lines.append(item if _ROMAN_ITEM_RE.match(item) else "- " + item)

@@ -344,9 +344,15 @@ try:
 finally:
     _root2.destroy()
 
-# 11) 小写罗马数字序号未换行时自动补换行，且不破坏公式
-from knowledge.kb_store import format_roman_lines
+# 11) 小写罗马数字序号未换行时自动补换行，且不破坏公式；Obsidian LaTeX 语法自动归一化（\(..\)/\[..\] -> $/$$）
+from knowledge.kb_store import format_roman_lines, normalize_obsidian_math
 assert format_roman_lines("i. 先配项 ii. 再取模；iii. 检查 $a\\ne 0$") == "i. 先配项\nii. 再取模；\niii. 检查 $a\\ne 0$"
+raw_math = r"i. 圆轨道三式为 \(v=\sqrt{\frac{GM}{r}}\)、\( r\approx R \)，见 \[T=2\pi\sqrt{\frac{r^3}{GM}}\] 与 `$ keep $`"
+norm_math = normalize_obsidian_math(raw_math)
+assert r"$v=\sqrt{\frac{GM}{r}}$" in norm_math and r"$r\approx R$" in norm_math
+assert "$$\nT=2\\pi\\sqrt{\\frac{r^3}{GM}}\n$$" in norm_math
+assert "`$ keep $`" in norm_math and r"\(" not in norm_math and r"\[" not in norm_math
+assert normalize_obsidian_math("价格 $100 到 $200 不变，公式 $ GM = gR^2 $ 规范化") == "价格 $100 到 $200 不变，公式 $GM = gR^2$ 规范化"
 
 # 12) 生成卡片模型上下文按轮次与超时定时清理
 cli_ctx_host = SimpleNamespace(
