@@ -61,7 +61,7 @@ Windows x64 可在「设置 → 额外功能」安装 Microsoft JDK 17，用于 
 ## 安装
 
 在 GitHub 的 [Releases](https://github.com/Obliphur/Obliphur-s-Integrated-Terminal/releases) 里下载最新的 **`setup.exe`** 运行:
-它会检查并安装依赖库 (电脑上没有 Python 3.10+ 时从 python.org 下载官方版本), 把 OIT 装到 `C:\Program Files\OIT` (可改),
+它会检查并安装依赖库（包括 Qt6 桌面运行时；电脑上没有 Python 3.10+ 时从 python.org 下载官方版本）, 把 OIT 装到 `C:\Program Files\OIT` (可改),
 并注册成系统里的软件 (设置 → 应用 → 已安装的应用), 可选桌面 / 开始菜单快捷方式. 静默安装: `setup.exe /S`. 细节见 `MECHANICS.md` 16.4.
 手机版下载同一个发布里的 `OIT.apk`.
 
@@ -74,6 +74,8 @@ Windows x64 可在「设置 → 额外功能」安装 Microsoft JDK 17，用于 
 ```bash
 python main.py
 ```
+
+桌面端正在分阶段从 Tk 迁移到 Qt6。安装程序默认安装 `PySide6-Essentials`；源码环境暂未安装时会自动回退到原 Tk 界面，业务数据和计时状态保持兼容。
 
 ## 更新
 

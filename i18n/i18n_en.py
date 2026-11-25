@@ -403,6 +403,7 @@ EN = {
     "名单改动已生效:": "List changes now in effect:",
     "正在加载…": "Loading…",
     "正在重新加载界面…": "Reloading the interface…",
+    "正在迁移此页面到 Qt6": "This page is being migrated to Qt6",
     "开启": "ON",
     "今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)": "Today's 30 minutes of chat time while idle are used up (resting is unlimited).",
     "💬  主动发起": "💬  Initiating chats",

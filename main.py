@@ -86,9 +86,22 @@ def main():
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Obliphur.OIT")
         except Exception:
             pass
+    # Qt6 is the visible desktop shell.  Tk remains hidden as a compatibility
+    # host while pages are migrated one by one; qt_ui pumps its event queue.
+    try:
+        import qt_ui
+        use_qt = qt_ui.available()
+    except Exception:
+        use_qt = False
     root = tk.Tk()
+    if use_qt:
+        root.withdraw()
     app = BreakTimerApp(root)
-    root.mainloop()
+    if use_qt:
+        qt_ui.run(app, root)
+    else:
+        root.deiconify()
+        root.mainloop()
     if secure:
         continuity.end_session(config.app_data_dir())      # 正常退出: 删掉运行标记
     if getattr(app, "restart_requested", False):   # 重置 / 更新后: 以全新状态重新打开

@@ -56,7 +56,7 @@ There are two ways to cut off the network: **Adapter** disables the network adap
 ## Installation
 
 Download the latest **`setup.exe`** from [Releases](https://github.com/Obliphur/Obliphur-s-Integrated-Terminal/releases) on GitHub and run it:
-it checks and installs dependencies (downloading the official Python from python.org if Python 3.10+ is missing), installs OIT to `C:\Program Files\OIT` (changeable),
+it checks and installs dependencies, including the Qt6 desktop runtime (downloading the official Python from python.org if Python 3.10+ is missing), installs OIT to `C:\Program Files\OIT` (changeable),
 and registers it as software in the system (Settings → Apps → Installed apps), with optional desktop / Start menu shortcuts. Silent install: `setup.exe /S`. See `MECHANICS.md` 16.4 for details.
 For the phone version, download `OIT.apk` from the same release.
 
@@ -69,6 +69,8 @@ For the phone version, download `OIT.apk` from the same release.
 ```bash
 python main.py
 ```
+
+The desktop UI is being migrated from Tk to Qt6 in stages. The installer installs `PySide6-Essentials` by default; source checkouts without it automatically fall back to the existing Tk shell while keeping the same business state and timer behavior.
 
 ## Updates
 

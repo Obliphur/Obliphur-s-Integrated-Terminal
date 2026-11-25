@@ -621,6 +621,49 @@ class OitMcpBridge:
             meta["created_day"] = f"{now:%Y-%m-%d}"
         self._save_sessions()
 
+    def _unreplied_user_messages(self, persona_id: str):
+        """收集指定人设在最后一条已展示 AI 消息之后、尚未收到回复的用户消息（含忙碌期间被延迟的消息）。"""
+        msgs = []
+        if persona_id and persona_id == getattr(self.comm, "pid", ""):
+            msgs = list(getattr(self.comm, "messages", None) or [])
+        elif persona_id and hasattr(self.comm, "_state_of"):
+            try:
+                st = self.comm._state_of(persona_id) or {}
+                msgs = list(st.get("messages") or [])
+            except Exception:
+                msgs = []
+        pending = []
+        for m in reversed(msgs):
+            if m.get("role") == "ai" and not m.get("hold") and "pending_reply" not in m:
+                break
+            if m.get("role") == "me":
+                pending.append(m)
+        if not pending:
+            return "", []
+        pending.reverse()
+        lines, images = [], []
+        for m in pending:
+            txt = str(m.get("text") or "").strip()
+            at_s = str(m.get("at") or "").replace("T", " ")[:16]
+            img_name = str(m.get("img") or "").strip()
+            img_file = (
+                self.comm.chat_image_path(img_name)
+                if img_name and hasattr(self.comm, "chat_image_path")
+                else ""
+            )
+            if not (img_file and os.path.isfile(img_file)):
+                img_file = ""
+            if img_file:
+                images.append(img_file)
+            line_txt = (
+                f"{txt} [图片文件: {img_file}]"
+                if (img_file and txt)
+                else (f"[图片文件: {img_file}]" if img_file else txt)
+            )
+            if line_txt:
+                lines.append(f"[{at_s}] {line_txt}" if at_s else line_txt)
+        return "\n".join(lines), images
+
     # ── 主动触发与事件推送 ──
     def push_proactive(self, persona_id: str, body: str, kind: str = "proactive",
                        extra: dict = None) -> dict:
@@ -640,11 +683,21 @@ class OitMcpBridge:
                 cid = ""
         key = cid or persona_id or "*"
         entry_ts = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
+        held_txt, held_imgs = self._unreplied_user_messages(persona_id)
+        body_txt = str(body or "")
+        if held_imgs:
+            img_note = (
+                "用户在上述未回复消息中发送了图片文件：\n" + "\n".join(held_imgs)
+                + "\n请先使用 read_file 工具查看图片内容。"
+            )
+            body_txt = f"{body_txt}\n\n{img_note}".strip() if body_txt else img_note
         entry = {
             "persona_id": persona_id,
             "conversation_id": cid,
             "kind": kind,
-            "body": str(body or ""),
+            "body": body_txt,
+            "held_messages": held_txt,
+            "delivered_via_sse": False,
             "display_time": display_time,
             "ts": entry_ts,
             "extra": dict(extra or {}),
@@ -1139,7 +1192,13 @@ class OitMcpBridge:
                 )
             if trigger:
                 if trigger.get("held_messages") and not trigger.get("delivered_via_sse"):
-                    lines.append(f"[OIT忙碌期间用户消息]\n{trigger['held_messages']}")
+                    if trigger.get("kind") in ("retry", "user", "user_attachment"):
+                        lines.append(f"[OIT忙碌期间用户消息]\n{trigger['held_messages']}")
+                    else:
+                        lines.append(
+                            "[OIT未回复的用户消息]（对方此前忙碌/延迟未送达的消息，本轮主动谈话时请一并知悉并自然回应）\n"
+                            f"{trigger['held_messages']}"
+                        )
                 if trigger.get("body"):
                     tkind = trigger.get("kind")
                     if tkind == "user_attachment":
