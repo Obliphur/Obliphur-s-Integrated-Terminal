@@ -208,4 +208,39 @@ with patch.object(ai_cli, "command_path", return_value="C:/fake/codex.exe"), \
 temp_img_arg = cli_seen[0][cli_seen[0].index("-i") + 1]
 assert not Path(temp_img_arg).exists(), "临时图片目录应在 CLI 返回后清理"
 
+# 6) Antigravity CLI 传图时应附带 --add-dir 与 --disable-slash-commands，且兼容 stdout 前置提示行
+agy_seen = []
+def fake_agy_run(args, **kwargs):
+    agy_seen.append(list(args))
+    assert "--add-dir" in args and "--disable-slash-commands" in args
+    img_dir = Path(args[args.index("--add-dir") + 1])
+    assert img_dir.is_dir() and any(img_dir.iterdir())
+    return _subprocess.CompletedProcess(args, 0, 'warning: ignored\n{"status":"SUCCESS","response":"agy-ok"}', "")
+
+agy_profile = {"kind": "cli", "provider": "antigravity", "command": "agy", "model": "auto"}
+agy_content = ai_http.image_content(agy_profile, pasted_jpg.read_bytes(), "image/jpeg", "提取知识")
+with patch.object(ai_cli, "command_path", return_value="C:/fake/agy.exe"), \
+        patch.object(ai_cli, "capabilities", return_value={"effort": False, "model": False, "add_dir": True, "disable_slash": True}), \
+        patch.object(ai_cli.subprocess, "run", side_effect=fake_agy_run):
+    assert ai_cli.chat_messages(agy_profile, "sys", [{"role": "user", "content": agy_content}]) == "agy-ok"
+assert not Path(agy_seen[0][agy_seen[0].index("--add-dir") + 1]).exists()
+
+# 7) 深色 / 纯黑主题下 Treeview 与 Notebook 样式应跟随 TTK_COLORS，避免白底白字
+import tkinter as _tk
+from tkinter import ttk as _ttk
+import config as _cfg
+from app.app_window import WindowMixin
+_root = _tk.Tk()
+_root.withdraw()
+try:
+    _cfg.apply_theme("urban_will")
+    _host = SimpleNamespace(root=_root, style=_ttk.Style(_root))
+    _host.style.theme_use("clam")
+    WindowMixin._theme_ttk(_host)
+    assert _host.style.lookup("Treeview", "background") == _cfg.TTK_COLORS["list_bg"]
+    assert _host.style.lookup("Treeview", "foreground") == _cfg.TTK_COLORS["list_fg"]
+    assert _host.style.lookup("TNotebook.Tab", "background") == _cfg.TTK_COLORS["frame"]
+finally:
+    _root.destroy()
+
 print("knowledge check OK")

@@ -178,6 +178,33 @@ class WindowMixin(SidebarMixin):
         s.map("TCheckbutton",
               background=[("active", bg)],
               indicatorbackground=[("pressed", t["frame"]), ("selected", t["field"])])
+        s.configure("TRadiobutton", background=bg, foreground=tx,
+                    indicatorbackground=t["field"], indicatorforeground=t["fg"],
+                    upperbordercolor=t["border"], lowerbordercolor=t["border"])
+        s.map("TRadiobutton",
+              background=[("active", bg)],
+              indicatorbackground=[("pressed", t["frame"]), ("selected", t["field"])])
+        s.configure("Treeview", background=t["list_bg"], fieldbackground=t["list_bg"],
+                    foreground=t["list_fg"], bordercolor=t["border"],
+                    lightcolor=t["border"], darkcolor=t["border"],
+                    rowheight=config.scaled(28))
+        s.map("Treeview",
+              background=[("selected", t["list_select"])],
+              foreground=[("selected", t["list_on_select"])])
+        s.configure("Treeview.Heading", background=card, foreground=tx,
+                    bordercolor=t["border"], lightcolor=t["border"], darkcolor=t["border"],
+                    relief="flat", font=config.font("body", bold=True))
+        s.map("Treeview.Heading",
+              background=[("active", t["frame_hover"]), ("pressed", t["dark"])],
+              foreground=[("active", tx)])
+        s.configure("TNotebook", background=bg, bordercolor=t["border"],
+                    lightcolor=t["border"], darkcolor=t["border"], tabmargins=(0, 0, 0, 0))
+        s.configure("TNotebook.Tab", background=t["frame"], foreground=td,
+                    bordercolor=t["border"], lightcolor=t["border"], darkcolor=t["border"],
+                    padding=(12, 6), font=config.font("body"))
+        s.map("TNotebook.Tab",
+              background=[("selected", card), ("active", t["frame_hover"])],
+              foreground=[("selected", tx), ("active", tx)])
         s.configure("TLabel", background=bg, foreground=tx)
         s.configure("TFrame", background=bg)
 

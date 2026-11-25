@@ -78,7 +78,10 @@ def _flatten_content(content, image_dir_holder: list, image_paths: list) -> str:
                 if saved:
                     local_imgs.append(saved)
     if local_imgs:
-        texts.append("\n".join(f"[附带本地图片，请直接读取查看: {p}]" for p in local_imgs))
+        texts.append(
+            "[附带本地图片文件，请先调用只读文件读取工具查看图片内容后再完成任务"
+            "（除读取这些图片外不调用其他工具）: " + ", ".join(local_imgs) + "]"
+        )
     return "\n\n".join(t for t in texts if t).strip()
 
 
@@ -115,7 +118,9 @@ def capabilities(profile: dict = None) -> dict:
         except (OSError, subprocess.TimeoutExpired):
             text = ""
         flags = {"effort": "--effort" in text or "model_reasoning_effort" in text or _is_codex(profile or {}),
-                 "model": "--model" in text}
+                 "model": "--model" in text,
+                 "add_dir": "--add-dir" in text,
+                 "disable_slash": "--disable-slash-commands" in text}
         _HELP[path] = flags
         return dict(flags)
 
@@ -199,6 +204,11 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
         model = str(profile.get("model") or "").strip()
         if caps.get("model") and model and model not in ("订阅模型", "subscription", "auto"):
             args[1:1] = ["--model", model]
+        if caps.get("add_dir") and not is_codex:
+            for directory in image_dir_holder:
+                args[1:1] = ["--add-dir", directory]
+        if is_antigravity and caps.get("disable_slash"):
+            args[1:1] = ["--disable-slash-commands"]
         if sid and not is_codex:
             args[1:1] = (["--conversation", sid] if is_antigravity else ["--resume", sid])
         if system and not sid and not is_antigravity and not is_codex:
@@ -239,13 +249,25 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
             if texts:
                 store[key] = {"id": thread_id, "updated": int(time.time())}
                 return "\n".join(texts).strip()
-        if raw:
+        else:
+            for line in reversed(raw.splitlines()):
+                line = line.strip()
+                if line.startswith("{") and line.endswith("}"):
+                    try:
+                        parsed = json.loads(line)
+                        if isinstance(parsed, dict):
+                            data = parsed
+                            break
+                    except (TypeError, ValueError):
+                        continue
+        if data is None and raw:
             return raw
     if not isinstance(data, dict):
         raise AIError("format", f"{_label(profile)} 返回了无法识别的内容.")
     if data.get("is_error") or data.get("error") or str(data.get("status") or "").upper() not in ("", "SUCCESS"):
         raise _error(profile, str(data.get("error") or data.get("result") or data.get("response") or ""))
-    result = str(data.get("result") or data.get("response") or data.get("text") or "").strip()
+    result = str(data.get("result") or data.get("response") or data.get("text")
+                 or data.get("message") or data.get("content") or "").strip()
     if not result:
         raise AIError("format", f"{_label(profile)} 没有返回内容.")
     new_id = str(data.get("session_id") or data.get("sessionId") or data.get("conversation_id")
