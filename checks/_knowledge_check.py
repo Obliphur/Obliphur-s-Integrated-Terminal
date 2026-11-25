@@ -145,6 +145,9 @@ def fake_ai(prompt, *, image=None, **kwargs):
 assert kb.save_card({"kind": "conceptual", "subject": "math", "title": "已存在卡片", "body": "已在库中"})
 report = auto_generate(kb, fake_ai, source, ["txt", "md", "image"])
 assert report["created"] == 1 and report["duplicates"] == 1 and report["ignored"] == 1, report
+prog_events = []
+auto_generate(kb, fake_ai, source, ["txt", "md", "image"], on_progress=lambda d, t: prog_events.append((d, t)))
+assert prog_events[0] == (0, 4) and prog_events[-1] == (4, 4) and all(0 <= d <= t == 4 for d, t in prog_events)
 assert any(image for _, image in created), "同名配套图片应与正文一起交给 AI"
 assert any(card["title"] == "自动导入概念" for card in kb.conceptual_cards())
 

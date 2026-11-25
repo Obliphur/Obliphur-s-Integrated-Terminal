@@ -761,9 +761,21 @@ class KnowledgePage(tk.Frame):
         note = tk.Label(area.inner, text=tr("自动生成只扫描选定文件夹；技巧卡会进入待审提案，重复卡片会跳过。"), bg=COLORS["bg"], fg=COLORS["text_dim"], justify="left", anchor="w", font=config.font("body"))
         note.pack(fill="x", pady=12)
         wrap_label(note)
+        progress_row = tk.Frame(area.inner, bg=COLORS["bg"])
+        progress_row.pack(fill="x", pady=(0, 6))
+        progress_bar = ttk.Progressbar(progress_row, mode="determinate", maximum=1, value=0)
+        progress_bar.pack(side="left", fill="x", expand=True)
+        progress_text = tk.Label(progress_row, text="0/0", bg=COLORS["bg"], fg=COLORS["text_dim"], font=config.font("small"), width=10, anchor="e")
+        progress_text.pack(side="left", padx=(8, 0))
         status = tk.Label(area.inner, text="", bg=COLORS["bg"], fg=COLORS["text_dim"], justify="left", anchor="w", font=config.font("body"))
         status.pack(fill="x")
         wrap_label(status)
+        def update_progress(pair):
+            if not dlg.winfo_exists():
+                return
+            done_n, total_n = pair
+            progress_bar.configure(maximum=max(1, total_n), value=done_n)
+            progress_text.configure(text=f"{done_n}/{total_n}")
         def start():
             root = folder.get().strip()
             types = [key for key, _ in choices if selected[key].get()]
@@ -774,9 +786,18 @@ class KnowledgePage(tk.Frame):
                 toast.warn(tr("请选择一个现有文件夹"))
                 return
             start_button.state(["disabled"])
+            progress_bar.configure(maximum=1, value=0)
+            progress_text.configure(text="0/0")
             status.configure(text=tr("正在扫描并生成卡片…"))
-            self.background(lambda: auto_generate(self.kb, self.call_ai, root, types), done)
+            def on_prog(done_n, total_n):
+                self._jobs.put((update_progress, (done_n, total_n), None))
+            self.background(lambda: auto_generate(self.kb, self.call_ai, root, types, on_progress=on_prog), done)
         def done(report):
+            if not dlg.winfo_exists():
+                return
+            total_n = int(report.get("files", 0))
+            progress_bar.configure(maximum=max(1, total_n), value=total_n)
+            progress_text.configure(text=f"{total_n}/{total_n}")
             summary = tr("自动生成完成：扫描 {files} 个文件，处理 {groups} 组，创建 {created} 张概念卡，生成 {proposals} 个技巧提案，跳过重复 {duplicates} 项，忽略 {ignored} 组，失败 {errors} 组。", **report)
             if report.get("errors") and report.get("last_error"):
                 summary += "\n" + str(report["last_error"])

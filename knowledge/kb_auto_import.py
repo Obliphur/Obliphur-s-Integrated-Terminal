@@ -327,6 +327,7 @@ def _read_text(path):
 
 def _source_groups(root, extensions):
     files = _allowed_files(root, extensions)
+    scanned = {p.resolve() for p in files}
     ordinary = [p for p in files if p.suffix.casefold() != ".apkg"]
     groups = []
     for group in _pair_sources(ordinary, root=root):
@@ -336,11 +337,15 @@ def _source_groups(root, extensions):
         for image in group["images"][:MAX_IMAGES_PER_GROUP]:
             if image.stat().st_size <= config.KB_IMPORT_MAX_BYTES:
                 images.append((str(image), image.read_bytes()))
+        group_files = {p.resolve() for p in group["files"] + group["images"] if p.resolve() in scanned}
         if text or images:
-            groups.append({"source": str(source), "text": text, "images": images})
+            groups.append({"source": str(source), "text": text, "images": images, "file_paths": group_files})
     for path in files:
         if path.suffix.casefold() == ".apkg":
-            groups.extend(_anki_groups(path))
+            resolved = path.resolve()
+            for item in _anki_groups(path):
+                item["file_paths"] = {resolved}
+                groups.append(item)
     return groups, len(files)
 
 
@@ -409,13 +414,20 @@ def _duplicate(kb, candidate):
     return None
 
 
-def auto_generate(kb, call, root, file_types):
+def auto_generate(kb, call, root, file_types, on_progress=None):
     extensions = set().union(*(FILE_TYPES[key] for key in file_types if key in FILE_TYPES))
     if not extensions:
         raise ValueError("至少选择一种文件类型")
     groups, file_count = _source_groups(root, extensions)
     report = {"files": file_count, "groups": len(groups), "created": 0, "proposals": 0,
               "duplicates": 0, "ignored": 0, "errors": 0, "last_error": ""}
+    remaining = {}
+    for group in groups:
+        for fpath in group.get("file_paths") or ():
+            remaining[fpath] = remaining.get(fpath, 0) + 1
+    done_files = set()
+    if callable(on_progress):
+        on_progress(0, file_count)
     reset_ctx = getattr(getattr(call, "__self__", None), "reset_ai_context", None)
     try:
         for index, group in enumerate(groups):
@@ -446,8 +458,17 @@ def auto_generate(kb, call, root, file_types):
                 report["errors"] += 1
                 if not report["last_error"]:
                     report["last_error"] = f"{type(error).__name__}: {str(error)[:160]}"
+            finally:
+                for fpath in group.get("file_paths") or ():
+                    remaining[fpath] = remaining.get(fpath, 1) - 1
+                    if remaining[fpath] <= 0:
+                        done_files.add(fpath)
+                if callable(on_progress):
+                    on_progress(min(len(done_files), file_count), file_count)
     finally:
         if callable(reset_ctx):
             reset_ctx()
+    if callable(on_progress):
+        on_progress(file_count, file_count)
     kb.audit("auto_import", **report)
     return report
