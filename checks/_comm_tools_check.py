@@ -631,7 +631,7 @@ def offense_checks():
     assert sleep.cfg["interaction"]["pending_sleep"] == {asleep_message["uid"]: True}
     note = sleep._interaction_judge_note("user")
     assert "发送时处于睡眠" in note and "0.5" in note and "0.2" in note
-    sleep._interaction_judged("[valence:1:custom_other:40]")
+    sleep._interaction_judged("[valence:1:sermon_willingness:40]")
     assert sleep.cfg["interaction"]["valence"] == 20
     assert not sleep.cfg["interaction"]["pending_sleep"]
     sleep.flush(); sleep.voice.close()
