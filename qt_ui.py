@@ -21,7 +21,7 @@ from settings_manager import SETTINGS_PAGES, page_specs
 
 try:
     from PySide6.QtCore import QTimer, Qt
-    from PySide6.QtGui import QCloseEvent, QFontDatabase, QPixmap
+    from PySide6.QtGui import QCloseEvent, QColor, QFontDatabase, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QHBoxLayout,
@@ -31,6 +31,7 @@ try:
         QFrame,
         QLineEdit,
         QListWidget,
+        QListWidgetItem,
         QProgressBar,
         QPlainTextEdit,
         QScrollArea,
@@ -927,6 +928,160 @@ if QApplication is not None:
             self.editor.setVisible(editing)
             self.editor_buttons.setVisible(editing)
 
+    class QtCommPage(QWidget):
+        """Qt chat surface backed by Comm's existing message and delivery state."""
+
+        _TOOLS = (("❓", "帮助", "_help"), ("📱", "情景模式", "scenario"),
+                  ("🔔", "主动消息", "_toggle_mute"), ("🤝", "联合行动", "_joint"),
+                  ("⏲", "共时闹钟", "_co_alarm"), ("🕰", "起点平移", "_shift"),
+                  ("🙈", "分享数据", "_toggle_share"), ("🖼", "识字", "_ocr"),
+                  ("📎", "发送图片", "_pick_image"), ("📷", "拍照", "_take_photo"),
+                  ("🎼", "演奏评判", "_review_performance"), ("📚", "共读", "_reading"))
+
+        def __init__(self, model, parent=None):
+            super().__init__(parent)
+            self.model = model
+            self.legacy = getattr(model, "pages", {}).get("comm")
+            self._version = -1
+            root = QVBoxLayout(self)
+            root.setContentsMargins(config.scaled(18), config.scaled(12), config.scaled(18), config.scaled(12))
+            header = QHBoxLayout()
+            title = QLabel(tr("💬  沟通"), self)
+            title.setObjectName("pageTitle")
+            self.persona = QComboBox(self)
+            self.ai_config = QComboBox(self)
+            self.clear = QPushButton(tr("清空"), self)
+            self.clear.clicked.connect(self._clear)
+            header.addWidget(title)
+            header.addStretch(1)
+            header.addWidget(self.ai_config)
+            header.addWidget(self.persona)
+            header.addWidget(self.clear)
+            root.addLayout(header)
+            self.persona.currentTextChanged.connect(self._persona_changed)
+            self.ai_config.currentIndexChanged.connect(self._config_changed)
+            self.other = QLabel(self)
+            self.other.setObjectName("commStatus")
+            root.addWidget(self.other)
+            self.status = QLabel(self)
+            self.status.setWordWrap(True)
+            self.status.setObjectName("settingsPending")
+            root.addWidget(self.status)
+            self.pending = QLabel(self)
+            self.pending.setWordWrap(True)
+            self.pending.setObjectName("commStatus")
+            root.addWidget(self.pending)
+
+            self.messages = QListWidget(self)
+            self.messages.setSpacing(config.scaled(5))
+            self.messages.setWordWrap(True)
+            root.addWidget(self.messages, 1)
+            tools = QHBoxLayout()
+            self.tool_buttons = []
+            for icon, label, method in self._TOOLS:
+                button = QPushButton(icon, self)
+                button.setFixedSize(config.scaled(38), config.scaled(36))
+                button.setToolTip(tr(label))
+                button.clicked.connect(lambda _checked=False, name=method: self._tool(name))
+                tools.addWidget(button)
+                self.tool_buttons.append(button)
+            tools.addStretch(1)
+            root.addLayout(tools)
+            compose = QHBoxLayout()
+            self.input = QPlainTextEdit(self)
+            self.input.setPlaceholderText(tr("发送消息"))
+            self.input.setMaximumHeight(config.scaled(104))
+            self.send_button = QPushButton(tr("发送"), self)
+            self.send_button.setObjectName("accentButton")
+            self.send_button.clicked.connect(self._send)
+            compose.addWidget(self.input, 1)
+            compose.addWidget(self.send_button, 0, Qt.AlignBottom)
+            root.addLayout(compose)
+            self.refresh()
+
+        def _comm(self):
+            return getattr(self.legacy, "comm", None)
+
+        def _tool(self, method):
+            if self.legacy is None:
+                return
+            if method == "scenario":
+                self.legacy._set_mode(not self._comm().scenario_on())
+            else:
+                getattr(self.legacy, method)()
+            self.refresh(force=True)
+
+        def _send(self):
+            if self.legacy is None:
+                return
+            text = self.input.toPlainText()
+            self.legacy.entry.delete("1.0", "end")
+            self.legacy.entry.insert("1.0", text)
+            self.legacy._send()
+            remaining = self.legacy.entry.get("1.0", "end").strip()
+            self.input.setPlainText(remaining)
+            self.refresh(force=True)
+
+        def _clear(self):
+            if self.legacy is not None:
+                self.legacy._clear()
+            self.refresh(force=True)
+
+        def _persona_changed(self, label):
+            if self.legacy is None or not label:
+                return
+            name = next((name for name, shown in self.legacy._who_labels if shown == label), "")
+            if name and name != self._comm().persona_name():
+                self._comm().set_cfg(persona=name)
+                self.refresh(force=True)
+
+        def _config_changed(self, index):
+            if self.legacy is None or index < 0:
+                return
+            ids = list(self.legacy._cfg_ids)
+            if index < len(ids) and ids[index] != self._comm().current_config():
+                self._comm().set_config(ids[index])
+                self.refresh(force=True)
+
+        def refresh(self, force=False):
+            if self.legacy is None:
+                return
+            c = self._comm()
+            self.legacy.refresh()
+            self.other.setText(_tk_text(self.legacy.lbl_other))
+            status = _tk_text(self.legacy.lbl_status)
+            tension = _tk_text(self.legacy.lbl_tension)
+            self.status.setText(" · ".join(x for x in (status, tension) if x))
+            self.pending.setText(" · ".join(x for x in (_tk_text(self.legacy.lbl_joint),
+                                                          _tk_text(self.legacy.lbl_pending_image)) if x))
+            self.input.setEnabled(not bool(c.blocked()))
+            self.send_button.setEnabled(not bool(c.blocked()))
+            self.persona.blockSignals(True)
+            self.persona.clear()
+            self.persona.addItems([label for _name, label in self.legacy._who_labels])
+            self.persona.setCurrentText(self.legacy.var_who.get())
+            self.persona.blockSignals(False)
+            options = c.config_options()
+            self.ai_config.blockSignals(True)
+            self.ai_config.clear()
+            self.ai_config.addItems([item["name"] for item in options])
+            current = next((item["name"] for item in options if item["id"] == c.current_config()), "")
+            self.ai_config.setCurrentText(current)
+            self.ai_config.blockSignals(False)
+            if force or c.version != self._version:
+                self._version = c.version
+                self.messages.clear()
+                for message in c.visible()[-200:]:
+                    text = str(message.get("text") or "")
+                    if message.get("img") and text != "[图片]":
+                        text = tr("[图片] ") + text
+                    item = QListWidgetItem(text)
+                    mine = message.get("role") == "me"
+                    item.setTextAlignment(Qt.AlignRight if mine else Qt.AlignLeft)
+                    item.setBackground(QColor(COLORS.get("accent_fill", COLORS["bg_card"]) if mine else COLORS["bg_card"]))
+                    self.messages.addItem(item)
+                self.messages.scrollToBottom()
+
     class QtNetPage(QWidget):
         """Qt presentation for the network request workflow."""
 
@@ -1219,7 +1374,8 @@ if QApplication is not None:
                             QtContractPage(self.model, self._stack) if key == "contract" else
                             QtKnowledgePage(self.model, self._stack) if key == "knowledge" else
                             QtResetPage(self.model, self._stack) if key == "reset" else
-                            QtPrescriptPage(self.model, self._stack) if key == "prescript" else QLabel(
+                            QtPrescriptPage(self.model, self._stack) if key == "prescript" else
+                            QtCommPage(self.model, self._stack) if key == "comm" else QLabel(
                         tr("正在迁移此页面到 Qt6"), self._stack))
                     if isinstance(page, QLabel):
                         page.setAlignment(Qt.AlignCenter)
@@ -1393,6 +1549,8 @@ if QApplication is not None:
                 self._pages[key].refresh()
             elif key == "prescript":
                 self._pages[key].refresh()
+            elif key == "comm":
+                self._pages[key].refresh(force=True)
             for name, button in self._nav.items():
                 button.setProperty("active", name == key)
                 button.style().unpolish(button)
@@ -1407,8 +1565,9 @@ if QApplication is not None:
                 return
             self._refresh()
             self._qt_tick += 1
-            if self._qt_tick % 15 == 0 and self._current_key in ("net", "log", "contract", "prescript"):
-                self._pages[self._current_key].refresh()
+            if self._qt_tick % 15 == 0 and self._current_key in ("net", "log", "contract", "prescript", "comm"):
+                page = self._pages[self._current_key]
+                page.refresh(force=True) if self._current_key == "comm" else page.refresh()
 
         def _refresh(self):
             self.setWindowTitle(self._title())
