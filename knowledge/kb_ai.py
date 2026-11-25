@@ -23,6 +23,7 @@ FIELD_GUIDE = (
     "generality：universal（课本基础定理/通法，大题可直接用，无需额外证明）、explain_first（常见二级结论/技巧，选填可直接用，大题须先简证或解释来源）、non_universal（特殊模型/超纲/竞赛捷径，大题不可直接作为依据，仅限选填或思路参考），证据不足选 explain_first；"
     "examples：简短典型例题或用法示例列表（无则 []）；"
     "body：概念卡的 Markdown 正文（技巧卡正文由上述各栏拼装，概念卡须把通俗讲解写在 body）。"
+    "排版要求：任一栏目或正文若分多条列出，必须使用小写罗马数字序号（如 i. ii. iii. iv.）。"
 )
 
 SCHEMA = ('返回严格 JSON 卡片：{"kind":"conceptual 或 tactical","subject":"math/physics/chemistry",'
