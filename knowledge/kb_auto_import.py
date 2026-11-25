@@ -36,6 +36,7 @@ AUTO_SCHEMA = (
     '"generality":"universal/explain_first/non_universal","examples":[],"body":"Markdown 正文"}]}。'
     '若材料不是可复用知识内容则返回 {"knowledge":false,"cards":[]}。不要臆造事实；概念和技巧分类准确；'
     '卡片标题尽量控制在8字以内（宁短勿长，具体含义写在正文中）；'
+    '卡片正文与各栏表述尽量通俗直观、说人话，少用晦涩学术腔，优先讲清直觉思路与实际怎么用；'
     '技巧的通用性按题型严格判定，证据不足时选择 explain_first。公式使用 LaTeX。'
 )
 
