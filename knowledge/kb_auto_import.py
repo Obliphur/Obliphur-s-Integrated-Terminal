@@ -416,31 +416,38 @@ def auto_generate(kb, call, root, file_types):
     groups, file_count = _source_groups(root, extensions)
     report = {"files": file_count, "groups": len(groups), "created": 0, "proposals": 0,
               "duplicates": 0, "ignored": 0, "errors": 0, "last_error": ""}
-    for group in groups:
-        try:
-            cards = _auto_extract(kb, call, group)
-            if not cards:
-                report["ignored"] += 1
-                continue
-            for card in cards:
-                card["generality"] = card.get("generality") if card.get("generality") in {"universal", "explain_first", "non_universal"} else "explain_first"
-                card["source"] = str(group["source"])
-                if _duplicate(kb, card):
-                    report["duplicates"] += 1
+    reset_ctx = getattr(getattr(call, "__self__", None), "reset_ai_context", None)
+    try:
+        for index, group in enumerate(groups):
+            if callable(reset_ctx) and index > 0 and index % max(1, int(config.KB_AI_CONTEXT_MAX_TURNS)) == 0:
+                reset_ctx()
+            try:
+                cards = _auto_extract(kb, call, group)
+                if not cards:
+                    report["ignored"] += 1
                     continue
-                if card["kind"] == "tactical":
-                    review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
-                    kb.propose("ADD_CARD", subject=card["subject"], title=card["title"],
-                               proposed_card=card, summary=review_summary,
-                               evidence=[{"source": str(group["source"])[:1200]}])
-                    report["proposals"] += 1
-                else:
-                    kb.save_card(card, maintainer=True)
-                    report["created"] += 1
-        except Exception as error:
-            logging.getLogger(__name__).warning("Auto import failed for %s: %s", group.get("source"), error)
-            report["errors"] += 1
-            if not report["last_error"]:
-                report["last_error"] = f"{type(error).__name__}: {str(error)[:160]}"
+                for card in cards:
+                    card["generality"] = card.get("generality") if card.get("generality") in {"universal", "explain_first", "non_universal"} else "explain_first"
+                    card["source"] = str(group["source"])
+                    if _duplicate(kb, card):
+                        report["duplicates"] += 1
+                        continue
+                    if card["kind"] == "tactical":
+                        review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
+                        kb.propose("ADD_CARD", subject=card["subject"], title=card["title"],
+                                   proposed_card=card, summary=review_summary,
+                                   evidence=[{"source": str(group["source"])[:1200]}])
+                        report["proposals"] += 1
+                    else:
+                        kb.save_card(card, maintainer=True)
+                        report["created"] += 1
+            except Exception as error:
+                logging.getLogger(__name__).warning("Auto import failed for %s: %s", group.get("source"), error)
+                report["errors"] += 1
+                if not report["last_error"]:
+                    report["last_error"] = f"{type(error).__name__}: {str(error)[:160]}"
+    finally:
+        if callable(reset_ctx):
+            reset_ctx()
     kb.audit("auto_import", **report)
     return report

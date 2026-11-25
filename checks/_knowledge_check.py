@@ -312,4 +312,24 @@ finally:
 from knowledge.kb_store import format_roman_lines
 assert format_roman_lines("i. 先配项 ii. 再取模；iii. 检查 $a\\ne 0$") == "i. 先配项\nii. 再取模；\niii. 检查 $a\\ne 0$"
 
+# 12) 生成卡片模型上下文按轮次与超时定时清理
+cli_ctx_host = SimpleNamespace(
+    comm=SimpleNamespace(
+        ai=SimpleNamespace(task_profile=lambda *a, **k: {"kind": "cli", "provider": "antigravity", "command": "agy", "config_id": "agy"},
+                           config_for=lambda _: "agy"),
+        persona_name=lambda: "测试",
+        chat_fn=lambda prof, *a, **k: (prof["_session_store"].setdefault(prof["_session_key"], {"id": f"s-{len(prof['_session_store'])+1}"}) and "ok"),
+    )
+)
+for _ in range(_cfg.KB_AI_CONTEXT_MAX_TURNS):
+    assert KnowledgePage.call_ai(cli_ctx_host, "task") == "ok"
+assert cli_ctx_host._kb_ctx_turns == _cfg.KB_AI_CONTEXT_MAX_TURNS and cli_ctx_host._kb_sessions
+cli_ctx_host._kb_sessions["kb:agy"]["marker"] = "old"
+assert KnowledgePage.call_ai(cli_ctx_host, "task-next") == "ok"
+assert "marker" not in cli_ctx_host._kb_sessions["kb:agy"] and cli_ctx_host._kb_ctx_turns == 1
+cli_ctx_host._kb_sessions["kb:agy"]["marker"] = "stale"
+cli_ctx_host._kb_ctx_started -= _cfg.KB_AI_CONTEXT_MAX_AGE + 1
+assert KnowledgePage.call_ai(cli_ctx_host, "task-expired") == "ok"
+assert "marker" not in cli_ctx_host._kb_sessions["kb:agy"] and cli_ctx_host._kb_ctx_turns == 1
+
 print("knowledge check OK")

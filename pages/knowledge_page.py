@@ -2,6 +2,7 @@
 import json
 import queue
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -73,6 +74,10 @@ class KnowledgePage(tk.Frame):
         super().__init__(master, bg=COLORS["bg"])
         self.data_dir, self.comm, self.show_page = data_dir, comm, show_page
         self.kb = get_knowledge(data_dir)
+        self._kb_ctx_lock = threading.Lock()
+        self._kb_sessions = {}
+        self._kb_ctx_turns = 0
+        self._kb_ctx_started = 0.0
         self._jobs = queue.Queue()
         self._poll_job = self.after(100, self._poll)
         self.bind("<Destroy>", self._destroy, add="+")
@@ -169,6 +174,22 @@ class KnowledgePage(tk.Frame):
                     self.after_cancel(self._search_job)
                 except tk.TclError:
                     pass
+            self.reset_ai_context()
+
+    def _ensure_ctx_state(self):
+        if not hasattr(self, "_kb_ctx_lock"):
+            self._kb_ctx_lock = threading.Lock()
+            self._kb_sessions = {}
+            self._kb_ctx_turns = 0
+            self._kb_ctx_started = 0.0
+
+    def reset_ai_context(self):
+        """清理知识库生成卡片模型的临时上下文会话，防止上下文过长。"""
+        self._ensure_ctx_state()
+        with self._kb_ctx_lock:
+            self._kb_sessions.clear()
+            self._kb_ctx_turns = 0
+            self._kb_ctx_started = 0.0
 
     def _poll(self):
         while not self._jobs.empty():
@@ -194,9 +215,31 @@ class KnowledgePage(tk.Frame):
         if not self.comm:
             raise ValueError(tr("请先配置 AI 模型"))
         # Independent invocation: editing notes never contaminates solver session history.
+        import ai_assist
         from ai_assist.ai_subagent import invoke
-        profile = self.comm.ai.task_profile("subject", fallback=self.comm.ai.config_for(self.comm.persona_name()))
-        return invoke(profile, "subject", prompt, image=image, max_tokens=2400, temperature=.1, timeout=timeout, chat=self.comm.chat_fn)
+        KnowledgePage._ensure_ctx_state(self)
+        now_t = time.monotonic()
+        with self._kb_ctx_lock:
+            if (self._kb_ctx_turns >= config.KB_AI_CONTEXT_MAX_TURNS
+                    or (self._kb_ctx_started and now_t - self._kb_ctx_started >= config.KB_AI_CONTEXT_MAX_AGE)):
+                self._kb_sessions.clear()
+                self._kb_ctx_turns = 0
+                self._kb_ctx_started = 0.0
+            if not self._kb_ctx_started:
+                self._kb_ctx_started = now_t
+            self._kb_ctx_turns += 1
+        profile = dict(self.comm.ai.task_profile("subject", fallback=self.comm.ai.config_for(self.comm.persona_name())))
+        if ai_assist.is_cli_profile(profile):
+            profile["_session_store"] = self._kb_sessions
+            profile["_session_key"] = f"kb:{profile.get('config_id') or 'subject'}"
+        try:
+            return invoke(profile, "subject", prompt, image=image, max_tokens=2400, temperature=.1, timeout=timeout, chat=self.comm.chat_fn)
+        except Exception:
+            with self._kb_ctx_lock:
+                self._kb_sessions.clear()
+                self._kb_ctx_turns = 0
+                self._kb_ctx_started = 0.0
+            raise
 
     def active_tab(self):
         return list(self.lists)[self.tabs.index("current")]
