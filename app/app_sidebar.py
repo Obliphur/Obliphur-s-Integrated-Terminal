@@ -3,6 +3,7 @@ import tkinter as tk
 from pathlib import Path
 import config
 from config import COLORS
+from i18n import tr
 from knowledge.kb_store import read_json, write_json
 from .app_base import _blend
 
@@ -44,6 +45,96 @@ class SidebarMixin:
                 widget.bind("<Return>", lambda e, k=key: self._nav_activate(k))
                 widget.bind("<space>", lambda e, k=key: self._nav_activate(k))
         self._pack_nav()
+        self._init_minimized_dock()
+
+    def _init_minimized_dock(self):
+        if not hasattr(self, "_minimized_windows"):
+            self._minimized_windows = []
+        self._min_dock = tk.Frame(self.sidebar, bg=COLORS["bg_card"])
+        if hasattr(self, "root") and self.root is not None:
+            self.root._oit_window_dock = self
+        self._render_minimized_dock()
+
+    def dock_minimized_window(self, window, title: str = ""):
+        if not hasattr(self, "_minimized_windows"):
+            self._minimized_windows = []
+        self._minimized_windows = [(w, t) for w, t in self._minimized_windows if w is not window and self._win_alive(w)]
+        self._minimized_windows.append((window, str(title or "").strip() or tr("窗口")))
+        self._render_minimized_dock()
+
+    def undock_minimized_window(self, window):
+        if not hasattr(self, "_minimized_windows"):
+            return
+        before = len(self._minimized_windows)
+        self._minimized_windows = [(w, t) for w, t in self._minimized_windows if w is not window and self._win_alive(w)]
+        if len(self._minimized_windows) != before:
+            self._render_minimized_dock()
+
+    @staticmethod
+    def _win_alive(window) -> bool:
+        try:
+            return bool(window and window.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def _render_minimized_dock(self):
+        dock = getattr(self, "_min_dock", None)
+        if dock is None or not self._win_alive(dock):
+            return
+        self._minimized_windows = [(w, t) for w, t in getattr(self, "_minimized_windows", []) if self._win_alive(w)]
+        for child in dock.winfo_children():
+            child.destroy()
+        if not self._minimized_windows:
+            dock.pack_forget()
+            return
+        bg_card = COLORS["bg_card"]
+        bg_item = COLORS["bg"]
+        border = COLORS["border"]
+        dock.configure(bg=bg_card)
+        tk.Frame(dock, bg=border, height=1).pack(fill="x", padx=6, pady=(2, 6))
+        tk.Label(
+            dock, text=tr("已最小化 ({n})", n=len(self._minimized_windows)),
+            bg=bg_card, fg=COLORS["text_dim"], font=config.font("small"), anchor="w",
+        ).pack(fill="x", padx=8, pady=(0, 4))
+        for win, raw_title in self._minimized_windows:
+            short = raw_title if len(raw_title) <= 10 else raw_title[:9] + "…"
+            row = tk.Frame(dock, bg=bg_item, highlightbackground=border, highlightthickness=1)
+            row.pack(fill="x", padx=6, pady=(0, 4))
+            lbl = tk.Label(
+                row, text=short, bg=bg_item, fg=COLORS["text"],
+                font=config.font("small"), anchor="w", cursor="hand2", padx=6, pady=4,
+            )
+            lbl.pack(side="left", fill="x", expand=True)
+            close_btn = tk.Label(
+                row, text="×", bg=bg_item, fg=COLORS["text_dim"],
+                font=config.font("small", bold=True), cursor="hand2", padx=5, pady=4,
+            )
+            close_btn.pack(side="right")
+            def _restore(_e=None, w=win):
+                if hasattr(w, "restore"):
+                    w.restore()
+            def _close(_e=None, w=win):
+                if hasattr(w, "cancel"):
+                    w.cancel()
+                elif self._win_alive(w):
+                    w.destroy()
+            for widget in (row, lbl):
+                widget.bind("<Button-1>", _restore)
+                widget.bind("<Enter>", lambda _e, r=row, l=lbl, c=close_btn: (
+                    r.configure(highlightbackground=COLORS["accent"]),
+                    l.configure(fg=COLORS["accent"]),
+                    c.configure(fg=COLORS["text"]),
+                ))
+                widget.bind("<Leave>", lambda _e, r=row, l=lbl, c=close_btn: (
+                    r.configure(highlightbackground=border),
+                    l.configure(fg=COLORS["text"]),
+                    c.configure(fg=COLORS["text_dim"]),
+                ))
+            close_btn.bind("<Button-1>", _close)
+            close_btn.bind("<Enter>", lambda _e, c=close_btn: c.configure(fg=COLORS["warn"]))
+            close_btn.bind("<Leave>", lambda _e, c=close_btn: c.configure(fg=COLORS["text_dim"]))
+        if not dock.winfo_ismapped():
+            dock.pack(side="bottom", fill="x", pady=(4, 8))
 
     def _nav_activate(self, key):
         self.show_page(key)

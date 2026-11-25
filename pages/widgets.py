@@ -104,25 +104,92 @@ class ScrollArea(tk.Frame):
 
 class Modal(tk.Toplevel):
 
-    def __init__(self, parent, title: str, width: int = 460, height: int = 260):
+    def __init__(self, parent, title: str, width: int = 460, height: int = 260, minimizable: bool = True):
         super().__init__(parent, bg=COLORS["bg"])
         self.title(title)
+        self._modal_title = str(title or "")
+        self._minimized = False
         self.resizable(False, False)
         self.transient(parent)
         self.result = None
+
+        # 右上角最小化按钮（缩到左侧边栏，支持同时最小化多个窗口）
+        if minimizable:
+            top_bar = tk.Frame(self, bg=COLORS["bg"])
+            top_bar.pack(side="top", fill="x", padx=(20, 12), pady=(6, 0))
+            min_btn = tk.Label(
+                top_bar, text="-", bg=COLORS["bg"], fg=COLORS["text_dim"],
+                font=config.font("body", bold=True), cursor="hand2", padx=8, pady=1,
+            )
+            min_btn.pack(side="right")
+            min_btn.bind("<Button-1>", lambda _e: self.minimize())
+            min_btn.bind("<Enter>", lambda _e: min_btn.configure(bg=COLORS["bg_card"], fg=COLORS["text"]))
+            min_btn.bind("<Leave>", lambda _e: min_btn.configure(bg=COLORS["bg"], fg=COLORS["text_dim"]))
+            self.minimize_button = min_btn
 
         # 按钮先占住底部: 内容再长也只会把 body 挤小, 不会把"确定 / 取消"顶出窗口外
         self.buttons = tk.Frame(self, bg=COLORS["bg"])
         self.buttons.pack(side="bottom", fill="x", padx=20, pady=(0, 16))
 
         body = tk.Frame(self, bg=COLORS["bg"])
-        body.pack(fill="both", expand=True, padx=20, pady=16)
+        body.pack(fill="both", expand=True, padx=20, pady=(4, 16) if minimizable else 16)
         self.body = body
 
         self.bind("<Escape>", lambda e: self.cancel())
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         self._center(parent, width, height)
         self.grab_set()
+
+    def _dock_host(self):
+        try:
+            root = self.nametowidget(".")
+            return getattr(root, "_oit_window_dock", None)
+        except Exception:
+            return None
+
+    def minimize(self):
+        """将悬浮窗口最小化到主窗口左侧边栏（释放模态锁，允许同时最小化多个窗口）。"""
+        if self._minimized:
+            return
+        self._minimized = True
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        dock = self._dock_host()
+        if dock is not None and hasattr(dock, "dock_minimized_window"):
+            self.withdraw()
+            dock.dock_minimized_window(self, self._modal_title or self.title())
+        else:
+            try:
+                self.iconify()
+            except tk.TclError:
+                self.withdraw()
+
+    def restore(self):
+        """从侧边栏恢复悬浮窗口。"""
+        if not self.winfo_exists():
+            return
+        self._minimized = False
+        dock = self._dock_host()
+        if dock is not None and hasattr(dock, "undock_minimized_window"):
+            dock.undock_minimized_window(self)
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def destroy(self):
+        dock = self._dock_host()
+        if dock is not None and hasattr(dock, "undock_minimized_window"):
+            try:
+                dock.undock_minimized_window(self)
+            except Exception:
+                pass
+        super().destroy()
 
     def _center(self, parent, width, height):
         self.update_idletasks()

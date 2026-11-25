@@ -335,4 +335,34 @@ cli_ctx_host._kb_ctx_started -= _cfg.KB_AI_CONTEXT_MAX_AGE + 1
 assert KnowledgePage.call_ai(cli_ctx_host, "task-expired") == "ok"
 assert "marker" not in cli_ctx_host._kb_sessions["kb:agy"] and cli_ctx_host._kb_ctx_turns == 1
 
+# 13) 悬浮窗口右上角 '-' 最小化到左侧边栏，兼容同时最小化多个窗口并可恢复/销毁清理
+from app.app_sidebar import SidebarMixin
+from pages.widgets import Modal
+_root3 = _tk.Tk()
+_root3.geometry("400x300+32000+32000")
+_root3.update_idletasks()
+try:
+    class _FakeSidebar(SidebarMixin):
+        def __init__(self, r):
+            self.root = r
+            self.sidebar = _tk.Frame(r)
+            self.sidebar.pack(side="left", fill="y")
+            self._init_minimized_dock()
+    dock = _FakeSidebar(_root3)
+    m1 = Modal(_root3, "自动生成", 320, 200)
+    m2 = Modal(_root3, "审核提案", 320, 200)
+    assert hasattr(m1, "minimize_button") and m1.minimize_button.cget("text") == "-"
+    m1.minimize()
+    m2.minimize()
+    assert len(dock._minimized_windows) == 2
+    assert m1.state() == "withdrawn" and m2.state() == "withdrawn"
+    m1.restore()
+    assert len(dock._minimized_windows) == 1 and dock._minimized_windows[0][0] is m2
+    assert m1.state() == "normal"
+    m2.destroy()
+    assert len(dock._minimized_windows) == 0
+    m1.destroy()
+finally:
+    _root3.destroy()
+
 print("knowledge check OK")

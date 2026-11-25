@@ -708,6 +708,8 @@ EN = {
     "已批准 {ok} 项，失败 {err} 项。": "Approved {ok}, failed {err}.",
     "搜索": "Search",
     "清空": "Clear",
+    "已最小化 ({n})": "Minimized ({n})",
+    "窗口": "Window",
     "选择 Obsidian 安装目录…": "Choose Obsidian installation folder…",
     "选择 Obsidian 安装目录": "Choose Obsidian installation folder",
     "请选择包含 Obsidian.exe 的安装目录。": "Choose the installation folder containing Obsidian.exe.",
