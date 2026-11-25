@@ -1309,6 +1309,176 @@ class OitMcpBridge:
                   self._conversation_for_persona(getattr(self.comm, "pid", "")) or "").strip()
         host = str(body.get("host") or "antigravity").strip()
 
+        def _latest_user_image():
+            last_user = next((m for m in reversed(self.comm.messages) if m.get("role") == "me"), {})
+            img_name = str(last_user.get("img") or "")
+            if img_name and hasattr(self.comm, "chat_image_path"):
+                try:
+                    with open(self.comm.chat_image_path(img_name), "rb") as stream:
+                        return stream.read()
+                except OSError:
+                    return None
+            return None
+
+        # 以下工具包含耗时的外部网络请求 / 渲染，必须在 HTTP 工作线程执行，绝不能阻塞主线程 UI。
+        if name == "oit_subject":
+            def prep_subject():
+                if cid:
+                    self._ensure_persona_for_conversation(cid)
+                if self.comm.hard_block():
+                    return {"done": {"ok": False, "error": "当前处于禁止沟通状态"}}
+                routes = self._subagent_routes(host)
+                route = routes.get("subject", {})
+                domain = str(args.get("domain") or "math")
+                session = str(args.get("session") or "default")
+                question = str(args.get("question") or "").strip()
+                image = _latest_user_image()
+                ctx = {"domain": domain, "session": session, "question": question,
+                       "answer": "", "image": image, "ts": _now_ms()}
+                self._answer_image_context[(cid, session)] = ctx
+                if route.get("mode") != "external_api":
+                    from knowledge import get_knowledge
+                    from knowledge.kb_ai import mode_prompt, exclusions, generality_instruction
+                    knowledge = get_knowledge(self.comm.dir)
+                    return {"done": {
+                        "ok": False,
+                        "route": route.get("mode", "host_subagent"),
+                        "target": route.get("agent", "oit-subject"),
+                        "solver_mode": knowledge.config.get("solver_mode", "exploration"),
+                        "mode_instruction": mode_prompt(knowledge),
+                        "excluded_tactics": exclusions(knowledge),
+                        "thought_reference": bool(knowledge.config.get("thought_reference", False)),
+                        "generality_instruction": generality_instruction(knowledge),
+                        "instruction": "当前未为解题子代理单独配置外部 API，请改用宿主原生子代理 oit-subject；知识库处理始终交给解题子代理，由它调用 oit_kb_* 工具。将结果按当前人设语气风格化改写；解答图片模式开启时，在 oit_reply 前调用 oit_answer_image 提交原始解答和人设风格化解答。",
+                    }}
+                return {"domain": domain, "session": session, "question": question, "image": image, "ctx": ctx}
+
+            prep = self._call_main(prep_subject)
+            if "done" in prep:
+                return prep["done"]
+            answer, citations = self.comm._knowledge_subject(
+                prep["domain"], prep["session"], prep["question"], prep["image"])
+            def finish_subject():
+                prep["ctx"]["answer"] = answer
+                prep["ctx"]["kb_citations"] = citations
+                return {"ok": True, "domain": prep["domain"], "session": prep["session"],
+                        "answer": answer, "kb_citations": citations,
+                        "instruction": "核对 kb_citations 中技巧的适用前提；若需要将来源 ID 传给 oit_reply 或 oit_answer_image，请传入 kb_citations。若输出 <!-- kb_discovery -->，后台会检查已证明的库外技巧并尝试提交待审提案。不得提交符合 excluded_tactics 的技巧。"}
+            return self._call_main(finish_subject)
+
+        if name == "oit_answer_image":
+            def prep_answer_image():
+                if cid:
+                    self._ensure_persona_for_conversation(cid)
+                if self.comm.hard_block():
+                    return {"done": {"ok": False, "error": "当前处于禁止沟通状态"}}
+                enabled = callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()
+                if not enabled:
+                    return {"done": {"ok": True, "enabled": False, "instruction": "解答图片模式已关闭；请仅提交文字回复。"}}
+                routes = self._subagent_routes(host)
+                use_external = routes.get("subject", {}).get("mode") == "external_api"
+                domain = str(args.get("domain") or "math")
+                session = str(args.get("session") or "default")
+                original = str(args.get("answer") or "").strip()[:8000]
+                styled = str(args.get("styled_answer") or "").strip()[:8000]
+                if not original or not styled:
+                    return {"done": {"ok": False, "error": "answer 和 styled_answer 均不能为空"}}
+                context = self._answer_image_context.get((cid, session), {})
+                if context and context.get("domain") != domain:
+                    return {"done": {"ok": False, "error": "domain 与本轮 oit_subject 不匹配"}}
+                if use_external and not context:
+                    return {"done": {"ok": False, "error": "请先在本轮调用 oit_subject，再生成对应解答图片"}}
+                source_image = context.get("image") if context else _latest_user_image()
+                from knowledge import get_knowledge, strip_citations
+                kb = get_knowledge(self.comm.dir)
+                original, raw_ids = strip_citations(original)
+                styled, styled_ids = strip_citations(styled)
+                supplied_ids = args.get("kb_citations", [])
+                if not isinstance(supplied_ids, list):
+                    supplied_ids = []
+                citations = kb.resolve_citations(supplied_ids + raw_ids + styled_ids +
+                                                 [c["card_id"] for c in context.get("kb_citations", [])])
+                return {
+                    "use_external": use_external, "domain": domain, "session": session,
+                    "original": original, "styled": styled, "source_image": source_image,
+                    "citations": citations,
+                }
+
+            prep = self._call_main(prep_answer_image)
+            if "done" in prep:
+                return prep["done"]
+            try:
+                original = prep["original"]
+                styled = prep["styled"]
+                source_image = prep["source_image"]
+                citations = prep["citations"]
+                if prep["use_external"]:
+                    prompt = (
+                        "请根据原始学科解答与聊天 AI 已完成的用户可见版本，生成最终的解答图片排版稿。"
+                        "保留原始解答中可核验的关键逻辑、步骤与结论；以聊天 AI 的语言风格为准。"
+                        "使用 Markdown 标题、列表和 LaTeX 公式，内容完整但紧凑；不要输出解释、代码围栏或隐藏思维过程。\n\n"
+                        f"原始学科解答:\n{original}\n\n聊天 AI 风格化版本:\n{styled}"
+                    )
+                    formatted = self.comm.subagent_call(
+                        "subject", f"answer-image:{prep['session']}", prompt, image=source_image,
+                        max_tokens=1400, temperature=0.1, timeout=180)
+                else:
+                    formatted = (
+                        f"{styled}\n\n## 详细推导\n\n{original}"
+                        if len(styled) < 40 and len(original) > len(styled) * 2
+                        else styled
+                    )
+                import answer_images
+                if citations:
+                    formatted += "\n\n引用技巧: " + "; ".join(c["title"] + " ← " + " ← ".join(p["title"] for p in c["lineage"]) for c in citations)
+                data = answer_images.render(formatted, source_image, title=f"{prep['domain']}解答")
+                if not data:
+                    detail = answer_images.last_error() if hasattr(answer_images, "last_error") else ""
+                    self.comm.log(f"MCP ANSWER_IMAGE renderer unavailable: {detail}" if detail else "MCP ANSWER_IMAGE renderer unavailable")
+                    return {"ok": False, "error": "本机无法生成解答图片；请正常提交文字回复。"}
+                def commit_answer_image():
+                    self._pending_answer_images[cid] = {
+                        "data": data, "ts": _now_ms(), "session": prep["session"],
+                        "text": styled or original,
+                        "kb_citations": citations,
+                    }
+                    self._answer_image_context.pop((cid, prep["session"]), None)
+                    return {"ok": True, "ready": True,
+                            "instruction": "解答图片已准备好；请随即调用 oit_reply，图片会作为独立气泡发送（可在 bubbles 中用 \"<oit_answer_image>\" 指定发图位置，前后均可加一句话作为独立气泡）。"}
+                return self._call_main(commit_answer_image)
+            except Exception as error:  # noqa: BLE001
+                self.comm.log(f"MCP ANSWER_IMAGE FAIL {type(error).__name__}: {error}")
+                return {"ok": False, "error": "解答图片生成失败；请正常提交文字回复。"}
+
+        if name == "oit_search":
+            def prep_search():
+                if cid:
+                    self._ensure_persona_for_conversation(cid)
+                if self.comm.hard_block():
+                    return {"ok": False, "error": "当前处于禁止沟通状态"}
+                if hasattr(self.comm, "net_active") and not self.comm.net_active():
+                    return {"ok": False, "error": "当前未开通联网权限"}
+                return None
+            err = self._call_main(prep_search)
+            if err is not None:
+                return err
+            from ai_assist.ai_web import web_search
+            return {"ok": True, "results": web_search(str(args.get("query") or ""))}
+
+        if name == "oit_reading_acquire":
+            def prep_acquire():
+                if cid:
+                    self._ensure_persona_for_conversation(cid)
+                if self.comm.hard_block():
+                    return {"done": {"ok": False, "error": "当前处于禁止沟通状态"}}
+                if not getattr(self.comm, "reading_mode", False):
+                    return {"done": {"ok": False, "error": "当前未处于共读模式"}}
+                return {"fn": self.comm.coread_acquire_fn}
+            prep = self._call_main(prep_acquire)
+            if "done" in prep:
+                return prep["done"]
+            return prep["fn"](str(args["source_url"]), lambda: bool(getattr(self.comm, "reading_mode", False)))
+
         def work():
             if not name:
                 return {"ok": False, "error": "tool name required"}
@@ -1442,112 +1612,6 @@ class OitMcpBridge:
                 self.comm._changed()
                 return {"ok": True}
 
-            def _latest_user_image():
-                last_user = next((m for m in reversed(self.comm.messages) if m.get("role") == "me"), {})
-                img_name = str(last_user.get("img") or "")
-                if img_name and hasattr(self.comm, "chat_image_path"):
-                    try:
-                        with open(self.comm.chat_image_path(img_name), "rb") as stream:
-                            return stream.read()
-                    except OSError:
-                        return None
-                return None
-
-            if name == "oit_subject":
-                routes = self._subagent_routes(host)
-                route = routes.get("subject", {})
-                domain = str(args.get("domain") or "math")
-                session = str(args.get("session") or "default")
-                question = str(args.get("question") or "").strip()
-                image = _latest_user_image()
-                ctx = {"domain": domain, "session": session, "question": question,
-                       "answer": "", "image": image, "ts": _now_ms()}
-                self._answer_image_context[(cid, session)] = ctx
-                if route.get("mode") != "external_api":
-                    from knowledge import get_knowledge
-                    from knowledge.kb_ai import mode_prompt, exclusion_prompt, exclusions, generality_instruction
-                    knowledge = get_knowledge(self.comm.dir)
-                    return {
-                        "ok": False,
-                        "route": route.get("mode", "host_subagent"),
-                        "target": route.get("agent", "oit-subject"),
-                        "solver_mode": knowledge.config.get("solver_mode", "exploration"),
-                        "mode_instruction": mode_prompt(knowledge),
-                        "excluded_tactics": exclusions(knowledge),
-                        "thought_reference": bool(knowledge.config.get("thought_reference", False)),
-                        "generality_instruction": generality_instruction(knowledge),
-                        "instruction": "当前未为解题子代理单独配置外部 API，请改用宿主原生子代理 oit-subject；知识库处理始终交给解题子代理，由它调用 oit_kb_* 工具。将结果按当前人设语气风格化改写；解答图片模式开启时，在 oit_reply 前调用 oit_answer_image 提交原始解答和人设风格化解答。",
-                    }
-                answer, citations = self.comm._knowledge_subject(domain, session, question, image)
-                ctx["answer"] = answer
-                ctx["kb_citations"] = citations
-                return {"ok": True, "domain": domain, "session": session, "answer": answer, "kb_citations": citations,
-                        "instruction": "核对 kb_citations 中技巧的适用前提；若需要将来源 ID 传给 oit_reply 或 oit_answer_image，请传入 kb_citations。若输出 <!-- kb_discovery -->，后台会检查已证明的库外技巧并尝试提交待审提案。不得提交符合 excluded_tactics 的技巧。"}
-
-            if name == "oit_answer_image":
-                enabled = callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()
-                if not enabled:
-                    return {"ok": True, "enabled": False, "instruction": "解答图片模式已关闭；请仅提交文字回复。"}
-                routes = self._subagent_routes(host)
-                use_external = routes.get("subject", {}).get("mode") == "external_api"
-                domain = str(args.get("domain") or "math")
-                session = str(args.get("session") or "default")
-                original = str(args.get("answer") or "").strip()[:8000]
-                styled = str(args.get("styled_answer") or "").strip()[:8000]
-                if not original or not styled:
-                    return {"ok": False, "error": "answer 和 styled_answer 均不能为空"}
-                context = self._answer_image_context.get((cid, session), {})
-                if context and context.get("domain") != domain:
-                    return {"ok": False, "error": "domain 与本轮 oit_subject 不匹配"}
-                if use_external and not context:
-                    return {"ok": False, "error": "请先在本轮调用 oit_subject，再生成对应解答图片"}
-                source_image = context.get("image") if context else _latest_user_image()
-                from knowledge import get_knowledge, strip_citations
-                kb = get_knowledge(self.comm.dir)
-                original, raw_ids = strip_citations(original)
-                styled, styled_ids = strip_citations(styled)
-                supplied_ids = args.get("kb_citations", [])
-                if not isinstance(supplied_ids, list):
-                    supplied_ids = []
-                citations = kb.resolve_citations(supplied_ids + raw_ids + styled_ids +
-                                                 [c["card_id"] for c in context.get("kb_citations", [])])
-                try:
-                    if use_external:
-                        prompt = (
-                            "请根据原始学科解答与聊天 AI 已完成的用户可见版本，生成最终的解答图片排版稿。"
-                            "保留原始解答中可核验的关键逻辑、步骤与结论；以聊天 AI 的语言风格为准。"
-                            "使用 Markdown 标题、列表和 LaTeX 公式，内容完整但紧凑；不要输出解释、代码围栏或隐藏思维过程。\n\n"
-                            f"原始学科解答:\n{original}\n\n聊天 AI 风格化版本:\n{styled}"
-                        )
-                        formatted = self.comm.subagent_call(
-                            "subject", f"answer-image:{session}", prompt, image=source_image,
-                            max_tokens=1400, temperature=0.1, timeout=180)
-                    else:
-                        formatted = (
-                            f"{styled}\n\n## 详细推导\n\n{original}"
-                            if len(styled) < 40 and len(original) > len(styled) * 2
-                            else styled
-                        )
-                    import answer_images
-                    if citations:
-                        formatted += "\n\n引用技巧: " + "; ".join(c["title"] + " ← " + " ← ".join(p["title"] for p in c["lineage"]) for c in citations)
-                    data = answer_images.render(formatted, source_image, title=f"{domain}解答")
-                    if not data:
-                        detail = answer_images.last_error() if hasattr(answer_images, "last_error") else ""
-                        self.comm.log(f"MCP ANSWER_IMAGE renderer unavailable: {detail}" if detail else "MCP ANSWER_IMAGE renderer unavailable")
-                        return {"ok": False, "error": "本机无法生成解答图片；请正常提交文字回复。"}
-                    self._pending_answer_images[cid] = {
-                        "data": data, "ts": _now_ms(), "session": session,
-                        "text": styled or original,
-                        "kb_citations": citations,
-                    }
-                    self._answer_image_context.pop((cid, session), None)
-                    return {"ok": True, "ready": True,
-                            "instruction": "解答图片已准备好；请随即调用 oit_reply，图片会作为独立气泡发送（可在 bubbles 中用 \"<oit_answer_image>\" 指定发图位置，前后均可加一句话作为独立气泡）。"}
-                except Exception as error:  # noqa: BLE001
-                    self.comm.log(f"MCP ANSWER_IMAGE FAIL {type(error).__name__}: {error}")
-                    return {"ok": False, "error": "解答图片生成失败；请正常提交文字回复。"}
-
             if name == "oit_music_catalog":
                 related, valence = self.comm._music_access()
                 return {"ok": True, "pieces": music_library.catalog_for_ai(self.comm.dir, related, valence)}
@@ -1589,21 +1653,10 @@ class OitMcpBridge:
                     str(args["content"]), str(args.get("selected_text") or ""))
                 return {"ok": True, "result": res}
 
-            if name == "oit_reading_acquire":
-                if not getattr(self.comm, "reading_mode", False):
-                    return {"ok": False, "error": "当前未处于共读模式"}
-                return self.comm.coread_acquire_fn(str(args["source_url"]), lambda: bool(getattr(self.comm, "reading_mode", False)))
-
             if name == "oit_reading_end":
                 if hasattr(self.comm, "end_reading"):
                     self.comm.end_reading()
                 return {"ok": True}
-
-            if name == "oit_search":
-                if hasattr(self.comm, "net_active") and not self.comm.net_active():
-                    return {"ok": False, "error": "当前未开通联网权限"}
-                from ai_assist.ai_web import web_search
-                return {"ok": True, "results": web_search(str(args.get("query") or ""))}
 
             return {"ok": False, "error": f"unsupported tool: {name}"}
 
