@@ -296,4 +296,8 @@ try:
 finally:
     _root2.destroy()
 
+# 11) 小写罗马数字序号未换行时自动补换行，且不破坏公式
+from knowledge.kb_store import format_roman_lines
+assert format_roman_lines("i. 先配项 ii. 再取模；iii. 检查 $a\\ne 0$") == "i. 先配项\nii. 再取模；\niii. 检查 $a\\ne 0$"
+
 print("knowledge check OK")

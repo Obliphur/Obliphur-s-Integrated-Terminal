@@ -24,7 +24,7 @@ FIELD_GUIDE = (
     "examples：简短典型例题或用法示例列表（无则 []）；"
     "body：概念卡的 Markdown 正文（技巧卡正文由上述各栏拼装，概念卡须把通俗讲解写在 body）；"
     "review_summary：技巧卡提交审核时给人看的简短说明（单独编写，只用纯自然语言简单解释这张卡讲什么、什么时候用、注意什么，严禁使用任何 Markdown 标记或 LaTeX 公式；概念卡可留空）。"
-    "排版要求：任一栏目或正文若分多条列出，必须使用小写罗马数字序号（如 i. ii. iii. iv.）。"
+    "排版要求：任一栏目或正文若分多条列出，必须使用小写罗马数字序号（如 i. ii. iii. iv.），且每条必须单独占一行（用换行符分隔，不要把多条写在同一行里）。"
 )
 
 SCHEMA = ('返回严格 JSON 卡片：{"kind":"conceptual 或 tactical","subject":"math/physics/chemistry",'

@@ -100,13 +100,36 @@ def section_fields(body):
     return out
 
 
+_ROMAN_ITEM_RE = re.compile(r"^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\.\s+", re.I)
+_INLINE_ROMAN_RE = re.compile(r"(?:[ \t]+|(?<=[；;。！？!?]))((?:ii|iii|iv|v|vi|vii|viii|ix|x)\.\s+)")
+
+
+def format_roman_lines(text):
+    """确保多条小写罗马数字序号（i. ii. iii. ...）各自独立换行，不破坏 $...$ 公式。"""
+    text = str(text or "")
+    if not text or not re.search(r"\bii\.\s+", text):
+        return text
+    parts = re.split(r"(\$\$[\s\S]*?\$\$|\$[^$\n]+\$)", text)
+    for i in range(0, len(parts), 2):
+        parts[i] = _INLINE_ROMAN_RE.sub(r"\n\1", parts[i])
+    return "".join(parts)
+
+
 def update_body(body, changes):
     for key, heading in SECTIONS.items():
         if key not in changes:
             continue
         value = changes[key]
         if isinstance(value, list):
-            value = "\n".join("- " + str(x) for x in value)
+            lines = []
+            for x in value:
+                item = str(x).strip()
+                if not item:
+                    continue
+                lines.append(item if _ROMAN_ITEM_RE.match(item) else "- " + item)
+            value = "\n".join(lines)
+        else:
+            value = format_roman_lines(value)
         block = "## " + heading + "\n" + str(value).strip() + "\n\n"
         pattern = r"(?ms)^## " + re.escape(heading) + r"\s*\n.*?(?=^## |\Z)"
         if re.search(pattern, body):

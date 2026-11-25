@@ -4,7 +4,7 @@ import os
 import threading
 import uuid
 from pathlib import Path
-from .kb_store import read_json, write_json, atomic_text, read_card, safe_name, serialize, update_body
+from .kb_store import read_json, write_json, atomic_text, read_card, safe_name, serialize, update_body, format_roman_lines
 from .kb_rank import rank
 from .kb_trace import trace, obsidian_uri, strip_citations
 from .kb_stats import StatsMixin, now
@@ -182,7 +182,7 @@ class KnowledgeBase(StatsMixin, ProposalMixin):
                 if any(p not in self.cards or self.cards[p].get("subject") != subject for p in parents):
                     raise ValueError("父结论必须是同学科的技巧卡片")
                 meta["parents"] = ["[[" + self.cards[p]["title"] + "]]" for p in parents]
-            body = card.get("body", old.get("body", ""))
+            body = format_roman_lines(card.get("body", old.get("body", "")))
             if kind == "tactical":
                 body = update_body(body, card)
                 body = update_body(body, {"relations": "、".join(meta.get("parents", [])) + ("\n" + str(old.get("relations", "")) if old.get("relations") else "")}) if set(meta.get("parent_ids", [])) != set(old.get("parent_ids", [])) else body
