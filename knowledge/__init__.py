@@ -5,7 +5,7 @@ import threading
 import uuid
 from pathlib import Path
 from .kb_store import read_json, write_json, atomic_text, read_card, safe_name, serialize, update_body, format_roman_lines
-from .kb_rank import rank
+from .kb_rank import rank, rank_reminders
 from .kb_trace import trace, obsidian_uri, strip_citations
 from .kb_stats import StatsMixin, now
 from .kb_pr import ProposalMixin
@@ -22,7 +22,7 @@ class KnowledgeBase(StatsMixin, ProposalMixin):
         self.lock = threading.RLock()
         self.config = read_json(self.internal / "config.json")
         self.subjects = {**SUBJECTS, **self.config.get("subjects", {})}
-        for group in ("概念性", "技巧性"):
+        for group in ("概念性", "技巧性", "提醒"):
             for name in self.subjects.values():
                 (self.root / group / safe_name(name)).mkdir(parents=True, exist_ok=True)
         self._ensure_obsidian_defaults()
@@ -106,6 +106,34 @@ class KnowledgeBase(StatsMixin, ProposalMixin):
                 pass
         return result
 
+    def reminder_cards(self):
+        result = []
+        for path in self._files("提醒"):
+            try:
+                card = read_card(path)
+                if card.get("kind") == "reminder":
+                    result.append(card)
+            except (OSError, ValueError, UnicodeError):
+                pass
+        return result
+
+    def search_reminders(self, domain, query, top_k=3):
+        with self.lock:
+            cards = {c["id"]: c for c in self.reminder_cards() if c.get("subject") == domain and c.get("id")}
+            if not cards:
+                return []
+            import config
+            threshold = float(config.KB_MIN_MATCH_THRESHOLD)
+            return rank_reminders(cards, read_json(self.internal / "stats.json"), query, top_k=top_k, threshold=threshold)
+
+    def reminder_reference(self, hits):
+        if not hits:
+            return ""
+        rows = [{"card_id": h["card_id"], "title": h.get("title", ""), "triggers": h.get("triggers", []),
+                 "body": h.get("body", "").strip()} for h in hits]
+        return ("[个人易错提醒]\n" + json.dumps(rows, ensure_ascii=False)
+                + "\n以上是用户过去踩过的坑（不是二级结论或捷径公式）。若本题确实涉及这些易错点，请在解答中顺带核对并简短提醒用户；无关则忽略。\n")
+
     def _search_cards(self):
         cards = {key: {**c, "generality": c.get("generality", "explain_first")}
                  for key, c in self.cards.items() if c.get("status") == "verified"}
@@ -152,14 +180,20 @@ class KnowledgeBase(StatsMixin, ProposalMixin):
             raise PermissionError("正文修改需要管理员确认；AI 只能提交提案")
         with self.lock:
             kind, subject = card.get("kind", "tactical"), card.get("subject", "math")
-            if kind not in ("tactical", "conceptual") or subject not in self.subjects:
+            if kind not in ("tactical", "conceptual", "reminder") or subject not in self.subjects:
                 raise ValueError("知识类型或学科无效")
             title = str(card.get("title", "")).strip()
             if not title:
                 raise ValueError("请填写标题")
-            group = "技巧性" if kind == "tactical" else "概念性"
-            key = str(card.get("id") or ("tac_" if kind == "tactical" else "con_") + subject + "_" + uuid.uuid4().hex[:12])
-            existing = self.cards.get(key) if kind == "tactical" else next((c for c in self.conceptual_cards() if c.get("id") == key), None)
+            group = {"tactical": "技巧性", "conceptual": "概念性", "reminder": "提醒"}[kind]
+            prefix = {"tactical": "tac_", "conceptual": "con_", "reminder": "rem_"}[kind]
+            key = str(card.get("id") or prefix + subject + "_" + uuid.uuid4().hex[:12])
+            if kind == "tactical":
+                existing = self.cards.get(key)
+            elif kind == "conceptual":
+                existing = next((c for c in self.conceptual_cards() if c.get("id") == key), None)
+            else:
+                existing = next((c for c in self.reminder_cards() if c.get("id") == key), None)
             old = existing or {}
             path = Path(old["file_path"]) if old else self.root / group / safe_name(self.subjects[subject]) / (safe_name(title) + ".md")
             if not old and path.exists():
@@ -199,7 +233,9 @@ class KnowledgeBase(StatsMixin, ProposalMixin):
             raise PermissionError("需要管理员确认")
         with self.lock:
             self.refresh()
-            card = self.cards.get(card_id) or next((c for c in self.conceptual_cards() if c.get("id") == card_id), None)
+            card = (self.cards.get(card_id)
+                    or next((c for c in self.conceptual_cards() if c.get("id") == card_id), None)
+                    or next((c for c in self.reminder_cards() if c.get("id") == card_id), None))
             if card:
                 Path(card["file_path"]).unlink()
                 self.refresh()

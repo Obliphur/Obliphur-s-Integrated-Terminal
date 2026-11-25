@@ -31,7 +31,7 @@ MAX_ANKI_NOTES = 5000
 MAX_IMAGES_PER_GROUP = 16
 
 AUTO_SCHEMA = (
-    '只返回严格 JSON：{"knowledge":true,"cards":[{"kind":"conceptual 或 tactical",'
+    '只返回严格 JSON：{"knowledge":true,"cards":[{"kind":"conceptual 或 tactical 或 reminder",'
     '"subject":"math/physics/chemistry","title":"简短标题（尽量8字以内）","topic":"主题","aliases":[],"triggers":[],'
     '"parent_ids":[],"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
     '"generality":"universal/explain_first/non_universal","examples":[],"body":"Markdown 正文",'
@@ -382,7 +382,7 @@ def _auto_extract(kb, call, group):
     if isinstance(cards, dict):
         cards = [cards]
     return [card for card in cards if isinstance(card, dict)
-            and card.get("kind") in {"conceptual", "tactical"}
+            and card.get("kind") in {"conceptual", "tactical", "reminder"}
             and card.get("subject") in {"math", "physics", "chemistry"}
             and str(card.get("title", "")).strip()
             and not card.get("excluded")]
@@ -390,7 +390,7 @@ def _auto_extract(kb, call, group):
 
 def _duplicate(kb, candidate):
     kb.refresh()
-    existing = list(kb.cards.values()) + kb.conceptual_cards()
+    existing = list(kb.cards.values()) + kb.conceptual_cards() + kb.reminder_cards()
     existing.extend({"title": p.get("title", ""), "subject": p.get("subject", ""),
                      **p.get("proposed_card", {})} for p in kb.proposals())
     title = _clean_name(candidate.get("title", ""))

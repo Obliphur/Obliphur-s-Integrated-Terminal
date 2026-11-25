@@ -422,6 +422,12 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
     def current_config(self) -> str:
         return self.ai.config_for(self.persona_name())
 
+    def _antigravity_active(self, persona: str = None) -> bool:
+        """当前人设是否走 Antigravity 接管：需开启接管且该人设未在沟通页切换为其他主模型。"""
+        if ai_assist.ai_config.chat_takeover() != "antigravity":
+            return False
+        return self.ai.config_for(persona or self.persona_name()) == "antigravity"
+
     def set_config(self, cid: str):
         if not cid or cid == self.current_config():
             return

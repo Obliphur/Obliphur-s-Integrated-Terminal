@@ -27,13 +27,35 @@ class StatsMixin:
             write_json(self.internal / "stats.json", stats)
             self.audit("auto_weight", used=sorted(used & self.cards.keys()), failed=sorted(failed & self.cards.keys()))
 
-    def set_stats(self, card_id, *, weight=None, pinned=None):
+    def record_reminder_shown(self, card_ids):
+        if not card_ids:
+            return
+        with self.lock:
+            valid = {c["id"] for c in self.reminder_cards()}
+            targets = [str(cid) for cid in dict.fromkeys(card_ids) if str(cid) in valid]
+            if not targets:
+                return
+            stats = read_json(self.internal / "stats.json")
+            for key in targets:
+                item = stats.setdefault(key, {"shown": 0, "weight": 1.0})
+                item["shown"] = int(item.get("shown", 0)) + 1
+                item["last_shown"] = now()
+                item["weight"] = max(.3, round(float(item.get("weight", 1.0)) - .05, 4))
+            write_json(self.internal / "stats.json", stats)
+            self.audit("reminder_shown", card_ids=targets)
+
+    def set_stats(self, card_id, *, weight=None, pinned=None, reset_reminder=False):
         with self.lock:
             self.refresh()
-            if card_id not in self.cards:
-                raise ValueError("技巧卡片不存在")
+            valid = set(self.cards.keys()) | {c["id"] for c in self.reminder_cards()}
+            if card_id not in valid:
+                raise ValueError("卡片不存在")
             stats = read_json(self.internal / "stats.json")
             item = stats.setdefault(card_id, {})
+            if reset_reminder:
+                item["shown"] = 0
+                item["last_shown"] = ""
+                item["weight"] = 1.0
             if weight is not None:
                 item["weight"] = max(.3, min(3., float(weight)))
             if pinned is not None:

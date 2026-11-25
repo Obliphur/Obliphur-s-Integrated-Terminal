@@ -74,3 +74,44 @@ def rank(cards, stats, query, top_k, threshold=0.15):
         if len(out) >= max(1, min(20, top_k)):
             break
     return out
+
+
+def reminder_cooldown_days(shown, weight=1.0, pinned=False):
+    """提醒卡随提醒次数动态拉长冷却间隔（1→2→4→8→16→30天），受权重调节；置顶或未提醒过时无冷却。"""
+    shown = max(0, int(shown or 0))
+    if pinned or shown == 0:
+        return 0.0
+    w = max(0.3, min(3.0, float(weight or 1.0)))
+    return min(30.0, (2 ** min(shown - 1, 6)) / w)
+
+
+def rank_reminders(cards, stats, query, top_k=3, threshold=0.15):
+    words = tokens(query)
+    if not words:
+        return []
+    now_dt = datetime.now().astimezone()
+    out = []
+    for key, card in cards.items():
+        triggers = card.get("triggers") or []
+        match = (0.55 * overlap(words, " ".join(triggers)) +
+                 0.25 * overlap(words, card.get("title", "") + " " + " ".join(card.get("aliases") or [])) +
+                 0.20 * overlap(words, card.get("topic", "") + " " + card.get("body", "")))
+        if match < threshold:
+            continue
+        st = stats.get(key, {})
+        shown = max(0, int(st.get("shown", 0)))
+        weight = max(0.3, min(3.0, float(st.get("weight", 1.0))))
+        pinned = bool(st.get("user_pinned"))
+        cooldown = reminder_cooldown_days(shown, weight, pinned)
+        elapsed = 10000.0
+        try:
+            elapsed = max(0.0, (now_dt - datetime.fromisoformat(st["last_shown"]).astimezone()).total_seconds() / 86400.0)
+        except (ValueError, KeyError, TypeError):
+            pass
+        if cooldown > 0 and elapsed < cooldown:
+            continue
+        score = match * (weight / (1.0 + 0.35 * shown)) * (1.3 if pinned else 1.0)
+        out.append({**card, "card_id": key, "match_score": match, "score": score,
+                    "shown": shown, "weight": weight, "cooldown_days": round(cooldown, 2)})
+    out.sort(key=lambda c: (-c["score"], c["card_id"]))
+    return out[:max(1, min(10, int(top_k)))]

@@ -358,14 +358,13 @@ class AIConfig:
         return self.names.get(cid) or (PROVIDERS.get(cid) or {}).get("label") or cid or ""
 
     def config_for(self, persona: str) -> str:
-        """这个人设用哪一份配置: 沟通页单独选的, 没选过就用默认的."""
+        """这个人设用哪一份配置: 沟通页单独选的, 没选过就用默认的（接管开启时默认是接管端）."""
         self._ensure_managed_profiles()
-        takeover = chat_takeover()
-        if takeover == "antigravity":
-            return "antigravity"
         cid = self.assign.get(persona or "")
         if cid in self.profiles and self._visible(cid):
             return cid
+        if chat_takeover() == "antigravity":
+            return "antigravity"
         return self._visible_default()
 
     def takeover(self) -> str:
@@ -376,7 +375,8 @@ class AIConfig:
     def assign_config(self, persona: str, cid: str):
         if not persona or cid not in self.profiles:
             return
-        if cid == self.provider:
+        default_cid = "antigravity" if chat_takeover() == "antigravity" else self.provider
+        if cid == default_cid:
             self.assign.pop(persona, None)        # 用默认配置时不用单独记
         else:
             self.assign[persona] = cid

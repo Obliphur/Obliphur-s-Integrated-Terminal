@@ -266,7 +266,7 @@ class FlowMixin:
     def _request(self, kind: str, extra=None, reading_context: str = ""):
         retry_since = int(getattr(self, "_retry_since", 0) or 0)
         self._retry_since = 0
-        if ai_assist.ai_config.chat_takeover() == "antigravity":
+        if self._antigravity_active():
             bridge = getattr(self, "mcp_bridge", None)
             if bridge is None:
                 self.error = tr("已由 Antigravity 桌面版接管，但本地 MCP Bridge 未启动；请在设置中重新开启接管或点击自动部署。")

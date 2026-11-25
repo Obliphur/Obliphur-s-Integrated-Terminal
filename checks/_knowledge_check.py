@@ -281,7 +281,7 @@ try:
     page2 = KnowledgePage(_root2, str(base))
     page2.kb = kb
     page2.show()
-    page2.tabs.select(2)  # 待审提案
+    page2.tabs.select(3)  # 待审提案
     page2.select_all("proposals")
     assert set(page2.lists["proposals"].selection()) >= {pr_a["pr_id"], pr_b["pr_id"]}
     page2.clear_selection("proposals")
@@ -365,5 +365,21 @@ try:
     m1.destroy()
 finally:
     _root3.destroy()
+
+# 14) 提醒库：直接保存、解题命中顺带提醒、触发后进入动态冷却、置顶或重置后重新触发
+rem = kb.save_card({"kind": "reminder", "subject": "math", "title": "分母含参判零",
+                    "triggers": ["分母含参", "分式方程"], "body": "i. 先讨论分母是否为 0\nii. 检验增根"})
+assert rem["id"].startswith("rem_math_") and len(kb.reminder_cards()) == 1
+rem_hits = kb.search_reminders("math", "解一个分母含参的分式方程", 3)
+assert len(rem_hits) == 1 and rem_hits[0]["card_id"] == rem["id"]
+task_with_rem, _ = prepare_subject(kb, classifier, "math", "解一个分母含参的分式方程")
+assert "[个人易错提醒]" in task_with_rem and "分母含参判零" in task_with_rem
+# 刚提醒过，处于冷却期内不再重复打扰
+assert kb.search_reminders("math", "解一个分母含参的分式方程", 3) == []
+# 置顶或重置提醒频率后可立即再次命中
+kb.set_stats(rem["id"], pinned=True)
+assert len(kb.search_reminders("math", "解一个分母含参的分式方程", 3)) == 1
+kb.set_stats(rem["id"], pinned=False, reset_reminder=True)
+assert len(kb.search_reminders("math", "解一个分母含参的分式方程", 3)) == 1
 
 print("knowledge check OK")

@@ -127,11 +127,15 @@ class KnowledgePage(tk.Frame):
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill="both", expand=True, padx=16, pady=8)
         self.lists = {}
-        for key, label in (("tactical", "技巧库"), ("conceptual", "概念库"), ("proposals", "待审提案")):
+        for key, label in (("tactical", "技巧库"), ("conceptual", "概念库"), ("reminder", "提醒库"), ("proposals", "待审提案")):
             frame = tk.Frame(self.tabs, bg=COLORS["bg"])
             self.tabs.add(frame, text=tr(label))
             if key == "conceptual":
                 note = tk.Label(frame, text=tr("概念性笔记仅供阅读与复习，AI 解题不会读取，也无权重排序"), bg=COLORS["bg"], fg=COLORS["text_dim"], justify="left", font=config.font("body"))
+                note.pack(fill="x", pady=6)
+                wrap_label(note)
+            elif key == "reminder":
+                note = tk.Label(frame, text=tr("提醒库记录踩过的坑与易错检查点；解题命中时 AI 会顺带提醒，并随提醒次数自动拉长间隔（置顶可始终提醒）"), bg=COLORS["bg"], fg=COLORS["text_dim"], justify="left", font=config.font("body"))
                 note.pack(fill="x", pady=6)
                 wrap_label(note)
             tree = ttk.Treeview(frame, columns=("info",), show="tree headings", selectmode="extended")
@@ -342,6 +346,7 @@ class KnowledgePage(tk.Frame):
         query = self.query.get().strip()
         stats = read_json(self.kb.internal / "stats.json")
         concepts = self.kb.conceptual_cards()
+        reminders = self.kb.reminder_cards()
         cards = list(self.kb.cards.values())
         if query:
             ranked_ids = [hit["card_id"] for d in ([domain] if domain else self.kb.subjects)
@@ -368,7 +373,7 @@ class KnowledgePage(tk.Frame):
         elif not query:
             cards.sort(key=lambda c: (-stats.get(c["id"], {}).get("weight", 1), c.get("title", "")))
         counts = {}
-        for key, entries in (("tactical", cards), ("conceptual", concepts), ("proposals", self.kb.proposals())):
+        for key, entries in (("tactical", cards), ("conceptual", concepts), ("reminder", reminders), ("proposals", self.kb.proposals())):
             tree = self.lists[key]
             selected = tree.selection()
             tree.delete(*tree.get_children())
@@ -387,6 +392,9 @@ class KnowledgePage(tk.Frame):
                     title = ("★ " if st.get("user_pinned") else "") + title
                     if mode == tr("层级视图"):
                         title = "  " * min(len(self.kb.ancestor_ids(ident)), 8) + title
+                elif key == "reminder":
+                    info += f"  ×{st.get('shown', 0)}  w={st.get('weight', 1):.2f}"
+                    title = ("★ " if st.get("user_pinned") else "") + title
                 elif key == "proposals":
                     info += "  " + card["action"] + f" ×{card['squash_count']}"
                 tree.insert("", "end", iid=ident, text=title, values=(info,))
@@ -397,11 +405,13 @@ class KnowledgePage(tk.Frame):
         if query:
             self.tabs.tab(0, text=tr("技巧库") + f" ({counts.get('tactical', 0)})")
             self.tabs.tab(1, text=tr("概念库") + f" ({counts.get('conceptual', 0)})")
-            self.tabs.tab(2, text=tr("待审提案") + f" ({counts.get('proposals', 0)})")
+            self.tabs.tab(2, text=tr("提醒库") + f" ({counts.get('reminder', 0)})")
+            self.tabs.tab(3, text=tr("待审提案") + f" ({counts.get('proposals', 0)})")
         else:
             self.tabs.tab(0, text=tr("技巧库"))
             self.tabs.tab(1, text=tr("概念库"))
-            self.tabs.tab(2, text=tr("待审提案") + f" ({len(self.kb.proposals())})")
+            self.tabs.tab(2, text=tr("提醒库"))
+            self.tabs.tab(3, text=tr("待审提案") + f" ({len(self.kb.proposals())})")
 
     def open_card(self, card_id):
         if self.show_page:
@@ -415,6 +425,13 @@ class KnowledgePage(tk.Frame):
             self.lists["tactical"].see(card_id)
             self.details("tactical")
 
+    def _find_card(self, kind, key):
+        if kind == "tactical":
+            return self.kb.cards.get(key)
+        if kind == "reminder":
+            return next((c for c in self.kb.reminder_cards() if c["id"] == key), None)
+        return next((c for c in self.kb.conceptual_cards() if c["id"] == key), None)
+
     def open_selected(self, kind):
         """已保存卡片优先直接跳转到 Obsidian 查看渲染后的公式与排版；待审提案仍在 OIT 内审核。"""
         selected = self.lists[kind].selection()
@@ -423,7 +440,7 @@ class KnowledgePage(tk.Frame):
         key = selected[0]
         if kind == "proposals":
             return self.review(key)
-        card = self.kb.cards.get(key) if kind == "tactical" else next((c for c in self.kb.conceptual_cards() if c["id"] == key), None)
+        card = KnowledgePage._find_card(self, kind, key)
         if not card:
             return self.show()
         if card.get("file_path") and open_obsidian(card["file_path"], self.data_dir):
@@ -437,14 +454,21 @@ class KnowledgePage(tk.Frame):
         key = selected[0]
         if kind == "proposals":
             return self.review(key)
-        card = self.kb.cards.get(key) if kind == "tactical" else next((c for c in self.kb.conceptual_cards() if c["id"] == key), None)
+        card = KnowledgePage._find_card(self, kind, key)
         if not card:
             return self.show()
         dlg = modal(self, "卡片详情")
         area = ScrollArea(dlg.body, bg=COLORS["bg"])
         area.pack(fill="both", expand=True)
-        tk.Label(area.inner, text=tr("通用性") + ": " + tr(GENERALITY_LABELS.get(card.get("generality", "explain_first"), "解释后通用")),
-                 bg=COLORS["bg"], fg=COLORS["accent"], font=config.font("body", bold=True)).pack(anchor="w", pady=(0, 6))
+        if kind == "reminder":
+            st = read_json(self.kb.internal / "stats.json").get(key, {})
+            from knowledge.kb_rank import reminder_cooldown_days
+            cd = reminder_cooldown_days(st.get("shown", 0), st.get("weight", 1.0), bool(st.get("user_pinned")))
+            tk.Label(area.inner, text=tr("已提醒 {n} 次 · 当前冷却 {d:.1f} 天", n=st.get("shown", 0), d=cd),
+                     bg=COLORS["bg"], fg=COLORS["accent"], font=config.font("body", bold=True)).pack(anchor="w", pady=(0, 6))
+        else:
+            tk.Label(area.inner, text=tr("通用性") + ": " + tr(GENERALITY_LABELS.get(card.get("generality", "explain_first"), "解释后通用")),
+                     bg=COLORS["bg"], fg=COLORS["accent"], font=config.font("body", bold=True)).pack(anchor="w", pady=(0, 6))
         preview = tk.Text(area.inner, wrap="word", height=22, bg=COLORS["bg_card"], fg=COLORS["text"], font=config.font("body"))
         preview.pack(fill="both", expand=True)
         preview.insert("end", card["title"] + "\n\n" + card["body"])
@@ -461,6 +485,10 @@ class KnowledgePage(tk.Frame):
             ttk.Button(actions, text=tr(label), command=fn).pack(anchor="w", pady=2)
         if kind == "tactical":
             for label, fn in (("置顶 / 取消置顶", lambda: self.pin(key)), ("调整权重", lambda: self.weight(key))):
+                ttk.Button(actions, text=tr(label), command=fn).pack(anchor="w", pady=2)
+        elif kind == "reminder":
+            for label, fn in (("置顶 / 取消置顶", lambda: self.pin(key)), ("调整权重", lambda: self.weight(key)),
+                              ("重置提醒频率", lambda: (self.kb.set_stats(key, reset_reminder=True), dlg.destroy(), self.show()))):
                 ttk.Button(actions, text=tr(label), command=fn).pack(anchor="w", pady=2)
         else:
             ttk.Button(actions, text=tr("AI 补齐"), command=lambda: self.edit(card, complete=True)).pack(anchor="w", pady=2)
@@ -491,9 +519,10 @@ class KnowledgePage(tk.Frame):
         area = ScrollArea(dlg.body, bg=COLORS["bg"])
         area.pack(fill="both", expand=True)
         fields, image = {}, {"data": None}
-        kind = tk.StringVar(value=tr("概念性") if card.get("kind") == "conceptual" else tr("技巧性"))
+        kind_labels = {"tactical": "技巧性", "conceptual": "概念性", "reminder": "提醒性"}
+        kind = tk.StringVar(value=tr(kind_labels.get(card.get("kind"), "技巧性")))
         subject = tk.StringVar(value=tr(self.kb.subjects.get(card.get("subject"), "数学")))
-        for var, values in ((kind, [tr("技巧性"), tr("概念性")]), (subject, [tr(v) for v in self.kb.subjects.values()])):
+        for var, values in ((kind, [tr("技巧性"), tr("概念性"), tr("提醒性")]), (subject, [tr(v) for v in self.kb.subjects.values()])):
             ttk.Combobox(area.inner, textvariable=var, values=values, state="readonly").pack(fill="x", pady=3)
         generality = tk.StringVar(value=tr(GENERALITY_LABELS.get(card.get("generality", "explain_first"), "解释后通用")))
         for key, label in LABELS.items():
@@ -510,7 +539,8 @@ class KnowledgePage(tk.Frame):
             widget.insert("1.0", "\n".join(value) if isinstance(value, list) else str(value))
             fields[key] = widget
         def value():
-            result = {**card, "kind": "conceptual" if kind.get() == tr("概念性") else "tactical",
+            resolved_kind = next((k for k, v in kind_labels.items() if tr(v) == kind.get()), "tactical")
+            result = {**card, "kind": resolved_kind,
                       "subject": next(k for k, v in self.kb.subjects.items() if tr(v) == subject.get())}
             result["generality"] = next(k for k, v in GENERALITY_LABELS.items() if tr(v) == generality.get())
             for key, widget in fields.items():
@@ -733,7 +763,7 @@ class KnowledgePage(tk.Frame):
         area = ScrollArea(dlg.body, bg=COLORS["bg"])
         area.pack(fill="both", expand=True)
         text = "\n\n".join(tr(part) for part in (
-            "知识库用于保存可复用的数学、物理和化学知识。技巧性卡片会参与解题检索，概念性卡片只用于阅读和复习。",
+            "知识库用于保存可复用的数学、物理和化学知识。技巧性卡片会参与解题检索，概念性卡片只用于阅读和复习；提醒库记录踩过的坑与易错检查点，解题命中时 AI 会顺带提醒，并随提醒次数动态拉长冷却间隔（置顶可始终提醒，也可手动调权重或重置频率）。",
             "探索模式 / 保守模式：探索模式下，若库外的二级结论能简化解题步骤，AI 会主动使用并给出可核验的完整证明，随后尝试提交为待审提案供你决定是否收录；保守模式下，AI 绝不使用个人技巧库里没有的二级结论，库内无适用技巧时只用定义、基础定理与通法逐步推导，也不会提交新增技巧提案。",
             "通用性：通用表示可用于任何题目；解释后通用表示写过程时需要先解释或证明；不通用表示不能直接用于需要书写过程的题目。解题时 OIT 会先判断题型，再筛选卡片。",
             "思路参考：开启后，不通用技巧可以作为思路、方向或检查角度参考，但最终过程必须改用其他通用方法完整书写；关闭时不通用技巧不会用于需要过程的题目。",
