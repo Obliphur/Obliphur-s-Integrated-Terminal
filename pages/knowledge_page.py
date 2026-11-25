@@ -270,8 +270,7 @@ class KnowledgePage(tk.Frame):
                           ("编辑卡片", lambda: self.edit(card)), ("删除卡片", lambda: self.delete(card, dlg))):
             ttk.Button(actions, text=tr(label), command=fn).pack(anchor="w", pady=2)
         if kind == "tactical":
-            for label, fn in (("结论溯源", lambda: show_trace(dlg, key, self.kb, self.open_card, self.data_dir)),
-                              ("置顶 / 取消置顶", lambda: self.pin(key)), ("调整权重", lambda: self.weight(key))):
+            for label, fn in (("置顶 / 取消置顶", lambda: self.pin(key)), ("调整权重", lambda: self.weight(key))):
                 ttk.Button(actions, text=tr(label), command=fn).pack(anchor="w", pady=2)
         else:
             ttk.Button(actions, text=tr("AI 补齐"), command=lambda: self.edit(card, complete=True)).pack(anchor="w", pady=2)
