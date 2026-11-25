@@ -292,6 +292,18 @@ try:
     with patch("pages.knowledge_page.messagebox.askyesno", return_value=True):
         page2.delete_selected("tactical")
     assert all(cid not in kb.cards for cid in merged_ids)
+    # 搜索：技巧库、概念库、待审提案均可按关键词/多词检索且不报 KeyError
+    pr_search = kb.propose("ADD_CARD", subject="math", title="复数旋转",
+                           summary="用复数乘法求旋转坐标",
+                           proposed_card={"statement": "乘以单位复数", "preconditions": "前提", "proof_sketch": "补证", "generality": "explain_first"})
+    page2.query.set("比例")
+    page2.show()
+    assert universal["id"] in page2.lists["tactical"].get_children()
+    page2.query.set("复数 坐标")
+    page2.show()
+    assert pr_search["pr_id"] in page2.lists["proposals"].get_children()
+    page2.query.set("")
+    page2.show()
     page2.destroy()
 finally:
     _root2.destroy()

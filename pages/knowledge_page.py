@@ -96,9 +96,26 @@ class KnowledgePage(tk.Frame):
         self.subject_box = ttk.Combobox(filters, textvariable=self.subject, state="readonly", width=9)
         self.subject_box.pack(side="left")
         self.subject_box.bind("<<ComboboxSelected>>", lambda _: self.show())
-        search = ttk.Entry(filters, textvariable=self.query)
-        search.pack(side="left", fill="x", expand=True, padx=4)
-        search.bind("<Return>", lambda _: self.show())
+        search_box = tk.Frame(filters, bg=COLORS["bg_card"], highlightbackground=COLORS["border"], highlightthickness=1)
+        search_box.pack(side="left", fill="x", expand=True, padx=6)
+        self.search_entry = tk.Entry(search_box, textvariable=self.query, bg=COLORS["bg_card"], fg=COLORS["text"],
+                                     insertbackground=COLORS["text"], relief="flat", bd=0, font=config.font("body"))
+        self.search_entry.pack(fill="x", expand=True, padx=6, pady=4)
+        self.search_entry.bind("<Return>", lambda _: self.show())
+        self.search_entry.bind("<Escape>", lambda _: (self.query.set(""), self.show()))
+        ttk.Button(filters, text=tr("搜索"), command=self.show).pack(side="left")
+        ttk.Button(filters, text=tr("清空"), command=lambda: (self.query.set(""), self.show())).pack(side="left", padx=(4, 0))
+        self._search_job = None
+        def _on_query_change(*_):
+            if self._search_job:
+                try:
+                    self.after_cancel(self._search_job)
+                except tk.TclError:
+                    pass
+            self._search_job = self.after(120, self.show)
+        self.query.trace_add("write", _on_query_change)
+        self.bind_all("<Control-f>", lambda e: self._focus_search() if self.winfo_ismapped() else None, add="+")
+        self.bind_all("<Control-F>", lambda e: self._focus_search() if self.winfo_ismapped() else None, add="+")
         self.sort_box = ttk.Combobox(self, textvariable=self.sort, state="readonly", values=[tr(x) for x in ("综合权重", "频次", "最近使用", "层级视图")])
         self.sort_box.pack(fill="x", padx=18, pady=3)
         self.sort_box.bind("<<ComboboxSelected>>", lambda _: self.show())
@@ -147,6 +164,11 @@ class KnowledgePage(tk.Frame):
     def _destroy(self, event):
         if event.widget is self:
             self.after_cancel(self._poll_job)
+            if getattr(self, "_search_job", None):
+                try:
+                    self.after_cancel(self._search_job)
+                except tk.TclError:
+                    pass
 
     def _poll(self):
         while not self._jobs.empty():
@@ -241,7 +263,34 @@ class KnowledgePage(tk.Frame):
                 self.kb.delete_card(card_id, maintainer=True)
         self.show()
 
+    def _focus_search(self):
+        if hasattr(self, "search_entry") and self.search_entry.winfo_exists():
+            self.search_entry.focus_set()
+            self.search_entry.selection_range(0, "end")
+
+    @staticmethod
+    def _card_matches(card, query):
+        terms = [t.casefold() for t in str(query or "").split() if t.strip()]
+        if not terms:
+            return True
+        bag = []
+        def collect(obj):
+            if not isinstance(obj, dict):
+                return
+            for key in ("title", "topic", "body", "summary", "statement", "preconditions", "proof_sketch", "aliases", "triggers", "examples"):
+                val = obj.get(key)
+                if isinstance(val, list):
+                    bag.extend(str(x) for x in val)
+                elif val:
+                    bag.append(str(val))
+        collect(card)
+        if isinstance(card.get("proposed_card"), dict):
+            collect(card["proposed_card"])
+        haystack = "\n".join(bag).casefold()
+        return all(term in haystack for term in terms)
+
     def show(self):
+        self._search_job = None
         self.kb.refresh()
         if hasattr(self, "mode"):
             self.mode.set(self.kb.config.get("solver_mode", "exploration"))
@@ -252,8 +301,19 @@ class KnowledgePage(tk.Frame):
         concepts = self.kb.conceptual_cards()
         cards = list(self.kb.cards.values())
         if query:
-            ranked = [c for d in ([domain] if domain else self.kb.subjects) for c in self.kb.search_tactical(d, query, 20)]
-            cards = ranked
+            ranked_ids = [hit["card_id"] for d in ([domain] if domain else self.kb.subjects)
+                          for hit in self.kb.search_tactical(d, query, 20) if hit.get("card_id") in self.kb.cards]
+            seen = set()
+            matched = []
+            for cid in ranked_ids:
+                if cid not in seen:
+                    seen.add(cid)
+                    matched.append(self.kb.cards[cid])
+            for card in cards:
+                if card["id"] not in seen and self._card_matches(card, query):
+                    seen.add(card["id"])
+                    matched.append(card)
+            cards = matched
         mode = self.sort.get()
         if mode == tr("频次"):
             cards.sort(key=lambda c: -stats.get(c["id"], {}).get("freq", 0))
@@ -264,14 +324,16 @@ class KnowledgePage(tk.Frame):
             cards.sort(key=lambda c: (depth(self.kb.cards, c["id"]), c.get("title", "")))
         elif not query:
             cards.sort(key=lambda c: (-stats.get(c["id"], {}).get("weight", 1), c.get("title", "")))
+        counts = {}
         for key, entries in (("tactical", cards), ("conceptual", concepts), ("proposals", self.kb.proposals())):
             tree = self.lists[key]
             selected = tree.selection()
             tree.delete(*tree.get_children())
+            shown_count = 0
             for card in entries:
                 if domain and card.get("subject") != domain:
                     continue
-                if key != "tactical" and query and query.lower() not in (card.get("title", "") + card.get("body", "")).lower():
+                if key != "tactical" and query and not self._card_matches(card, query):
                     continue
                 ident = card.get("pr_id") or card["id"]
                 info = tr(self.kb.subjects.get(card.get("subject"), card.get("subject", "")))
@@ -285,10 +347,18 @@ class KnowledgePage(tk.Frame):
                 elif key == "proposals":
                     info += "  " + card["action"] + f" ×{card['squash_count']}"
                 tree.insert("", "end", iid=ident, text=title, values=(info,))
+                shown_count += 1
+            counts[key] = shown_count
             if selected and tree.exists(selected[0]):
                 tree.selection_set(selected[0])
-        count = len(self.kb.proposals())
-        self.tabs.tab(2, text=tr("待审提案") + f" ({count})")
+        if query:
+            self.tabs.tab(0, text=tr("技巧库") + f" ({counts.get('tactical', 0)})")
+            self.tabs.tab(1, text=tr("概念库") + f" ({counts.get('conceptual', 0)})")
+            self.tabs.tab(2, text=tr("待审提案") + f" ({counts.get('proposals', 0)})")
+        else:
+            self.tabs.tab(0, text=tr("技巧库"))
+            self.tabs.tab(1, text=tr("概念库"))
+            self.tabs.tab(2, text=tr("待审提案") + f" ({len(self.kb.proposals())})")
 
     def open_card(self, card_id):
         if self.show_page:

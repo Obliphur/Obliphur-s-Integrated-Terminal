@@ -706,6 +706,8 @@ EN = {
     "批量删除卡片": "Delete cards",
     "确定删除选中的 {n} 张卡片吗？": "Delete the {n} selected cards?",
     "已批准 {ok} 项，失败 {err} 项。": "Approved {ok}, failed {err}.",
+    "搜索": "Search",
+    "清空": "Clear",
     "选择 Obsidian 安装目录…": "Choose Obsidian installation folder…",
     "选择 Obsidian 安装目录": "Choose Obsidian installation folder",
     "请选择包含 Obsidian.exe 的安装目录。": "Choose the installation folder containing Obsidian.exe.",
