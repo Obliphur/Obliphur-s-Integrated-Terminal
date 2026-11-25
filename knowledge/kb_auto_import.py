@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import urllib.parse
 import zipfile
 
 import config
@@ -78,38 +79,170 @@ def _allowed_files(root, extensions):
     return found
 
 
-def _pair_sources(files):
+_URL_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:", re.I)
+
+
+def extract_markdown_image_refs(content):
+    """提取 Markdown / Obsidian 笔记中的图片引用（支持 URL 编码相对路径、![[...]]、<> 和 <img>），按正文顺序返回。"""
+    raw_hits = []
+    for match in re.finditer(r"!\[\[([^\]]+)\]\]", content):
+        raw_hits.append((match.start(), match.group(1).split("|", 1)[0]))
+    for match in re.finditer(r"!\[[^\]]*\]\(\s*<([^>]+)>\s*(?:[\"'][^\"']*[\"'])?\s*\)", content):
+        raw_hits.append((match.start(), match.group(1)))
+    for match in re.finditer(r"!\[[^\]]*\]\(\s*([^)\s<>]+)(?:\s+[\"'][^\"']*[\"'])?\s*\)", content):
+        raw_hits.append((match.start(), match.group(1)))
+    for match in re.finditer(r"<img\b[^>]*\bsrc\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|([^\s>]+))", content, re.I):
+        raw_hits.append((match.start(), html.unescape(match.group(1) or match.group(2) or match.group(3) or "")))
+    raw_hits.sort(key=lambda item: item[0])
+
+    found, seen = [], set()
+    for _, raw in raw_hits:
+        ref = str(raw or "").strip().strip("'\"")
+        ref = re.split(r"[?#]", ref, maxsplit=1)[0].strip()
+        if not ref or _URL_SCHEME_RE.match(ref):
+            continue
+        decoded = urllib.parse.unquote(ref)
+        suffix = Path(decoded.replace("\\", "/")).suffix.casefold()
+        if suffix not in IMAGE_EXTENSIONS:
+            continue
+        key = decoded.casefold()
+        if key not in seen:
+            seen.add(key)
+            found.append((decoded, ref))
+    return found
+
+
+def _vault_root_for(source, fallback_root=None):
+    source = Path(source).resolve()
+    for parent in source.parents:
+        if (parent / ".obsidian").is_dir() or (parent / ".oit_kb").is_dir():
+            return parent
+    if fallback_root is not None:
+        base = Path(fallback_root).resolve()
+        if source.is_relative_to(base):
+            return base
+    return source.parent
+
+
+def _valid_image(path, safe_root):
+    try:
+        if path.is_symlink():
+            return None
+        resolved = path.resolve()
+        if (resolved.is_symlink() or not resolved.is_relative_to(safe_root)
+                or not resolved.is_file() or resolved.suffix.casefold() not in IMAGE_EXTENSIONS):
+            return None
+        size = resolved.stat().st_size
+        return resolved if 0 < size <= config.KB_IMPORT_MAX_BYTES else None
+    except OSError:
+        return None
+
+
+def _build_image_index(root):
+    index = {}
+    for current, dirs, files in os.walk(root, followlinks=False):
+        dirs[:] = sorted(d for d in dirs if d.casefold() not in IGNORED_DIRS
+                         and not (Path(current) / d).is_symlink())
+        for name in sorted(files, key=str.casefold):
+            path = Path(current) / name
+            if path.suffix.casefold() in IMAGE_EXTENSIONS:
+                valid = _valid_image(path, root)
+                if valid:
+                    index.setdefault(name.casefold(), []).append(valid)
+    return index
+
+
+def _attachment_folder(safe_root):
+    app_json = safe_root / ".obsidian" / "app.json"
+    if not app_json.is_file():
+        return ""
+    try:
+        value = json.loads(app_json.read_text(encoding="utf-8-sig"))
+        return str(value.get("attachmentFolderPath") or "").strip() if isinstance(value, dict) else ""
+    except (OSError, ValueError):
+        return ""
+
+
+def resolve_markdown_images(source, content, root=None, index_cache=None):
+    """按 Obsidian 规则解析笔记中引用的本地图片（相对路径、仓库根路径、附件目录、最短文件名）。"""
+    source = Path(source).resolve()
+    safe_root = _vault_root_for(source, root)
+    attach = _attachment_folder(safe_root)
+    cache = index_cache if index_cache is not None else {}
+    resolved_list, seen = [], set()
+    for decoded, raw in extract_markdown_image_refs(content):
+        hit = None
+        for ref in dict.fromkeys((decoded, raw)):
+            norm = ref.replace("\\", "/")
+            candidates = [source.parent / norm, safe_root / norm.lstrip("/")]
+            name = Path(norm).name
+            if attach and name:
+                if attach.startswith("./"):
+                    candidates.append(source.parent / attach[2:] / name)
+                elif attach != "/":
+                    candidates.append(safe_root / attach.lstrip("/") / name)
+            for candidate in candidates:
+                hit = _valid_image(candidate, safe_root)
+                if hit is not None:
+                    break
+            if hit is not None:
+                break
+        if hit is None:
+            name = Path(decoded.replace("\\", "/")).name
+            if name:
+                if safe_root not in cache:
+                    cache[safe_root] = _build_image_index(safe_root)
+                matches = cache[safe_root].get(name.casefold(), [])
+                if matches:
+                    hit = max(matches, key=lambda p: (
+                        p.parent == source.parent,
+                        len(os.path.commonpath([str(p.parent), str(source.parent)])),
+                        -len(str(p)),
+                    ))
+        if hit is not None and hit not in seen:
+            seen.add(hit)
+            resolved_list.append(hit)
+            if len(resolved_list) >= MAX_IMAGES_PER_GROUP:
+                break
+    return resolved_list
+
+
+def _pair_sources(files, root=None):
     docs = [p for p in files if p.suffix.casefold() in {".txt", ".md", ".json"}]
     images = [p for p in files if p.suffix.casefold() in IMAGE_EXTENSIONS]
     groups = [{"source": path, "files": [path], "images": []} for path in docs]
     parents = {}
     for group in groups:
         parents.setdefault(group["source"].parent, []).append(group)
-    image_refs = {}
+    assigned = set()
+    index_cache = {}
     for group in groups:
         source = group["source"]
         try:
             content = source.read_text(encoding="utf-8-sig", errors="ignore")
-            image_refs[group["source"]] = {m.group().strip("'\"<>[]()") for m in re.finditer(
-                r"[^\s\"'<>\[\]()]+\.(?:png|jpe?g|webp|gif)", content, re.I)}
         except OSError:
-            image_refs[group["source"]] = set()
-    assigned = set()
+            content = ""
+        for image in resolve_markdown_images(source, content, root=root, index_cache=index_cache):
+            if image not in group["images"]:
+                group["images"].append(image)
+            assigned.add(image.resolve())
     for image in images:
+        if image.resolve() in assigned:
+            continue
         key = _clean_name(image.stem)
         candidates = []
         for group in parents.get(image.parent, ()):
             source = group["source"]
             source_key = _clean_name(source.stem)
-            explicit = image.name.casefold() in {ref.casefold() for ref in image_refs[source]}
-            obvious = key == source_key or key.startswith(source_key + "image") or key.startswith(source_key + "img") or key.startswith(source_key + "图片") or explicit
+            obvious = key == source_key or key.startswith(source_key + "image") or key.startswith(source_key + "img") or key.startswith(source_key + "图片")
             if obvious:
                 candidates.append(group)
         if candidates:
             group = min(candidates, key=lambda g: len(g["source"].stem))
-            group["images"].append(image)
-            assigned.add(image)
-    groups.extend({"source": image, "files": [image], "images": [image]} for image in images if image not in assigned)
+            if image not in group["images"]:
+                group["images"].append(image)
+            assigned.add(image.resolve())
+    groups.extend({"source": image, "files": [image], "images": [image]} for image in images if image.resolve() not in assigned)
     return groups
 
 
@@ -192,7 +325,7 @@ def _source_groups(root, extensions):
     files = _allowed_files(root, extensions)
     ordinary = [p for p in files if p.suffix.casefold() != ".apkg"]
     groups = []
-    for group in _pair_sources(ordinary):
+    for group in _pair_sources(ordinary, root=root):
         source = group["source"]
         text = _read_text(source) if source.suffix.casefold() not in IMAGE_EXTENSIONS else ""
         images = []

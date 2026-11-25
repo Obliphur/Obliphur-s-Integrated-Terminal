@@ -148,4 +148,38 @@ assert report["created"] == 1 and report["duplicates"] == 1 and report["ignored"
 assert any(image for _, image in created), "同名配套图片应与正文一起交给 AI"
 assert any(card["title"] == "自动导入概念" for card in kb.conceptual_cards())
 
+# Obsidian 图片引用：跨目录 URL 编码相对路径（../../../%E9%99%84%E4%BB%B6/...）、![[...]] 与手动导入
+obs_vault = base / "obsidian_vault"
+(obs_vault / ".obsidian").mkdir(parents=True)
+attach_dir = obs_vault / "附件"
+attach_dir.mkdir()
+pasted_jpg = attach_dir / "paste-a7b60f4d36daf0dae6041c0dee35a2ab9d804ec5.jpg"
+pasted_jpg.write_bytes(b"\xff\xd8\xff\xe0obsidian-jpg")
+wiki_png = attach_dir / "Pasted image 2026.png"
+wiki_png.write_bytes(b"\x89PNG\r\n\x1a\nobsidian-wiki")
+note_dir = obs_vault / "高中" / "数学" / "VI-复数"
+note_dir.mkdir(parents=True)
+obs_note = note_dir / "复数技巧 共轭与模长的合并.md"
+obs_note.write_text(
+    "# 复数技巧\n\n![](../../../%E9%99%84%E4%BB%B6/paste-a7b60f4d36daf0dae6041c0dee35a2ab9d804ec5.jpg)\n\n"
+    "![[Pasted image 2026.png|300]]\n\n共轭与模长的合并。\n",
+    encoding="utf-8",
+)
+# 1) 扫描整个仓库且勾选图片时，附件图片应配对给笔记，不重复生成孤立图片组
+obs_groups, _ = _source_groups(obs_vault, {".md", ".jpg", ".png"})
+assert len(obs_groups) == 1 and Path(obs_groups[0]["source"]) == obs_note.resolve()
+assert [Path(name).resolve() for name, _ in obs_groups[0]["images"]] == [pasted_jpg.resolve(), wiki_png.resolve()]
+# 2) 仅扫描子目录且仅选 .md 时，依然能跨回仓库根目录的「附件」解析到引用的图片
+sub_groups, _ = _source_groups(obs_vault / "高中" / "数学", {".md"})
+assert len(sub_groups) == 1 and [Path(name).resolve() for name, _ in sub_groups[0]["images"]] == [pasted_jpg.resolve(), wiki_png.resolve()]
+# 3) 手动「导入笔记」单选该 .md（仅含一张 URL 编码图片）时，应把图片字节直接传给 AI
+single_note = note_dir / "单图复数.md"
+single_note.write_text("# 复数\n\n![](../../../%E9%99%84%E4%BB%B6/paste-a7b60f4d36daf0dae6041c0dee35a2ab9d804ec5.jpg)\n", encoding="utf-8")
+manual_images = []
+def manual_ai(prompt, *, image=None, **kwargs):
+    manual_images.append(image)
+    return json.dumps([{"kind": "tactical", "subject": "math", "title": "复数共轭与模长", "statement": "z*conj(z)=|z|^2"}])
+preview_cards = import_previews(kb, manual_ai, [single_note])
+assert len(preview_cards) == 1 and manual_images == [pasted_jpg.read_bytes()]
+
 print("knowledge check OK")
