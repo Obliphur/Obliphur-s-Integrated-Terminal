@@ -775,7 +775,7 @@ class OitMcpBridge:
             if img_path and img_path not in body_txt:
                 img_note = (
                     f"用户随本条消息发送了一张图片文件：{img_path}\n"
-                    "请先使用 read_file 工具查看该图片内容。若涉及数理化题目并需要调用 oit-subject 子代理，"
+                    "请先使用 read_file 工具查看该图片内容。若涉及学科题目并需要调用 oit-subject 子代理，"
                     "必须将该图片完整路径一并写入子代理 Prompt，要求子代理亲自调用 read_file 查看原图，"
                     "不要仅转述文字；回复用户时保留清晰的关键推导过程。"
                 )

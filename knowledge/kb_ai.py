@@ -91,7 +91,11 @@ def mode_prompt(kb):
                 "库内无适用技巧时，使用定义、基础定理与通法逐步推导，不引入库外快捷公式或二级结论。\n")
     return ("[知识库模式: 探索模式]\n如果库外二级结论可以简化步骤，主动使用它，"
             "但必须先核对前提、给出可核验的完整证明并标注为库外新结论，不能只报公式。"
-            "在答案末尾追加 <!-- kb_discovery -->，由OIT尝试将有复用价值的结论提交为待审提案。\n")
+            "在答案末尾追加 <!-- kb_discovery -->，由OIT尝试将有复用价值的结论提交为待审提案。\n"
+            "探索模式提交提案命名规范：title 有公认定理名或专有名称时原样使用（如「极化恒等式」「等效电源法」）；"
+            "无公认专名时浓缩核心对象与方法词，尽量控制在8字以内（宁短勿长），"
+            "不要写成完整句子、不要带本题题号/具体数值/临时符号、不要加「的结论/技巧/方法」等冗余后缀（固定专名除外）、不要含 Markdown/LaTeX 或多余标点；"
+            "同时填写2-6字的 category 板块名，summary 仅用纯自然语言简短说明（不含 Markdown/LaTeX）。\n")
 
 
 def generality_instruction(kb):
@@ -262,11 +266,13 @@ def finish_subject(kb, call, domain, question, answer, hits, valid=lambda: True)
                           "只有有复用价值的二级结论才提案，基础常识不提案。不得直接修改正文。"
                           '返回严格 JSON {"used_card_ids":[],"failed_card_ids":[],"proposals":[]}。'
                           "proposals 每项含 action/subject/title/target_card_id/parent_ids/proposed_card/summary/evidence；"
-                          "title 尽量控制在8字以内（宁短勿长，浓缩核心词）；内容表述尽量通俗直观、说人话，讲清怎么用；"
+                          "title 必须规范命名：有公认专有名词或定理名时原样使用，无公认专名时尽量控制在8字以内（宁短勿长，浓缩核心对象与方法词），"
+                          "禁止写成完整句子、禁止带本题题号/具体数字/临时字母、禁止堆砌「的结论/技巧/方法」等冗余后缀（固定专名除外）、禁止含 Markdown/LaTeX 或多余标点；"
+                          "内容表述尽量通俗直观、说人话，讲清怎么用；"
                           "summary 为审核提案时给人看的提交信息，必须单独编写，只用纯自然语言简单解释，严禁使用 Markdown 标记或 LaTeX 公式；"
-                          "proposed_card 含 triggers/statement/preconditions/proof_sketch/generality；缺少基础推导时不要造结论。"
+                          "proposed_card 含 category（2-6字所属大类板块）/triggers/statement/preconditions/proof_sketch/generality；缺少基础推导时不要造结论。"
                           + mode_prompt(kb) + exclusion_prompt(kb) + generality_instruction(kb) +
-                          ("\n探索模式：若解答证明了有价值的库外快捷结论，务必尝试提交 ADD_CARD / ADD_DERIVED 提案。" if discovery else "") +
+                          ("\n探索模式：若解答证明了有价值的库外快捷结论，务必按上述命名规范尝试提交 ADD_CARD / ADD_DERIVED 提案。" if discovery else "") +
                           f"\n学科:{domain}\n原题:{question}\n解答:{clean}\n候选:{kb.reference(hits)}")
                 result = json_result(call(prompt, image=None, timeout=60))
                 if valid():

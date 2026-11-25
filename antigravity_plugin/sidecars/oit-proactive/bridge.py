@@ -157,7 +157,7 @@ def dispatch_event(event: dict):
         if not text:
             return
         if image_path:
-            text += f" [附件图片: {image_path}]（请先调用 read_file 查看该图片；若涉及数理化题目并调用 oit-subject 子代理，必须把该图片路径原样传入子代理 Prompt 让其亲自 read_file 查看原图，最后用 oit_reply 返回含推导过程的回复）"
+            text += f" [附件图片: {image_path}]（请先调用 read_file 查看该图片；若涉及学科题目并调用 oit-subject 子代理，必须把该图片路径原样传入子代理 Prompt 让其亲自 read_file 查看原图，最后用 oit_reply 返回含推导过程的回复）"
         if cid:
             _run_agentapi(["agentapi", "send-message", cid, text])
         else:

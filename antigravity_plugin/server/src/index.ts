@@ -65,8 +65,8 @@ function buildTools(): ToolSpec[] {
       inputSchema: { type: "object", properties: { used_card_ids: { type: "array", items: { type: "string" }, maxItems: 20 }, failed_card_ids: { type: "array", items: { type: "string" }, maxItems: 20 }, problem_summary: { type: "string", maxLength: 600 }, conversation_id: { type: "string" } }, additionalProperties: false },
     },
     {
-      name: "oit_kb_propose", description: "提交待用户审核的技巧正文提案（禁止直写）。先参考 oit_kb_search 的 excluded_tactics，符合排除描述的不得提交；exclusions_considered 原样填写该设置。",
-      inputSchema: { type: "object", properties: { action: { type: "string", enum: ["ADD_CARD", "ADD_DERIVED", "UPDATE_CARD", "MERGE_ALIAS", "REPARENT"] }, subject: { type: "string", enum: ["math", "physics", "chemistry"] }, title: { type: "string", maxLength: 300 }, target_card_id: { type: "string", maxLength: 120 }, parent_ids: { type: "array", items: { type: "string" }, maxItems: 20 }, proposed_card: { type: "object", properties: { topic: { type: "string", maxLength: 300 }, aliases: { type: "array", items: { type: "string", maxLength: 300 }, maxItems: 40 }, triggers: { type: "array", items: { type: "string", maxLength: 600 }, maxItems: 40 }, statement: { type: "string", maxLength: 6000 }, preconditions: { type: "string", maxLength: 6000 }, proof_sketch: { type: "string", maxLength: 6000 }, generality: { type: "string", enum: ["universal", "explain_first", "non_universal"] }, examples: { type: "array", items: { type: "string", maxLength: 1500 }, maxItems: 20 }, parent_ids: { type: "array", items: { type: "string", maxLength: 120 }, maxItems: 20 } }, additionalProperties: false }, summary: { type: "string", maxLength: 1500 }, evidence: { type: "array", items: { type: "object", properties: { ts: { type: "string", maxLength: 40 }, problem: { type: "string", maxLength: 1200 }, reason: { type: "string", maxLength: 1200 } }, additionalProperties: false }, maxItems: 20 }, exclusions_considered: { type: "string", maxLength: 8000 }, conversation_id: { type: "string" } }, required: ["action", "subject", "title"], additionalProperties: false },
+      name: "oit_kb_propose", description: "提交待用户审核的技巧正文提案（禁止直写）。先参考 oit_kb_search 的 excluded_tactics，符合排除描述的不得提交；exclusions_considered 原样填写该设置。title 须规范命名：有公认专名或定理名时原样保留；无公认专名时尽量8字以内浓缩核心对象与方法词，不写完整句子、不带题号/具体数字/临时符号、不加冗余后缀、不含 Markdown/LaTeX；summary 仅用纯自然语言简短说明。",
+      inputSchema: { type: "object", properties: { action: { type: "string", enum: ["ADD_CARD", "ADD_DERIVED", "UPDATE_CARD", "MERGE_ALIAS", "REPARENT"] }, subject: { type: "string", maxLength: 60 }, title: { type: "string", maxLength: 300, description: "规范短标题：有公认专名/定理名时原样保留；否则尽量8字以内浓缩核心对象与方法词，不写完整句子、不带题号/具体数字/临时符号、不含 Markdown/LaTeX。" }, target_card_id: { type: "string", maxLength: 120 }, parent_ids: { type: "array", items: { type: "string" }, maxItems: 20 }, proposed_card: { type: "object", properties: { category: { type: "string", maxLength: 120 }, topic: { type: "string", maxLength: 300 }, aliases: { type: "array", items: { type: "string", maxLength: 300 }, maxItems: 40 }, triggers: { type: "array", items: { type: "string", maxLength: 600 }, maxItems: 40 }, statement: { type: "string", maxLength: 6000 }, preconditions: { type: "string", maxLength: 6000 }, proof_sketch: { type: "string", maxLength: 6000 }, generality: { type: "string", enum: ["universal", "explain_first", "non_universal"] }, examples: { type: "array", items: { type: "string", maxLength: 1500 }, maxItems: 20 }, parent_ids: { type: "array", items: { type: "string", maxLength: 120 }, maxItems: 20 } }, additionalProperties: false }, summary: { type: "string", maxLength: 1500, description: "给人看的简短审核说明，仅用纯自然语言，严禁 Markdown/LaTeX。" }, evidence: { type: "array", items: { type: "object", properties: { ts: { type: "string", maxLength: 40 }, problem: { type: "string", maxLength: 1200 }, reason: { type: "string", maxLength: 1200 } }, additionalProperties: false }, maxItems: 20 }, exclusions_considered: { type: "string", maxLength: 8000 }, conversation_id: { type: "string" } }, required: ["action", "subject", "title"], additionalProperties: false },
     },
     {
       name: "oit_bind_persona",
@@ -243,11 +243,11 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_subject",
       description:
-        "委托解题子代理，统一负责数理化解题和知识库处理；分类、整理、补齐、复盘与提案始终交给它。桌面端自动检索本机技巧库并返回探索/保守模式及排除技巧；宿主原生 oit-subject 应先看图提取特征并调用 oit_kb_search。遵守其模式和排除设置，实际引用卡片通过 kb_citations 传给 oit_reply。解答图片模式开启时，风格化后必须调用 oit_answer_image，再用自然简洁且不含 Markdown / LaTeX 源码的可见正文提交 oit_reply。",
+        "委托解题子代理，统一负责各学科解题（不限于数理化）和知识库处理；分类、整理、补齐、复盘与提案始终交给它。桌面端自动检索本机技巧库并返回探索/保守模式及排除技巧；宿主原生 oit-subject 应先看图提取特征并调用 oit_kb_search。遵守其模式和排除设置，实际引用卡片通过 kb_citations 传给 oit_reply。解答图片模式开启时，风格化后必须调用 oit_answer_image，再用自然简洁且不含 Markdown / LaTeX 源码的可见正文提交 oit_reply。",
       inputSchema: {
         type: "object",
         properties: {
-          domain: { type: "string", enum: ["math", "physics", "chemistry"] },
+          domain: { type: "string", maxLength: 60, description: "学科领域标识，如 math、physics、chemistry、biology、cs、english、history、general 等。" },
           session: { type: "string", maxLength: 80 },
           question: { type: "string", maxLength: 8000 },
           conversation_id: { type: "string", maxLength: 120 },
@@ -263,7 +263,7 @@ function buildTools(): ToolSpec[] {
       inputSchema: {
         type: "object",
         properties: {
-          domain: { type: "string", enum: ["math", "physics", "chemistry"] },
+          domain: { type: "string", maxLength: 60, description: "学科领域标识，与本次解题对应。" },
           session: { type: "string", maxLength: 80 },
           answer: { type: "string", maxLength: 8000, description: "学科子代理返回的原始答案。" },
           styled_answer: { type: "string", maxLength: 8000, description: "聊天 AI 按人设风格化改写后的完整解答版本。" },
