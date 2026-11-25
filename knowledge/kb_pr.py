@@ -117,6 +117,8 @@ class ProposalMixin:
                     value = list(dict.fromkeys(previous + value))
                 elif key in ("statement", "preconditions", "proof_sketch") and isinstance(value, str) and old is not None:
                     value = _merge_text_supplement(pr["proposed_card"].get(key, ""), value)
+                elif key in ("category", "topic") and old is not None and not str(value or "").strip():
+                    continue
                 pr["proposed_card"][key] = value
             pr.update(parent_ids=parents or pr.get("parent_ids", []), summary=summary or pr.get("summary", ""), updated_at=now())
             pr["evidence"].extend(evidence)

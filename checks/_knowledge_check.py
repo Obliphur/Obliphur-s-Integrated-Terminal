@@ -451,4 +451,135 @@ pr_open2 = kb.propose("ADD_CARD", subject="physics", title="等效电源法技�
 assert pr_open1["pr_id"] == pr_open2["pr_id"] and pr_open2["squash_count"] >= 2, (pr_open1, pr_open2)
 assert "等效电源法技巧" in pr_open2["proposed_card"].get("aliases", [])
 
+# 17) 批量自动生成过程中：同技巧再次出现时合并补充到未审批提案，不生成第二张重复提案
+batch_dir = base / "batch_merge_src"
+batch_dir.mkdir()
+(batch_dir / "1_first.txt").write_text("来源一：拉密定理基础结论", encoding="utf-8")
+(batch_dir / "2_second.txt").write_text("来源二：拉密定理补充触发词与前提", encoding="utf-8")
+(batch_dir / "3_third.txt").write_text("来源三：通过待审ID补充拉密定理例题", encoding="utf-8")
+(batch_dir / "4_dup.txt").write_text("来源四：完全重复无新信息", encoding="utf-8")
+
+def batch_merge_ai(prompt, *, image=None, **kwargs):
+    if "来源一" in prompt:
+        return json.dumps({"knowledge": True, "cards": [{
+            "kind": "tactical", "subject": "physics", "category": "力学与牛顿定律",
+            "title": "拉密定理", "triggers": ["三力平衡", "共点力"],
+            "statement": "三力平衡时力与对角正弦成正比", "preconditions": "三力共点平衡",
+            "proof_sketch": "构成封闭矢量三角形后用正弦定理", "generality": "explain_first",
+            "review_summary": "三力平衡快速列比例",
+        }]})
+    if "来源二" in prompt:
+        assert "(待审)" in prompt and "拉密定理" in prompt, "待审提案应出现在目录提示中"
+        return json.dumps({"knowledge": True, "cards": [{
+            "kind": "tactical", "subject": "physics", "category": "",
+            "title": "拉密定理技巧", "triggers": ["静态平衡求张力"],
+            "statement": "动态平衡中角度变化时可快速判断力的增减",
+            "preconditions": "仅适用于三力汇交", "generality": "explain_first",
+        }]})
+    if "来源三" in prompt:
+        target_pr = next(p for p in kb.proposals() if p["title"] == "拉密定理")
+        assert target_pr["pr_id"] in prompt, "目录提示应包含待审提案ID以供补充"
+        return json.dumps({"knowledge": True, "cards": [{
+            "kind": "tactical", "subject": "physics", "title": "三力正弦比例法",
+            "target_card_id": target_pr["pr_id"], "triggers": ["轻绳挂重物"],
+            "examples": ["双绳悬挂小球求拉力变化"], "generality": "explain_first",
+        }]})
+    return json.dumps({"knowledge": True, "cards": [{
+        "kind": "tactical", "subject": "physics", "title": "拉密定理",
+        "triggers": ["三力平衡"], "statement": "三力平衡时力与对角正弦成正比",
+        "preconditions": "三力共点平衡", "generality": "explain_first",
+    }]})
+
+batch_rep = auto_generate(kb, batch_merge_ai, batch_dir, ["txt"])
+lami_prs = [p for p in kb.proposals() if p["subject"] == "physics" and "拉密" in p["title"]]
+assert len(lami_prs) == 1, f"不应生成重复待审提案，实际: {lami_prs}"
+lami_pr = lami_prs[0]
+assert lami_pr["squash_count"] == 3, lami_pr
+assert lami_pr["proposed_card"].get("category") == "力学与牛顿定律", "空分类不应覆盖已有分类"
+assert {"三力平衡", "静态平衡求张力", "轻绳挂重物"} <= set(lami_pr["proposed_card"].get("triggers", []))
+assert {"拉密定理技巧", "三力正弦比例法"} <= set(lami_pr["proposed_card"].get("aliases", []))
+assert "动态平衡中角度变化时可快速判断力的增减" in lami_pr["proposed_card"].get("statement", "")
+assert "双绳悬挂小球求拉力变化" in lami_pr["proposed_card"].get("examples", [])
+assert lami_pr["summary"] == "三力平衡快速列比例", "空摘要不应覆盖原有摘要"
+assert batch_rep["duplicates"] >= 2, batch_rep
+
+# 18) 纯文本分段卡片格式（零 JSON 转义，含裸双引号、LaTeX 反斜杠、多行公式、截断容错）与格式异常重试
+from knowledge.kb_ai import parse_cards_result, parse_review_result
+plain_block = """
+===CARD===
+kind: tactical
+subject: physics
+category: 动量与碰撞
+title: 整体法动量守恒
+topic: 动量守恒
+generality: explain_first
+aliases: "孤立系统"整体法 | 系统动量法
+triggers:
+- 两物块碰撞
+- 光滑水平面
+- "合外力为零"
+statement:
+把"孤立系统"看作整体，满足 $\\sum \\vec{F}_{外} = 0$ 时：
+$$m_1 v_1 + m_2 v_2 = m_1 v_1' + m_2 v_2'$$
+preconditions:
+i. 系统所受合外力为零
+ii. 或某方向外力远小于内力
+proof_sketch:
+由牛顿第三定律，内力冲量和为零。
+examples:
+- 子弹打入木块求共同速度
+review_summary:
+多个物体相互作用且系统合外力为零时，直接对整体列动量守恒方程。
+===END===
+===CARD===
+kind: conceptual
+subject: math
+title: 未闭合截断卡片
+body:
+写到一半被截断了也没有 ===END===，但内容含 $\\frac{1}{2}$ 和 "引号"
+"""
+parsed_blocks = parse_cards_result(plain_block)
+assert len(parsed_blocks) == 2, parsed_blocks
+assert parsed_blocks[0]["title"] == "整体法动量守恒"
+assert '"孤立系统"' in parsed_blocks[0]["statement"] and "\\sum \\vec{F}_{外}" in parsed_blocks[0]["statement"]
+assert parsed_blocks[0]["triggers"] == ["两物块碰撞", "光滑水平面", "合外力为零"]
+assert parsed_blocks[1]["title"] == "未闭合截断卡片" and "\\frac{1}{2}" in parsed_blocks[1]["body"]
+assert parse_cards_result("===NONE===") == []
+
+plain_review = """
+used_card_ids: card_1 | card_2
+failed_card_ids: card_3
+===PROPOSAL===
+action: ADD_CARD
+subject: math
+title: 切线放缩
+category: 函数与导数
+generality: explain_first
+triggers:
+- 指数不等式
+- 含 e^x 恒成立
+statement:
+利用 $e^x \\ge x + 1$ 放缩。
+summary:
+遇到含指数的不等式证明时可用切线放缩简化。
+===END===
+"""
+parsed_rev = parse_review_result(plain_review)
+assert parsed_rev["used_card_ids"] == ["card_1", "card_2"] and parsed_rev["failed_card_ids"] == ["card_3"]
+assert len(parsed_rev["proposals"]) == 1 and parsed_rev["proposals"][0]["title"] == "切线放缩"
+
+retry_dir = base / "retry_plain_src"
+retry_dir.mkdir()
+(retry_dir / "broken.txt").write_text("需要重试的笔记内容", encoding="utf-8")
+retry_calls = []
+def retry_ai(prompt, *, image=None, **kwargs):
+    retry_calls.append(prompt)
+    if len(retry_calls) == 1:
+        return "抱歉，这是一段未按格式输出的纯文字说明。"
+    assert "===CARD===" in prompt
+    return "===CARD===\nkind: conceptual\nsubject: math\ntitle: 重试成功概念\nbody:\n整理后的定义。\n===END==="
+
+retry_rep = auto_generate(kb, retry_ai, retry_dir, ["txt"])
+assert retry_rep["errors"] == 0 and retry_rep["created"] == 1 and len(retry_calls) == 2, (retry_rep, len(retry_calls))
+
 print("knowledge check OK")
