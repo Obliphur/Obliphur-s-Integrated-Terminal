@@ -265,4 +265,34 @@ with patch("pages.knowledge_page.open_obsidian", side_effect=lambda p, d=None: (
     KnowledgePage.open_selected(fake_page, "proposals")
 assert opened_obs == [universal["file_path"]] and reviewed == ["pr_1"] and not detailed
 
+# 10) 多选、全选/全不选、批量批准提案与批量删除卡片
+pr_a = kb.propose("ADD_CARD", subject="math", title="批量技巧甲",
+                  proposed_card={"statement": "结论甲", "preconditions": "前提甲", "proof_sketch": "补证甲", "generality": "explain_first"})
+pr_b = kb.propose("ADD_CARD", subject="math", title="批量技巧乙",
+                  proposed_card={"statement": "结论乙", "preconditions": "前提乙", "proof_sketch": "补证乙", "generality": "universal"})
+_root2 = _tk.Tk()
+_root2.withdraw()
+try:
+    page2 = KnowledgePage(_root2, str(base))
+    page2.kb = kb
+    page2.show()
+    page2.tabs.select(2)  # 待审提案
+    page2.select_all("proposals")
+    assert set(page2.lists["proposals"].selection()) >= {pr_a["pr_id"], pr_b["pr_id"]}
+    page2.clear_selection("proposals")
+    assert page2.lists["proposals"].selection() == ()
+    page2.lists["proposals"].selection_set([pr_a["pr_id"], pr_b["pr_id"]])
+    page2.approve_selected()
+    assert not any(p["pr_id"] in {pr_a["pr_id"], pr_b["pr_id"]} for p in kb.proposals())
+    merged_ids = [cid for cid, c in kb.cards.items() if c["title"] in {"批量技巧甲", "批量技巧乙"}]
+    assert len(merged_ids) == 2
+    page2.tabs.select(0)
+    page2.lists["tactical"].selection_set(merged_ids)
+    with patch("pages.knowledge_page.messagebox.askyesno", return_value=True):
+        page2.delete_selected("tactical")
+    assert all(cid not in kb.cards for cid in merged_ids)
+    page2.destroy()
+finally:
+    _root2.destroy()
+
 print("knowledge check OK")

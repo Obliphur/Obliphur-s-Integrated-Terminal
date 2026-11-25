@@ -112,7 +112,7 @@ class KnowledgePage(tk.Frame):
                 note = tk.Label(frame, text=tr("概念性笔记仅供阅读与复习，AI 解题不会读取，也无权重排序"), bg=COLORS["bg"], fg=COLORS["text_dim"], justify="left", font=config.font("body"))
                 note.pack(fill="x", pady=6)
                 wrap_label(note)
-            tree = ttk.Treeview(frame, columns=("info",), show="tree headings", selectmode="browse")
+            tree = ttk.Treeview(frame, columns=("info",), show="tree headings", selectmode="extended")
             tree.heading("#0", text=tr("标题"))
             tree.heading("info", text=tr("学科 / 统计"))
             tree.column("#0", width=240, minwidth=100)
@@ -123,11 +123,25 @@ class KnowledgePage(tk.Frame):
             tree.pack(fill="both", expand=True)
             tree.bind("<Double-1>", lambda e, k=key: self.open_selected(k))
             tree.bind("<Return>", lambda e, k=key: self.open_selected(k))
+            tree.bind("<Control-a>", lambda e, k=key: (self.select_all(k), "break")[1])
+            tree.bind("<Control-A>", lambda e, k=key: (self.select_all(k), "break")[1])
+            tree.bind("<Delete>", lambda e, k=key: self.delete_selected(k))
             self.lists[key] = tree
         footer = tk.Frame(self, bg=COLORS["bg"])
         footer.pack(fill="x", padx=18, pady=(0, 10))
-        ttk.Button(footer, text=tr("查看所选卡片或提案"), command=lambda: self.open_selected(self.active_tab())).pack(side="left")
-        ttk.Button(footer, text=tr("管理所选卡片"), command=lambda: self.details(self.active_tab())).pack(side="left", padx=(8, 0))
+        batch_row = tk.Frame(footer, bg=COLORS["bg"])
+        batch_row.pack(fill="x", pady=(0, 6))
+        ttk.Button(batch_row, text=tr("全选"), command=self.select_all).pack(side="left")
+        ttk.Button(batch_row, text=tr("全不选"), command=self.clear_selection).pack(side="left", padx=(6, 0))
+        self.batch_approve_btn = ttk.Button(batch_row, text=tr("批量批准"), style="Accent.TButton", command=self.approve_selected)
+        self.batch_delete_btn = ttk.Button(batch_row, text=tr("批量删除"), command=self.delete_selected)
+        self.batch_delete_btn.pack(side="left", padx=(6, 0))
+        item_row = tk.Frame(footer, bg=COLORS["bg"])
+        item_row.pack(fill="x")
+        ttk.Button(item_row, text=tr("查看所选卡片或提案"), command=lambda: self.open_selected(self.active_tab())).pack(side="left")
+        ttk.Button(item_row, text=tr("管理所选卡片"), command=lambda: self.details(self.active_tab())).pack(side="left", padx=(8, 0))
+        self.tabs.bind("<<NotebookTabChanged>>", lambda _: self._sync_footer())
+        self._sync_footer()
         self.show()
 
     def _destroy(self, event):
@@ -164,6 +178,68 @@ class KnowledgePage(tk.Frame):
 
     def active_tab(self):
         return list(self.lists)[self.tabs.index("current")]
+
+    def _sync_footer(self):
+        if not hasattr(self, "batch_approve_btn"):
+            return
+        is_proposals = self.active_tab() == "proposals"
+        self.batch_delete_btn.configure(text=tr("批量拒绝") if is_proposals else tr("批量删除"))
+        if is_proposals:
+            if not self.batch_approve_btn.winfo_ismapped():
+                self.batch_approve_btn.pack(side="left", padx=(6, 0), before=self.batch_delete_btn)
+        elif self.batch_approve_btn.winfo_ismapped():
+            self.batch_approve_btn.pack_forget()
+
+    def _all_tree_items(self, tree, parent=""):
+        items = []
+        for item in tree.get_children(parent):
+            items.append(item)
+            items.extend(self._all_tree_items(tree, item))
+        return items
+
+    def select_all(self, kind=None):
+        tree = self.lists[kind or self.active_tab()]
+        items = self._all_tree_items(tree)
+        if items:
+            tree.selection_set(items)
+
+    def clear_selection(self, kind=None):
+        tree = self.lists[kind or self.active_tab()]
+        current = tree.selection()
+        if current:
+            tree.selection_remove(current)
+
+    def approve_selected(self):
+        selected = list(self.lists["proposals"].selection())
+        if not selected:
+            return
+        merged, errors = 0, 0
+        for pr_id in selected:
+            try:
+                self.kb.merge(pr_id, maintainer=True)
+                merged += 1
+            except (ValueError, OSError):
+                errors += 1
+        self.show()
+        if errors:
+            toast.warn(tr("已批准 {ok} 项，失败 {err} 项。", ok=merged, err=errors))
+
+    def delete_selected(self, kind=None):
+        kind = kind or self.active_tab()
+        selected = list(self.lists[kind].selection())
+        if not selected:
+            return
+        if kind == "proposals":
+            if not messagebox.askyesno(tr("批量拒绝提案"), tr("确定拒绝选中的 {n} 项提案吗？", n=len(selected)), parent=self):
+                return
+            for pr_id in selected:
+                self.kb.reject(pr_id, maintainer=True)
+        else:
+            if not messagebox.askyesno(tr("批量删除卡片"), tr("确定删除选中的 {n} 张卡片吗？", n=len(selected)), parent=self):
+                return
+            for card_id in selected:
+                self.kb.delete_card(card_id, maintainer=True)
+        self.show()
 
     def show(self):
         self.kb.refresh()
