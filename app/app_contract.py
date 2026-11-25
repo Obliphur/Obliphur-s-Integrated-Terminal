@@ -217,11 +217,6 @@ class ContractMixin:
             return tr("请先结束外出再开始合约")
         if getattr(self, "net", None) is not None and self.net.mode == "online":
             return tr("请先结束联网再开始合约")
-        sync = getattr(self, "sync", None)
-        diff = sync.version_mismatch() if sync is not None else []
-        if diff:
-            name, v, _newer = diff[0]
-            return tr("{name} 的版本 ({v}) 和本机 ({me}) 不一样, 不能开始合约", name=name, v=v, me=config.APP_VERSION)
         return ""
 
     def start_contract(self, terms):

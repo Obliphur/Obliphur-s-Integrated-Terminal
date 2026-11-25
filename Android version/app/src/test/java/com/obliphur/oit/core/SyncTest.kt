@@ -266,7 +266,7 @@ class SyncTest {
             la.dev = false
             assertTrue(sa.syncWith(sb.myId)); assertFalse(lb.dev)
             assertEquals("1.0.0", sa.peers()[sb.myId]!!.optString("version"))
-            // 版本不一样不影响在线与专注计入; 两边仍知道版本差异 (不能开始合约)
+            // 版本不一样不影响在线与专注计入; 两边仍知道版本差异 (可继续开始合约)
             assertTrue(sa.versionMismatch().isEmpty()); assertTrue(sa.deviceStates().single().online)
             val versionStart = System.currentTimeMillis() - 1000
             la.version = "1.0.1"

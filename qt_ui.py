@@ -27,6 +27,7 @@ try:
         QGridLayout,
         QLabel,
         QComboBox,
+        QFrame,
         QLineEdit,
         QListWidget,
         QScrollArea,
@@ -480,13 +481,24 @@ if QApplication is not None:
 
         def _build(self):
             central = QWidget(self)
-            outer = QHBoxLayout(central)
+            root_layout = QVBoxLayout(central)
+            root_layout.setContentsMargins(0, 0, 0, 0)
+            root_layout.setSpacing(0)
+            self.topbar = QWidget(central)
+            self.topbar.setObjectName("topbar")
+            self.topbar.setFixedHeight(config.scaled(4))
+            root_layout.addWidget(self.topbar)
+            shell = QWidget(central)
+            outer = QHBoxLayout(shell)
             outer.setContentsMargins(0, 0, 0, 0)
             outer.setSpacing(0)
-            self.sidebar = QWidget(central)
+            root_layout.addWidget(shell, 1)
+            self.sidebar = QWidget(shell)
+            self.sidebar.setObjectName("sidebar")
+            self.sidebar.setFixedWidth(config.scaled(208))
             side_layout = QVBoxLayout(self.sidebar)
-            side_layout.setContentsMargins(12, 18, 12, 12)
-            side_layout.setSpacing(4)
+            side_layout.setContentsMargins(0, config.scaled(14), 0, 0)
+            side_layout.setSpacing(config.scaled(2))
             self._side_layout = side_layout
             self._stack = QStackedWidget(central)
             self._stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -498,6 +510,8 @@ if QApplication is not None:
             order = list(labels) or ["timer", "log", "cal", "stats", "contract", "comm", "settings"]
             for key in order:
                 button = QPushButton(labels.get(key, key.title()), self.sidebar)
+                button.setObjectName("navButton")
+                button.setMinimumHeight(config.scaled(48))
                 button.setCursor(Qt.PointingHandCursor)
                 button.clicked.connect(lambda _checked=False, k=key: self.show_page(k))
                 self._nav[key] = button
@@ -519,15 +533,26 @@ if QApplication is not None:
         def _add_timer_page(self):
             page = QWidget(self._stack)
             layout = QVBoxLayout(page)
-            layout.setContentsMargins(36, 28, 36, 28)
-            layout.setSpacing(16)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            header = QWidget(page)
+            header_layout = QVBoxLayout(header)
+            header_layout.setContentsMargins(config.scaled(28), config.scaled(22), config.scaled(28), config.scaled(8))
             title = QLabel(tr("⏱  Focus Timer"), page)
             title.setObjectName("pageTitle")
-            layout.addWidget(title)
+            header_layout.addWidget(title)
+            layout.addWidget(header)
+            separator = QFrame(page)
+            separator.setFrameShape(QFrame.HLine)
+            separator.setFixedHeight(1)
+            sep_layout = QHBoxLayout()
+            sep_layout.setContentsMargins(config.scaled(26), 0, config.scaled(26), 0)
+            sep_layout.addWidget(separator)
+            layout.addLayout(sep_layout)
             card = QWidget(page)
             card.setObjectName("timerCard")
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(24, 22, 24, 22)
+            card_layout.setContentsMargins(config.scaled(22), config.scaled(18), config.scaled(22), config.scaled(18))
             self.status = QLabel(page)
             self.status.setObjectName("status")
             self.time_label = QLabel("0.00 min", page)
@@ -538,19 +563,43 @@ if QApplication is not None:
             self.today_label.setObjectName("today")
             for widget in (self.status, self.time_label, self.sub_label, self.today_label):
                 card_layout.addWidget(widget)
-            layout.addWidget(card)
-            actions = QHBoxLayout()
+            card_wrap = QHBoxLayout()
+            card_wrap.setContentsMargins(config.scaled(26), config.scaled(20), config.scaled(26), 0)
+            card_wrap.addWidget(card)
+            layout.addLayout(card_wrap)
+            actions = QVBoxLayout()
+            actions.setContentsMargins(config.scaled(26), config.scaled(6), config.scaled(26), config.scaled(22))
+            primary = QHBoxLayout()
+            primary.setAlignment(Qt.AlignCenter)
             self.action = QPushButton(page)
             self.break_button = QPushButton(page)
             self.pause = QPushButton(page)
-            self.sleep = QPushButton(tr("😴  睡眠"), page)
+            self.action.setObjectName("accentButton")
             self.action.clicked.connect(self.model.on_action)
             self.break_button.clicked.connect(self.model.on_break_button)
             self.pause.clicked.connect(self.model.toggle_focus_pause)
+            for widget in (self.action, self.break_button, self.pause):
+                primary.addWidget(widget)
+            actions.addLayout(primary)
+            secondary = QHBoxLayout()
+            secondary.setAlignment(Qt.AlignCenter)
+            self.sleep = QPushButton(page)
+            self.prestart = QPushButton(page)
+            self.outing = QPushButton(page)
             self.sleep.clicked.connect(self.model._sleep_click)
-            for widget in (self.action, self.break_button, self.pause, self.sleep):
-                actions.addWidget(widget)
+            self.prestart.clicked.connect(self.model._prestart_click)
+            self.outing.clicked.connect(self.model._outing_click)
+            for widget in (self.sleep, self.prestart, self.outing):
+                secondary.addWidget(widget)
+            actions.addLayout(secondary)
             layout.addLayout(actions)
+            flavor = QLabel(tr("在第二段区间内 学的时间越长得到的休息时间越长.请尽量长时间地专注."), page)
+            flavor.setObjectName("flavor")
+            flavor.setWordWrap(True)
+            flavor_layout = QHBoxLayout()
+            flavor_layout.setContentsMargins(config.scaled(26), 0, config.scaled(26), config.scaled(22))
+            flavor_layout.addWidget(flavor)
+            layout.addLayout(flavor_layout)
             layout.addStretch(1)
             self._pages["timer"] = page
             self._stack.addWidget(page)
@@ -562,18 +611,33 @@ if QApplication is not None:
             dim = COLORS.get("text_dim", "#a0a0a0")
             accent = COLORS.get("accent", "#4da3ff")
             border = COLORS.get("border", "#404040")
+            family = getattr(config, "FONT_FAMILY", "Microsoft YaHei UI")
+
+            def px(key):
+                value = config.font(key)[1]
+                return abs(int(value))
+
+            body_px, nav_px = px("body"), px("nav")
+            button_px, small_px = px("btn"), px("small")
+            h1_px, big_px = px("h1"), px("big")
             self.setStyleSheet(f"""
-                QMainWindow, QWidget {{ background: {bg}; color: {text}; }}
+                QMainWindow, QWidget {{ background: {bg}; color: {text}; font-family: '{family}'; font-size: {body_px}px; }}
+                QWidget#topbar {{ background: {COLORS.get('topbar', accent)}; }}
+                QWidget#sidebar {{ background: {card}; border-right: 1px solid {border}; }}
+                QPushButton#navButton {{ background: {card}; color: {text}; border: 0; border-radius: 0; text-align: left; font-size: {nav_px}px; padding-left: {config.scaled(14)}px; padding-right: {config.scaled(10)}px; padding-top: {config.scaled(12)}px; padding-bottom: {config.scaled(12)}px; }}
+                QPushButton#navButton:hover {{ background: {border}; }}
+                QPushButton#navButton[active="true"] {{ background: {COLORS.get('accent_fill', accent)}; color: {COLORS.get('on_accent_fill', COLORS.get('on_accent', '#ffffff'))}; }}
                 QWidget#timerCard {{ background: {card}; border: 1px solid {border}; }}
-                QLabel#pageTitle {{ font-size: 22px; font-weight: 700; }}
-                QLabel#time {{ font-size: 42px; font-weight: 700; color: {text}; }}
+                QLabel#pageTitle {{ font-size: {h1_px}px; font-weight: 700; }}
+                QLabel#time {{ font-size: {big_px}px; font-weight: 700; color: {text}; }}
                 QLabel#status, QLabel#today {{ color: {accent}; font-weight: 600; }}
-                QPushButton {{ background: {card}; color: {text}; border: 1px solid {border}; padding: 9px 14px; }}
+                QLabel#flavor, QLabel#settingsPending {{ color: {dim}; font-size: {small_px}px; }}
+                QPushButton {{ background: {card}; color: {text}; border: 1px solid {border}; font-size: {button_px}px; padding: {config.scaled(10)}px {config.scaled(18)}px; }}
                 QPushButton:hover {{ border-color: {accent}; }}
                 QPushButton:disabled {{ color: {dim}; }}
-                QPushButton[active="true"] {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
-                QLabel#calendarHeader {{ background: {card}; color: {dim}; padding: 6px; }}
-                QLabel#calendarCell {{ background: {card}; border: 1px solid {border}; padding: 4px; }}
+                QPushButton#accentButton {{ background: {COLORS.get('accent_fill', accent)}; color: {COLORS.get('on_accent_fill', COLORS.get('on_accent', '#ffffff'))}; border: 0; font-weight: 700; }}
+                QLabel#calendarHeader {{ background: {card}; color: {dim}; padding: {config.scaled(6)}px; font-size: {small_px}px; }}
+                QLabel#calendarCell {{ background: {card}; border: 1px solid {border}; padding: {config.scaled(4)}px; font-size: {small_px}px; }}
                 QLabel#calendarCell[today="true"] {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
                 QWidget#timerCard QPushButton {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
             """)
@@ -612,7 +676,11 @@ if QApplication is not None:
             self.time_label.setText(_tk_text(getattr(self.model, "lbl_time", None), "0.00 min"))
             self.sub_label.setText(_tk_text(getattr(self.model, "lbl_sub", None)))
             self.today_label.setText(_tk_text(getattr(self.model, "lbl_today", None)))
-            for target, source in ((self.action, "btn_action"), (self.break_button, "btn_break"), (self.pause, "btn_pause")):
+            for target, source in (
+                (self.action, "btn_action"), (self.break_button, "btn_break"),
+                (self.pause, "btn_pause"), (self.sleep, "btn_sleep"),
+                (self.prestart, "btn_prestart"), (self.outing, "btn_outing"),
+            ):
                 widget = getattr(self.model, source, None)
                 target.setText(_tk_text(widget))
                 try:

@@ -1011,8 +1011,6 @@ object EnStrings {
         "请先结束休息再开始合约" to "End the break before starting a contract",
         "⚠ 本机版本 {me} 低于 {name} ({v}), 请更新." to
             "⚠ This device ({me}) is older than {name} ({v}). Please update.",
-        "{name} 的版本 ({v}) 和本机 ({me}) 不一样, 不能开始合约" to
-            "{name} runs version {v}, this device runs {me}: a contract can't be started",
         "请先结束联网再开始合约" to "Go offline before starting a contract",
         "合约期间" to "During the contract",
         "· 违反 {n} 次 / 空闲 15 分钟: 失败" to "· {n} violations / 15 min idle: failure",
@@ -1586,7 +1584,6 @@ object EnStrings {
         "开始行动" to "Start operation",
         "窗口超过 {n} 个" to "more than {n} windows open",
         "用 {exe} 播放音频" to "played audio with {exe}",
-        "{name} 的版本 ({v}) 和本机 ({me}) 不一样, 不能开始合约" to "{name} runs version {v}, this device runs {me}: a contract can't be started",
         "可选词条" to "Available terms",
         "即时生效.合约页 (和合约页上的侧边栏) 的配色." to "Takes effect at once. Colors of the contract page (and its sidebar).",
         "合约完成后的第一次休息: 暂停时剩余时间 ×{r:g} 留给下次." to "First break after the contract: pausing keeps ×{r:g} of the rest for next time.",

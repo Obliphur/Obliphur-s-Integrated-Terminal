@@ -139,7 +139,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var motherFresh: () -> Boolean = { true }
     /** 此刻离线的设备: (名字, 最后一次有它消息的时刻, 毫秒). */
     var offlineDevices: () -> List<Pair<String, Long>> = { emptyList() }
-    /** 绑定的设备里版本和本机不一样的: (名字, 版本, 是否比本机新). 不一样时不能开始合约. */
+    /** 绑定的设备里版本和本机不一样的: (名字, 版本, 是否比本机新). */
     var versionMismatch: () -> List<Triple<String, String, Boolean>> = { emptyList() }
     /** 冷静期到了的解除绑定就解除, 并请那台设备清空全部数据 (返回这次解除了的设备的名字, MECHANICS 15.1). */
     var checkUnbind: () -> List<String> = { emptyList() }
@@ -1615,9 +1615,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (timer.state == TState.ON_BREAK) return tr("请先结束休息再开始合约")
         if (behavior.active() != null) return tr("请先结束外出再开始合约")
         if (net.mode == "online") return tr("请先结束联网再开始合约")
-        val diff = versionMismatch().firstOrNull() ?: return ""
-        return tr("{name} 的版本 ({v}) 和本机 ({me}) 不一样, 不能开始合约", "name" to diff.first, "v" to diff.second,
-            "me" to com.obliphur.oit.BuildConfig.VERSION_NAME)
+        return ""
     }
 
     fun startContract(terms: Collection<String>) {

@@ -1691,8 +1691,6 @@ EN = {
     "请先结束休息再开始合约": "End the break before starting a contract",
     "⚠ 本机版本 {me} 低于 {name} ({v}), 请更新.":
         "⚠ This device ({me}) is older than {name} ({v}). Please update.",
-    "{name} 的版本 ({v}) 和本机 ({me}) 不一样, 不能开始合约":
-        "{name} runs version {v}, this device runs {me}: a contract can't be started",
     "请先结束联网再开始合约": "Go offline before starting a contract",
     "合约期间": "During the contract",
     "· 整点记录超时未填写: 违反 1 次": "· Hour log entry not filled in time: 1 violation",
