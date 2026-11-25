@@ -774,6 +774,53 @@ if QApplication is not None:
             finally:
                 self._syncing = False
 
+    class QtResetPage(QWidget):
+        """Qt confirmation surface for the existing reset and wipe workflow."""
+
+        def __init__(self, model, parent=None):
+            super().__init__(parent)
+            self.model = model
+            root = QVBoxLayout(self)
+            root.setContentsMargins(config.scaled(28), config.scaled(22), config.scaled(28), config.scaled(22))
+            title = QLabel(tr("🔄  重置"), self)
+            title.setObjectName("pageTitle")
+            root.addWidget(title)
+            line = QFrame(self)
+            line.setFrameShape(QFrame.HLine)
+            root.addWidget(line)
+            warning = QLabel(tr("⚠  警告:这会永久删除全部数据"), self)
+            warning.setObjectName("resetWarning")
+            warning.setWordWrap(True)
+            root.addWidget(warning)
+            row = QHBoxLayout()
+            row.addWidget(QLabel(tr("输入 RESET 以确认"), self))
+            self.confirm = QLineEdit(self)
+            self.confirm.setMaxLength(16)
+            row.addWidget(self.confirm)
+            row.addStretch(1)
+            root.addLayout(row)
+            self.reset = QPushButton(tr("🔄  重置并清除数据"), self)
+            self.reset.setObjectName("dangerButton")
+            self.reset.setEnabled(False)
+            self.confirm.textChanged.connect(lambda text: self.reset.setEnabled(text.strip() == "RESET"))
+            self.reset.clicked.connect(self._reset)
+            root.addWidget(self.reset, 0, Qt.AlignLeft)
+            flavor = QLabel(tr("就这样回到一切之初,修正错误的抉择."), self)
+            flavor.setWordWrap(True)
+            flavor.setObjectName("flavor")
+            root.addWidget(flavor)
+            root.addStretch(1)
+
+        def _reset(self):
+            if self.confirm.text().strip() != "RESET":
+                return
+            self.model.var_confirm.set("RESET")
+            self.model.on_reset()
+            self.confirm.clear()
+
+        def refresh(self):
+            self.confirm.clear()
+
     class QtNetPage(QWidget):
         """Qt presentation for the network request workflow."""
 
@@ -1064,7 +1111,8 @@ if QApplication is not None:
                             QtNetPage(self.model, self._stack) if key == "net" else
                             QtHourLogPage(self.model, self._stack) if key == "log" else
                             QtContractPage(self.model, self._stack) if key == "contract" else
-                            QtKnowledgePage(self.model, self._stack) if key == "knowledge" else QLabel(
+                            QtKnowledgePage(self.model, self._stack) if key == "knowledge" else
+                            QtResetPage(self.model, self._stack) if key == "reset" else QLabel(
                         tr("正在迁移此页面到 Qt6"), self._stack))
                     if isinstance(page, QLabel):
                         page.setAlignment(Qt.AlignCenter)
@@ -1180,6 +1228,8 @@ if QApplication is not None:
                 QPushButton:hover {{ border-color: {accent}; }}
                 QPushButton:disabled {{ color: {dim}; }}
                 QPushButton#accentButton {{ background: {COLORS.get('accent_fill', accent)}; color: {COLORS.get('on_accent_fill', COLORS.get('on_accent', '#ffffff'))}; border: 0; font-weight: 700; }}
+                QPushButton#dangerButton {{ background: {COLORS.get('danger_fill', COLORS.get('danger', accent))}; color: {COLORS.get('on_danger_fill', text)}; border-color: {COLORS.get('danger', accent)}; font-weight: 700; }}
+                QLabel#resetWarning {{ color: {COLORS.get('danger', accent)}; background: {COLORS.get('danger_bg', card)}; border: 1px solid {COLORS.get('danger', accent)}; padding: {config.scaled(12)}px; font-weight: 700; }}
                 QLabel#calendarHeader {{ background: {card}; color: {dim}; padding: {config.scaled(6)}px; font-size: {small_px}px; }}
                 QLabel#calendarCell {{ background: {card}; border: 1px solid {border}; padding: {config.scaled(4)}px; font-size: {small_px}px; }}
                 QLabel#calendarCell[today="true"] {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
@@ -1225,6 +1275,8 @@ if QApplication is not None:
             elif key == "contract":
                 self._pages[key].refresh()
             elif key == "knowledge":
+                self._pages[key].refresh()
+            elif key == "reset":
                 self._pages[key].refresh()
             for name, button in self._nav.items():
                 button.setProperty("active", name == key)
