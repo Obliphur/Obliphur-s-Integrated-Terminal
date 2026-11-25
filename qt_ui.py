@@ -20,7 +20,7 @@ from settings_manager import SETTINGS_PAGES, page_specs
 
 try:
     from PySide6.QtCore import QTimer, Qt
-    from PySide6.QtGui import QCloseEvent, QFont
+    from PySide6.QtGui import QCloseEvent, QFontDatabase
     from PySide6.QtWidgets import (
         QApplication,
         QHBoxLayout,
@@ -465,6 +465,8 @@ if QApplication is not None:
             self.model = model
             self.tk_root = tk_root
             self._closing = False
+            self._qt_font_id = -1
+            self._qt_font_family = ""
             self._nav = {}
             self._pages = {}
             self.setWindowTitle(self._title())
@@ -611,11 +613,13 @@ if QApplication is not None:
             dim = COLORS.get("text_dim", "#a0a0a0")
             accent = COLORS.get("accent", "#4da3ff")
             border = COLORS.get("border", "#404040")
-            family = getattr(config, "FONT_FAMILY", "Microsoft YaHei UI")
+            family = self._font_family()
 
             def px(key):
                 value = config.font(key)[1]
-                return abs(int(value))
+                # Tk uses point sizes for normal themes and pixel sizes (negative
+                # values) for the urban pixel theme. Qt stylesheets use pixels.
+                return abs(int(value)) if value < 0 else max(8, round(float(value) * 96.0 / 72.0))
 
             body_px, nav_px = px("body"), px("nav")
             button_px, small_px = px("btn"), px("small")
@@ -641,6 +645,25 @@ if QApplication is not None:
                 QLabel#calendarCell[today="true"] {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
                 QWidget#timerCard QPushButton {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
             """)
+
+        def _font_family(self):
+            """Load the urban theme font into Qt; fall back to the original UI font."""
+            if not getattr(config, "THEME_PIXEL", False):
+                return getattr(config, "FONT_FAMILY_DEFAULT", "Microsoft YaHei UI")
+            spec = (getattr(config, "THEME_DATA", {}) or {}).get("font") or {}
+            try:
+                path = config.asset_path(*spec["file"])
+                if self._qt_font_id < 0 or not self._qt_font_family:
+                    self._qt_font_id = QFontDatabase.addApplicationFont(path)
+                    if self._qt_font_id >= 0:
+                        families = QFontDatabase.applicationFontFamilies(self._qt_font_id)
+                        if families:
+                            self._qt_font_family = families[0]
+                if self._qt_font_family:
+                    return self._qt_font_family
+            except Exception:
+                pass
+            return getattr(config, "FONT_FAMILY_DEFAULT", "Microsoft YaHei UI")
 
         def show_page(self, key: str):
             if key not in self._pages:
