@@ -267,6 +267,7 @@ assert opened_obs == [universal["file_path"]] and reviewed == ["pr_1"] and not d
 
 # 10) 多选、全选/全不选、批量批准提案与批量删除卡片
 pr_a = kb.propose("ADD_CARD", subject="math", title="批量技巧甲",
+                  summary="这是一段纯自然语言审核说明，不含公式。",
                   proposed_card={"statement": "结论甲", "preconditions": "前提甲", "proof_sketch": "补证甲", "generality": "explain_first"})
 pr_b = kb.propose("ADD_CARD", subject="math", title="批量技巧乙",
                   proposed_card={"statement": "结论乙", "preconditions": "前提乙", "proof_sketch": "补证乙", "generality": "universal"})

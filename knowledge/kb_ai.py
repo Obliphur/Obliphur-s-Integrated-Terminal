@@ -22,7 +22,8 @@ FIELD_GUIDE = (
     "proof_sketch：大题需要写过程时的简短补证或推导思路（explain_first 必须写清）；"
     "generality：universal（课本基础定理/通法，大题可直接用，无需额外证明）、explain_first（常见二级结论/技巧，选填可直接用，大题须先简证或解释来源）、non_universal（特殊模型/超纲/竞赛捷径，大题不可直接作为依据，仅限选填或思路参考），证据不足选 explain_first；"
     "examples：简短典型例题或用法示例列表（无则 []）；"
-    "body：概念卡的 Markdown 正文（技巧卡正文由上述各栏拼装，概念卡须把通俗讲解写在 body）。"
+    "body：概念卡的 Markdown 正文（技巧卡正文由上述各栏拼装，概念卡须把通俗讲解写在 body）；"
+    "review_summary：技巧卡提交审核时给人看的简短说明（单独编写，只用纯自然语言简单解释这张卡讲什么、什么时候用、注意什么，严禁使用任何 Markdown 标记或 LaTeX 公式；概念卡可留空）。"
     "排版要求：任一栏目或正文若分多条列出，必须使用小写罗马数字序号（如 i. ii. iii. iv.）。"
 )
 
@@ -30,8 +31,8 @@ SCHEMA = ('返回严格 JSON 卡片：{"kind":"conceptual 或 tactical","subject
           '"title":"简短标题（尽量8字以内）","topic":"主题","aliases":[],"triggers":[],"parent_ids":[], '
           '"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
           '"generality":"universal/explain_first/non_universal",'
-          '"examples":[],"body":"概念卡的 Markdown 正文"}。' + FIELD_GUIDE +
-          '表述尽量通俗直观、说人话，少用晦涩学术腔；公式用 LaTeX。不得臆造缺失事实。')
+          '"examples":[],"body":"概念卡的 Markdown 正文","review_summary":"纯自然语言简短审核说明（不用Markdown和LaTeX）"}。' + FIELD_GUIDE +
+          '表述尽量通俗直观、说人话，少用晦涩学术腔；卡片正文公式用 LaTeX，review_summary 只用纯自然语言。不得臆造缺失事实。')
 
 
 def _loads_relaxed(text):
@@ -227,6 +228,7 @@ def finish_subject(kb, call, domain, question, answer, hits, valid=lambda: True)
                           '返回严格 JSON {"used_card_ids":[],"failed_card_ids":[],"proposals":[]}。'
                           "proposals 每项含 action/subject/title/target_card_id/parent_ids/proposed_card/summary/evidence；"
                           "title 尽量控制在8字以内（宁短勿长，浓缩核心词）；内容表述尽量通俗直观、说人话，讲清怎么用；"
+                          "summary 为审核提案时给人看的提交信息，必须单独编写，只用纯自然语言简单解释，严禁使用 Markdown 标记或 LaTeX 公式；"
                           "proposed_card 含 triggers/statement/preconditions/proof_sketch/generality；缺少基础推导时不要造结论。"
                           + mode_prompt(kb) + exclusion_prompt(kb) + generality_instruction(kb) +
                           ("\n探索模式：若解答证明了有价值的库外快捷结论，务必尝试提交 ADD_CARD / ADD_DERIVED 提案。" if discovery else "") +

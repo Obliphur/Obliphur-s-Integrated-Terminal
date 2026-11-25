@@ -516,8 +516,8 @@ class KnowledgePage(tk.Frame):
                 return "\n".join(f"• {item}" for item in items)
             return str(value or "").strip()
 
-        def add_section(label_text, new_text, old_text="", *, warn=False):
-            card_box = tk.Frame(body, bg=COLORS["bg_card"], highlightbackground=COLORS["border"], highlightthickness=1)
+        def add_section(parent_box, label_text, new_text, old_text="", *, warn=False):
+            card_box = tk.Frame(parent_box, bg=COLORS["bg_card"], highlightbackground=COLORS["border"], highlightthickness=1)
             card_box.pack(fill="x", pady=(0, 8))
             tk.Label(card_box, text=label_text, bg=COLORS["bg_card"],
                      fg=COLORS["warn"] if warn else COLORS["accent"],
@@ -533,16 +533,42 @@ class KnowledgePage(tk.Frame):
             val_lbl.pack(fill="x", padx=14, pady=(0, 10))
             wrap_label(val_lbl, 28)
 
+        raw_summary = str(pr.get("summary") or "").strip()
+        is_legacy_source = raw_summary.startswith("自动生成导入:")
+        plain_summary = "" if is_legacy_source else raw_summary
+
+        detail_box = tk.Frame(body, bg=COLORS["bg"])
+        has_details = False
         for field in ("statement", "preconditions", "proof_sketch", "triggers", "examples", "aliases"):
             new_text = fmt_field(proposed.get(field, ""))
             old_text = fmt_field(old.get(field, "")) if old else ""
             if not new_text and not old_text:
                 continue
-            add_section(tr(LABELS[field]), new_text, old_text, warn=(field == "preconditions"))
+            has_details = True
+            add_section(detail_box, tr(LABELS[field]), new_text, old_text, warn=(field == "preconditions"))
+
+        if plain_summary:
+            add_section(body, tr("提案说明"), plain_summary)
+            if has_details:
+                shown = {"open": False}
+                toggle_btn = ttk.Button(body, text=tr("展开卡片原文"))
+                def toggle_details():
+                    shown["open"] = not shown["open"]
+                    if shown["open"]:
+                        detail_box.pack(fill="x", after=toggle_btn, pady=(6, 0))
+                        toggle_btn.configure(text=tr("收起卡片原文"))
+                    else:
+                        detail_box.pack_forget()
+                        toggle_btn.configure(text=tr("展开卡片原文"))
+                    area.bind_children()
+                toggle_btn.configure(command=toggle_details)
+                toggle_btn.pack(anchor="w", pady=(0, 8))
+        elif has_details:
+            detail_box.pack(fill="x")
 
         notes = []
-        if pr.get("summary"):
-            notes.append(str(pr["summary"]).strip())
+        if is_legacy_source:
+            notes.append(raw_summary)
         for ev in pr.get("evidence") or []:
             if isinstance(ev, dict):
                 line = " · ".join(str(v).strip() for v in ev.values() if str(v).strip())
@@ -668,8 +694,10 @@ class KnowledgePage(tk.Frame):
                     if not check.get():
                         continue
                     if card["kind"] == "tactical" and as_pr.get():
+                        review_summary = str(card.get("review_summary") or card.get("summary") or "").strip()[:1200]
+                        ev = [{"source": str(card["source"])[:1200]}] if card.get("source") else []
                         self.kb.propose("ADD_CARD", subject=card.get("subject", "math"), title=card["title"], proposed_card=card,
-                                        summary=card.get("source", ""))
+                                        summary=review_summary, evidence=ev)
                     else:
                         self.kb.save_card(card, maintainer=True)
                 self.kb.audit("import", count=sum(v.get() for v, _ in selected))

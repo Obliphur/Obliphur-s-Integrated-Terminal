@@ -34,9 +34,11 @@ AUTO_SCHEMA = (
     '只返回严格 JSON：{"knowledge":true,"cards":[{"kind":"conceptual 或 tactical",'
     '"subject":"math/physics/chemistry","title":"简短标题（尽量8字以内）","topic":"主题","aliases":[],"triggers":[],'
     '"parent_ids":[],"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
-    '"generality":"universal/explain_first/non_universal","examples":[],"body":"Markdown 正文"}]}。'
+    '"generality":"universal/explain_first/non_universal","examples":[],"body":"Markdown 正文",'
+    '"review_summary":"纯自然语言简短审核说明（不用Markdown和LaTeX）"}]}。'
     '若材料不是可复用知识内容则返回 {"knowledge":false,"cards":[]}。不要臆造事实；' + FIELD_GUIDE +
-    '卡片正文与各栏表述尽量通俗直观、说人话，少用晦涩学术腔，优先讲清直觉思路与实际怎么用；公式使用 LaTeX。'
+    '卡片正文与各栏表述尽量通俗直观、说人话，少用晦涩学术腔，优先讲清直觉思路与实际怎么用；'
+    '卡片正文公式使用 LaTeX，但 review_summary 只用纯自然语言简单解释，严禁出现 Markdown 标记或 LaTeX 公式。'
 )
 
 
@@ -427,8 +429,10 @@ def auto_generate(kb, call, root, file_types):
                     report["duplicates"] += 1
                     continue
                 if card["kind"] == "tactical":
+                    review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
                     kb.propose("ADD_CARD", subject=card["subject"], title=card["title"],
-                               proposed_card=card, summary="自动生成导入: " + str(group["source"])[:1200])
+                               proposed_card=card, summary=review_summary,
+                               evidence=[{"source": str(group["source"])[:1200]}])
                     report["proposals"] += 1
                 else:
                     kb.save_card(card, maintainer=True)
