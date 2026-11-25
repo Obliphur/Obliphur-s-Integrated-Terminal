@@ -3,11 +3,34 @@ import difflib
 import subprocess
 import threading
 import uuid
+from .kb_rank import find_similar_card
 from .kb_store import read_json, write_json, atomic_text, read_card, serialize, update_body
 from .kb_stats import now
 
 ACTIONS = {"ADD_CARD", "ADD_DERIVED", "UPDATE_CARD", "MERGE_ALIAS", "REPARENT"}
 FIELDS = {"category", "topic", "aliases", "triggers", "statement", "preconditions", "proof_sketch", "examples", "parent_ids", "generality"}
+
+
+def _has_supplement_fields(old, changes):
+    for key in ("category", "topic", "statement", "preconditions", "proof_sketch", "generality"):
+        val = str(changes.get(key) or "").strip()
+        if val and val != str(old.get(key) or "").strip():
+            return True
+    return False
+
+
+def _merge_text_supplement(old_text, new_text):
+    old_s = str(old_text or "").strip()
+    new_s = str(new_text or "").strip()
+    if not new_s:
+        return old_s
+    if not old_s:
+        return new_s
+    if new_s in old_s:
+        return old_s
+    if old_s in new_s:
+        return new_s
+    return old_s + "\n" + new_s
 
 
 class ProposalMixin:
@@ -42,11 +65,21 @@ class ProposalMixin:
             if target_card_id and (target_card_id not in self.cards or self.cards[target_card_id].get("subject") != subject):
                 raise ValueError("目标技巧卡片不存在")
             if action in ("ADD_CARD", "ADD_DERIVED"):
-                hits = self.search_tactical(subject, title + " " + " ".join(changes.get("triggers", [])), 3)
-                duplicate = next((c for c in hits if c.get("title") == title or c["match_score"] >= .82), None)
+                probe = {"subject": subject, "title": title, **changes}
+                same_subject = [c for c in self.cards.values() if c.get("subject") == subject]
+                duplicate, _ = find_similar_card(same_subject, probe, threshold=0.62)
+                if duplicate is None:
+                    hits = self.search_tactical(subject, title + " " + " ".join(changes.get("triggers", [])), 5)
+                    duplicate = next((c for c in hits if c["match_score"] >= .65), None)
                 if duplicate:
-                    action, target_card_id = "MERGE_ALIAS", duplicate["card_id"]
-                    changes.setdefault("aliases", []).append(title)
+                    target_card_id = duplicate.get("id") or duplicate.get("card_id")
+                    existing_card = self.cards.get(target_card_id, duplicate)
+                    if title.strip() and title.strip() != str(existing_card.get("title") or "").strip():
+                        aliases = list(changes.get("aliases") or [])
+                        if title.strip() not in aliases:
+                            aliases.append(title.strip())
+                        changes["aliases"] = aliases
+                    action = "UPDATE_CARD" if _has_supplement_fields(existing_card, changes) else "MERGE_ALIAS"
             if action in ("UPDATE_CARD", "MERGE_ALIAS", "REPARENT") and not target_card_id:
                 raise ValueError("修改提案必须指定目标")
             if action == "ADD_DERIVED" and not parents:
@@ -57,9 +90,22 @@ class ProposalMixin:
             evidence = evidence or []
             if not isinstance(evidence, list) or any(not isinstance(e, dict) for e in evidence):
                 raise ValueError("证据格式无效")
-            old = next((p for p in self.proposals() if p["subject"] == subject and
+            open_same = [p for p in self.proposals() if p["subject"] == subject]
+            old = next((p for p in open_same if
                         ((target_card_id and p.get("target_card_id") == target_card_id) or
                          (not target_card_id and not p.get("target_card_id") and p["title"] == title))), None)
+            if old is None and not target_card_id:
+                open_probes = [({"subject": p["subject"], "title": p.get("title", ""), **p.get("proposed_card", {})}, p)
+                               for p in open_same if not p.get("target_card_id")]
+                matched, _ = find_similar_card([item[0] for item in open_probes],
+                                               {"subject": subject, "title": title, **changes}, threshold=0.62)
+                if matched is not None:
+                    old = next((p for probe_obj, p in open_probes if probe_obj is matched), None)
+                    if old is not None and title and title != old.get("title"):
+                        aliases = list(changes.get("aliases") or [])
+                        if title not in aliases:
+                            aliases.append(title)
+                        changes["aliases"] = aliases
             pr = old or {"pr_id": "pr_" + uuid.uuid4().hex, "status": "open", "action": action,
                          "subject": subject, "title": title, "target_card_id": target_card_id,
                          "created_at": now(), "squash_count": 0, "evidence": [], "proposed_card": {}}
@@ -69,6 +115,8 @@ class ProposalMixin:
                     if not isinstance(previous, list):
                         previous = [previous]
                     value = list(dict.fromkeys(previous + value))
+                elif key in ("statement", "preconditions", "proof_sketch") and isinstance(value, str) and old is not None:
+                    value = _merge_text_supplement(pr["proposed_card"].get(key, ""), value)
                 pr["proposed_card"][key] = value
             pr.update(parent_ids=parents or pr.get("parent_ids", []), summary=summary or pr.get("summary", ""), updated_at=now())
             pr["evidence"].extend(evidence)
@@ -108,6 +156,16 @@ class ProposalMixin:
                         b = b if isinstance(b, list) else [b]
                         changes[key] = list(dict.fromkeys(a + b))
                 changes = {k: v for k, v in changes.items() if k in ("aliases", "triggers", "examples")}
+            elif pr["action"] == "UPDATE_CARD":
+                for key in ("aliases", "triggers", "examples"):
+                    if key in changes:
+                        a, b = old.get(key, []), changes[key]
+                        a = a if isinstance(a, list) else [a] if a else []
+                        b = b if isinstance(b, list) else [b]
+                        changes[key] = list(dict.fromkeys(a + b))
+                for key in ("statement", "preconditions", "proof_sketch"):
+                    if key in changes and isinstance(changes[key], str) and old.get(key):
+                        changes[key] = _merge_text_supplement(old.get(key), changes[key])
             parents = changes.get("parent_ids", pr.get("parent_ids", old.get("parent_ids", [])))
             card = {**old, **changes, "kind": "tactical", "subject": pr["subject"],
                     "title": old.get("title", pr["title"]), "parent_ids": parents}

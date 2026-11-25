@@ -1,7 +1,133 @@
-"""Offline tactical retrieval and cycle-safe DAG ranking."""
+"""Offline tactical retrieval, duplicate detection and cycle-safe DAG ranking."""
+from difflib import SequenceMatcher
 import math
 import re
 from datetime import datetime
+
+
+_TITLE_NOISE_RE = re.compile(r"[^a-z0-9\u3400-\u9fff]+")
+_GENERIC_SUFFIX_RE = re.compile(
+    r"(?:二级结论|快捷结论|解题技巧|解题方法|常用结论|常用技巧|常用方法|技巧|结论|方法|公式|定理|法则|规律|模型|套路|思想|性质|推论|判定|判别法)+$"
+)
+_SERIAL_TAIL_RE = re.compile(r"^(.*?)([a-z]|[0-9]+|[一二三四五六七八九十甲乙丙丁上下前后左右])$")
+
+
+def normalize_title(text):
+    return _TITLE_NOISE_RE.sub("", str(text or "").casefold())
+
+
+def core_title(text):
+    norm = normalize_title(text)
+    stripped = _GENERIC_SUFFIX_RE.sub("", norm)
+    return stripped if len(stripped) >= 2 else norm
+
+
+def _is_sibling_serial(a, b):
+    ma, mb = _SERIAL_TAIL_RE.match(a), _SERIAL_TAIL_RE.match(b)
+    return bool(ma and mb and ma.group(1) and ma.group(1) == mb.group(1) and ma.group(2) != mb.group(2))
+
+
+def _card_names(card):
+    raw = [card.get("title", ""), *(card.get("aliases") or ())]
+    norms = {normalize_title(n) for n in raw if normalize_title(n)}
+    cores = {core_title(n) for n in raw if core_title(n)}
+    return norms, cores
+
+
+def _jaccard_overlap_blend(a, b):
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    if not inter:
+        return 0.0
+    jacc = inter / len(a | b)
+    if min(len(a), len(b)) < 4:
+        return jacc
+    ov = inter / min(len(a), len(b))
+    return 0.55 * jacc + 0.45 * ov
+
+
+def card_similarity(candidate, existing):
+    """计算两张卡片/提案的重复度（0~1），综合规范标题、核心词、别名、触发词与结论正文。"""
+    if not isinstance(candidate, dict) or not isinstance(existing, dict):
+        return 0.0
+    if candidate.get("subject") and existing.get("subject") and candidate.get("subject") != existing.get("subject"):
+        return 0.0
+    c_norms, c_cores = _card_names(candidate)
+    e_norms, e_cores = _card_names(existing)
+    if c_norms & e_norms:
+        return 1.0
+    if c_cores & e_cores:
+        return 0.94
+
+    title_sim = 0.0
+    contained = False
+    sibling = False
+    for cn in c_norms:
+        for en in e_norms:
+            if _is_sibling_serial(cn, en):
+                sibling = True
+                continue
+            ratio = SequenceMatcher(None, cn, en).ratio()
+            if ratio > title_sim:
+                title_sim = ratio
+            short, long_ = (cn, en) if len(cn) <= len(en) else (en, cn)
+            if len(short) >= 3 and short in long_:
+                contained = True
+                title_sim = max(title_sim, 0.80 + 0.15 * (len(short) / max(1, len(long_))))
+
+    c_trig = tokens(" ".join(candidate.get("triggers") or ()))
+    e_trig = tokens(" ".join(existing.get("triggers") or ()))
+    trig_sim = _jaccard_overlap_blend(c_trig, e_trig)
+
+    c_body_text = " ".join([
+        str(candidate.get("statement") or ""),
+        str(candidate.get("body") or ""),
+    ])
+    e_body_text = " ".join([
+        str(existing.get("statement") or ""),
+        str(existing.get("body") or ""),
+    ])
+    c_body = tokens(c_body_text)
+    e_body = tokens(e_body_text)
+    body_sim = _jaccard_overlap_blend(c_body, e_body)
+
+    c_all = tokens(" ".join([
+        str(candidate.get("title") or ""),
+        str(candidate.get("topic") or ""),
+        " ".join(candidate.get("aliases") or ()),
+        " ".join(candidate.get("triggers") or ()),
+    ]))
+    e_all = tokens(" ".join([
+        str(existing.get("title") or ""),
+        str(existing.get("topic") or ""),
+        " ".join(existing.get("aliases") or ()),
+        " ".join(existing.get("triggers") or ()),
+    ]))
+    meta_sim = _jaccard_overlap_blend(c_all, e_all)
+
+    score = max(
+        0.42 * title_sim + 0.28 * trig_sim + 0.30 * body_sim,
+        0.55 * title_sim + 0.45 * meta_sim,
+    )
+    if sibling and body_sim < 0.75:
+        score = min(score, 0.50)
+    if contained and (body_sim >= 0.22 or trig_sim >= 0.25 or title_sim >= 0.86):
+        score = max(score, 0.82)
+    if body_sim >= 0.68 and (title_sim >= 0.35 or trig_sim >= 0.35):
+        score = max(score, 0.78)
+    return min(1.0, score)
+
+
+def find_similar_card(candidates, target, *, threshold=0.62):
+    best, best_score = None, 0.0
+    for item in candidates:
+        score = card_similarity(target, item)
+        if score > best_score:
+            best, best_score = item, score
+    if best is not None and best_score >= threshold:
+        return best, best_score
+    return None, best_score
 
 
 def tokens(text):

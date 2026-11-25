@@ -430,4 +430,25 @@ task_cat, sel_cat = prepare_subject(kb, lambda *a, **k: '{"problem_mode":"requir
 assert "命中知识分类: 复数" in task_cat
 assert cat_complex["id"] in [h["card_id"] for h in sel_cat] and cat_geo["id"] not in [h["card_id"] for h in sel_cat]
 
+# 16) 强化重复检测与「以补充为主，新增为辅」：相近标题/后缀自动转为补充提案、待审提案自动折叠、合并保留原字段
+pol = kb.save_card({"kind": "tactical", "subject": "math", "category": "平面向量", "title": "极化恒等式",
+                    "generality": "explain_first", "triggers": ["向量点积", "中点"],
+                    "statement": "a·b = |OM|^2 - |AB|^2/4", "preconditions": "M 为 AB 中点", "proof_sketch": "展开平方差"})
+pr_dup = kb.propose("ADD_CARD", subject="math", title="极化恒等式结论",
+                    proposed_card={"triggers": ["三角形中线点积"], "preconditions": "需先确定中点位置",
+                                   "statement": "a·b = |OM|^2 - |AB|^2/4"},
+                    summary="补充中线点积触发场景与前提说明")
+assert pr_dup["action"] == "UPDATE_CARD" and pr_dup["target_card_id"] == pol["id"], pr_dup
+assert "极化恒等式结论" in pr_dup["proposed_card"].get("aliases", [])
+merged_pol = kb.merge(pr_dup["pr_id"], maintainer=True)
+assert "向量点积" in merged_pol["triggers"] and "三角形中线点积" in merged_pol["triggers"]
+assert "M 为 AB 中点" in merged_pol["preconditions"] and "需先确定中点位置" in merged_pol["preconditions"]
+# 两条相近的待审提案自动折叠为一条
+pr_open1 = kb.propose("ADD_CARD", subject="physics", title="等效电源法",
+                      proposed_card={"triggers": ["闭合电路", "电源外接"], "statement": "把部分电路等效为新电源"})
+pr_open2 = kb.propose("ADD_CARD", subject="physics", title="等效电源法技巧",
+                      proposed_card={"triggers": ["戴维南等效"], "statement": "用开路电压和等效内阻替代"})
+assert pr_open1["pr_id"] == pr_open2["pr_id"] and pr_open2["squash_count"] >= 2, (pr_open1, pr_open2)
+assert "等效电源法技巧" in pr_open2["proposed_card"].get("aliases", [])
+
 print("knowledge check OK")

@@ -18,7 +18,8 @@ description: Isolated problem-solving subagent responsible for multi-subject pro
 使用库内技巧前核对前提与禁区。`familiarity=unfamiliar` 或 `[UNVERIFIED]` 必须说明父结论如何衔接并核对本题前提；未审结论先用特值、极限或量纲验算。需要时调用 `oit_kb_trace(card_id)` 回溯父链。
 只把实际引用的技巧 ID 通过 `kb_citations` 回传父代理，正文不裸露 ID；也可在末尾用 `<!-- kb_cite: id1, id2 -->` 标记。父代理在 `oit_reply` / `oit_answer_image` 中传递 `kb_citations`。
 解题后对实际采纳的技巧调用 `oit_kb_record_use`，被召回但没用的不记频次。生成新技巧或修正提案前先参考 `excluded_tactics`（不考虑的技巧），符合排除描述的不得提交；提交时把该设置原样放入 `exclusions_considered`。正文只提 PR，无权合入或拒绝。
-探索模式或复盘调用 `oit_kb_propose` 提交提案时，必须严格遵守命名与格式规范：
+探索模式或复盘调用 `oit_kb_propose` 提交提案时，必须严格遵守**「以补充为主，新增为辅」**与命名格式规范：
+- **先查重、优先补充**：调用 `ADD_CARD` / `ADD_DERIVED` 前**必须先**用核心概念词与近义词调用 `oit_kb_search` 查重；若库内已有核心相同或高度相近的技巧（哪怕名称、角度或表述不同），严禁另建重复卡，应改为对该卡提交 `UPDATE_CARD`（填 `target_card_id`，补充 `triggers`/`aliases`/`preconditions`/`proof_sketch`/`examples`）或 `MERGE_ALIAS`；仅当确认库内不存在该核心方法时才新增；
 - `title`：有公认定理名、专有名词或既有名称时必须原样保留（如「极化恒等式」「等效电源法」），不自造别称；无公认专名时浓缩核心对象与方法词，尽量控制在 8 字以内（宁短勿长）。严禁写成完整句子，严禁带入本题题号、具体数字或临时字母，严禁加「的结论/技巧/方法」等冗余后缀（固定专名除外），严禁出现 Markdown、LaTeX 源码或多余标点；
 - `proposed_card.category`：填写 2-6 字所属大类板块（优先从 `oit_kb_search` 返回的 `available_categories` 中选择）；
 - `proposed_card` 各栏表述通俗直观、讲清怎么用；同一栏分多条时使用小写罗马数字（`i. ii. iii.`）且每条单独换行；
