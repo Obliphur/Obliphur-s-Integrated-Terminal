@@ -25,8 +25,27 @@ class KnowledgeBase(StatsMixin, ProposalMixin):
         for group in ("概念性", "技巧性"):
             for name in self.subjects.values():
                 (self.root / group / safe_name(name)).mkdir(parents=True, exist_ok=True)
+        self._ensure_obsidian_defaults()
         self.cards, self._stamps = {}, {}
         self.refresh()
+
+    def _ensure_obsidian_defaults(self):
+        """默认隐藏 Obsidian 顶部的笔记属性面板，避免冗长 YAML 遮挡正文；已有用户设置时不覆盖。"""
+        app_json = self.root / ".obsidian" / "app.json"
+        if app_json.exists():
+            try:
+                cfg = json.loads(app_json.read_text(encoding="utf-8-sig"))
+                if not isinstance(cfg, dict) or "propertiesInDocument" in cfg:
+                    return
+            except (OSError, ValueError):
+                return
+        else:
+            cfg = {}
+        cfg["propertiesInDocument"] = "hidden"
+        try:
+            write_json(app_json, cfg)
+        except OSError:
+            pass
 
     def configure(self, **values):
         with self.lock:

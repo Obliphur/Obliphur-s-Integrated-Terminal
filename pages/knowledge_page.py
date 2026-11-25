@@ -26,8 +26,10 @@ def open_obsidian(path, data_dir=None):
     import external_software
     try:
         external_software.manager(data_dir or config.app_data_dir()).open_obsidian(path)
+        return True
     except (OSError, ValueError) as error:
         toast.warn(str(error))
+        return False
 
 
 def modal(parent, title, width=680, height=650):
@@ -118,10 +120,13 @@ class KnowledgePage(tk.Frame):
             scroll.pack(side="right", fill="y")
             tree.configure(yscrollcommand=scroll.set)
             tree.pack(fill="both", expand=True)
-            tree.bind("<Double-1>", lambda e, k=key: self.details(k))
-            tree.bind("<Return>", lambda e, k=key: self.details(k))
+            tree.bind("<Double-1>", lambda e, k=key: self.open_selected(k))
+            tree.bind("<Return>", lambda e, k=key: self.open_selected(k))
             self.lists[key] = tree
-        ttk.Button(self, text=tr("查看所选卡片或提案"), command=lambda: self.details(self.active_tab())).pack(anchor="w", padx=18, pady=(0, 10))
+        footer = tk.Frame(self, bg=COLORS["bg"])
+        footer.pack(fill="x", padx=18, pady=(0, 10))
+        ttk.Button(footer, text=tr("查看所选卡片或提案"), command=lambda: self.open_selected(self.active_tab())).pack(side="left")
+        ttk.Button(footer, text=tr("管理所选卡片"), command=lambda: self.details(self.active_tab())).pack(side="left", padx=(8, 0))
         self.show()
 
     def _destroy(self, event):
@@ -219,6 +224,21 @@ class KnowledgePage(tk.Frame):
             self.lists["tactical"].selection_set(card_id)
             self.lists["tactical"].see(card_id)
             self.details("tactical")
+
+    def open_selected(self, kind):
+        """已保存卡片优先直接跳转到 Obsidian 查看渲染后的公式与排版；待审提案仍在 OIT 内审核。"""
+        selected = self.lists[kind].selection()
+        if not selected:
+            return
+        key = selected[0]
+        if kind == "proposals":
+            return self.review(key)
+        card = self.kb.cards.get(key) if kind == "tactical" else next((c for c in self.kb.conceptual_cards() if c["id"] == key), None)
+        if not card:
+            return self.show()
+        if card.get("file_path") and open_obsidian(card["file_path"], self.data_dir):
+            return
+        self.details(kind)
 
     def details(self, kind):
         selected = self.lists[kind].selection()

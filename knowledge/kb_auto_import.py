@@ -31,10 +31,11 @@ MAX_IMAGES_PER_GROUP = 16
 
 AUTO_SCHEMA = (
     '只返回严格 JSON：{"knowledge":true,"cards":[{"kind":"conceptual 或 tactical",'
-    '"subject":"math/physics/chemistry","title":"标题","topic":"主题","aliases":[],"triggers":[],'
+    '"subject":"math/physics/chemistry","title":"简短标题（尽量8字以内，浓缩核心词，不必一眼看懂全意）","topic":"主题","aliases":[],"triggers":[],'
     '"parent_ids":[],"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
     '"generality":"universal/explain_first/non_universal","examples":[],"body":"Markdown 正文"}]}。'
     '若材料不是可复用知识内容则返回 {"knowledge":false,"cards":[]}。不要臆造事实；概念和技巧分类准确；'
+    '卡片标题尽量控制在8字以内（宁短勿长，具体含义写在正文中）；'
     '技巧的通用性按题型严格判定，证据不足时选择 explain_first。公式使用 LaTeX。'
 )
 

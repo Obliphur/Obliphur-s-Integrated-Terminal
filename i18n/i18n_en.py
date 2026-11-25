@@ -685,6 +685,7 @@ EN = {
     "打开 Obsidian": "Open Obsidian",
     "下载 Obsidian": "Download Obsidian",
     "在 Obsidian 中打开": "Open in Obsidian",
+    "管理所选卡片": "Manage selected card",
     "选择 Obsidian 安装目录…": "Choose Obsidian installation folder…",
     "选择 Obsidian 安装目录": "Choose Obsidian installation folder",
     "请选择包含 Obsidian.exe 的安装目录。": "Choose the installation folder containing Obsidian.exe.",

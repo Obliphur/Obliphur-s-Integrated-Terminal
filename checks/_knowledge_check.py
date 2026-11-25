@@ -243,4 +243,26 @@ try:
 finally:
     _root.destroy()
 
+# 8) 知识库初始化默认隐藏 Obsidian 笔记属性，不覆盖已有用户配置
+obs_app_cfg = json.loads((kb.root / ".obsidian" / "app.json").read_text(encoding="utf-8"))
+assert obs_app_cfg.get("propertiesInDocument") == "hidden"
+(kb.root / ".obsidian" / "app.json").write_text(json.dumps({"propertiesInDocument": "source"}), encoding="utf-8")
+KnowledgeBase(kb.root)
+assert json.loads((kb.root / ".obsidian" / "app.json").read_text(encoding="utf-8"))["propertiesInDocument"] == "source"
+
+# 9) 双击/查看已保存卡片优先直接跳转到 Obsidian，提案仍留在 OIT 内审核
+opened_obs, reviewed, detailed = [], [], []
+fake_page = SimpleNamespace(
+    kb=kb, data_dir=str(base),
+    lists={"tactical": SimpleNamespace(selection=lambda: (universal["id"],)),
+           "proposals": SimpleNamespace(selection=lambda: ("pr_1",))},
+    review=lambda key: reviewed.append(key),
+    details=lambda kind: detailed.append(kind),
+    show=lambda: None,
+)
+with patch("pages.knowledge_page.open_obsidian", side_effect=lambda p, d=None: (opened_obs.append(p) or True)):
+    KnowledgePage.open_selected(fake_page, "tactical")
+    KnowledgePage.open_selected(fake_page, "proposals")
+assert opened_obs == [universal["file_path"]] and reviewed == ["pr_1"] and not detailed
+
 print("knowledge check OK")

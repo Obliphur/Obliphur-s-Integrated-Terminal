@@ -9,10 +9,10 @@ from .kb_stats import now
 from .kb_trace import strip_citations
 
 SCHEMA = ('返回严格 JSON 卡片：{"kind":"conceptual 或 tactical","subject":"math/physics/chemistry",'
-          '"title":"标题","topic":"主题","aliases":[],"triggers":[],"parent_ids":[], '
+          '"title":"简短标题（尽量8字以内，浓缩核心词，不必一眼看懂全意）","topic":"主题","aliases":[],"triggers":[],"parent_ids":[], '
           '"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
           '"generality":"universal/explain_first/non_universal",'
-          '"examples":[],"body":"概念卡的 Markdown 正文"}。公式用 LaTeX。不得臆造缺失事实。')
+          '"examples":[],"body":"概念卡的 Markdown 正文"}。标题尽量控制在8字以内（宁短勿长）；公式用 LaTeX。不得臆造缺失事实。')
 
 
 def _loads_relaxed(text):
@@ -207,6 +207,7 @@ def finish_subject(kb, call, domain, question, answer, hits, valid=lambda: True)
                           "只有有复用价值的二级结论才提案，基础常识不提案。不得直接修改正文。"
                           '返回严格 JSON {"used_card_ids":[],"failed_card_ids":[],"proposals":[]}。'
                           "proposals 每项含 action/subject/title/target_card_id/parent_ids/proposed_card/summary/evidence；"
+                          "title 尽量控制在8字以内（宁短勿长，浓缩核心词）；"
                           "proposed_card 含 triggers/statement/preconditions/proof_sketch/generality；缺少基础推导时不要造结论。"
                           + mode_prompt(kb) + exclusion_prompt(kb) + generality_instruction(kb) +
                           ("\n探索模式：若解答证明了有价值的库外快捷结论，务必尝试提交 ADD_CARD / ADD_DERIVED 提案。" if discovery else "") +
