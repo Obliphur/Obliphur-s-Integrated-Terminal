@@ -352,7 +352,7 @@ try:
     dock = _FakeSidebar(_root3)
     m1 = Modal(_root3, "自动生成", 320, 200)
     m2 = Modal(_root3, "审核提案", 320, 200)
-    assert hasattr(m1, "minimize_button") and m1.minimize_button.cget("text") == "-"
+    assert hasattr(m1, "minimize_button") and m1.minimize_button.cget("text") == "收起"
     m1.minimize()
     m2.minimize()
     assert len(dock._minimized_windows) == 2

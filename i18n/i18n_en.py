@@ -709,6 +709,7 @@ EN = {
     "搜索": "Search",
     "清空": "Clear",
     "已最小化 ({n})": "Minimized ({n})",
+    "收起": "Minimize",
     "窗口": "Window",
     "提醒库": "Reminders",
     "提醒性": "Reminder",

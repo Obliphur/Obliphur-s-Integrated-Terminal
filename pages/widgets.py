@@ -7,6 +7,7 @@ from tkinter import ttk
 
 import config
 from config import COLORS
+from i18n import tr
 
 
 class Switch(tk.Canvas):
@@ -118,8 +119,8 @@ class Modal(tk.Toplevel):
             top_bar = tk.Frame(self, bg=COLORS["bg"])
             top_bar.pack(side="top", fill="x", padx=(20, 12), pady=(6, 0))
             min_btn = tk.Label(
-                top_bar, text="-", bg=COLORS["bg"], fg=COLORS["text_dim"],
-                font=config.font("body", bold=True), cursor="hand2", padx=8, pady=1,
+                top_bar, text=tr("收起"), bg=COLORS["bg"], fg=COLORS["text_dim"],
+                font=config.font("small"), cursor="hand2", padx=8, pady=1,
             )
             min_btn.pack(side="right")
             min_btn.bind("<Button-1>", lambda _e: self.minimize())
