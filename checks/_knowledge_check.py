@@ -14,7 +14,7 @@ tempstore.session("knowledge_check")
 
 from knowledge import KnowledgeBase
 from knowledge.kb_ai import prepare_subject
-from knowledge.kb_auto_import import _anki_groups, _source_groups, auto_generate
+from knowledge.kb_auto_import import _anki_groups, _source_groups, auto_generate, clear_auto_progress, load_auto_progress
 
 
 base = Path(tempstore.mkdtemp("misc", prefix="knowledge-check-"))
@@ -150,6 +150,38 @@ auto_generate(kb, fake_ai, source, ["txt", "md", "image"], on_progress=lambda d,
 assert prog_events[0] == (0, 4) and prog_events[-1] == (4, 4) and all(0 <= d <= t == 4 for d, t in prog_events)
 assert any(image for _, image in created), "同名配套图片应与正文一起交给 AI"
 assert any(card["title"] == "自动导入概念" for card in kb.conceptual_cards())
+assert load_auto_progress(kb) is None, "全部完成后应自动清理进度文件"
+
+# 断点保存与续传：中途暂停（或意外中断）后保留进度，再次调用跳过已完成组并累计统计，完成后自动清除
+import threading
+resume_dir = base / "resume_src"
+resume_dir.mkdir()
+(resume_dir / "a.txt").write_text("知识点A：正弦定理", encoding="utf-8")
+(resume_dir / "b.txt").write_text("知识点B：余弦定理", encoding="utf-8")
+(resume_dir / "c.txt").write_text("知识点C：中线长公式", encoding="utf-8")
+seen_calls = []
+cancel_ev = threading.Event()
+def resumable_ai(prompt, *, image=None, **kwargs):
+    seen_calls.append(prompt)
+    if len(seen_calls) == 1:
+        cancel_ev.set()  # 处理完第 1 组后暂停，模拟中途关闭/暂停
+        return json.dumps(generated("续传概念A"))
+    if "知识点B" in prompt:
+        return json.dumps(generated("续传概念B"))
+    return json.dumps(generated("续传概念C"))
+
+paused_rep = auto_generate(kb, resumable_ai, resume_dir, ["txt"], cancel_event=cancel_ev)
+assert paused_rep["paused"] is True and paused_rep["created"] == 1 and len(seen_calls) == 1, paused_rep
+saved_prog = load_auto_progress(kb)
+assert saved_prog is not None and saved_prog["done_files"] == 1 and saved_prog["total_files"] == 3, saved_prog
+assert len(saved_prog["done_groups"]) == 1
+# 恢复执行：应跳过已完成的 a.txt，只对 b.txt 和 c.txt 调用 AI，累计 created == 3，完成后清理进度
+resumed_prog_events = []
+final_rep = auto_generate(kb, resumable_ai, resume_dir, ["txt"], on_progress=lambda d, t: resumed_prog_events.append((d, t)))
+assert final_rep["paused"] is False and final_rep["resumed"] == 1 and final_rep["created"] == 3, final_rep
+assert len(seen_calls) == 3, f"不应重复处理已完成的组，实际调用 {len(seen_calls)} 次"
+assert resumed_prog_events[0] == (1, 3) and resumed_prog_events[-1] == (3, 3), resumed_prog_events
+assert load_auto_progress(kb) is None, "续传全部完成后应清理进度文件"
 
 # Obsidian 图片引用：跨目录 URL 编码相对路径（../../../%E9%99%84%E4%BB%B6/...）、![[...]] 与手动导入
 obs_vault = base / "obsidian_vault"

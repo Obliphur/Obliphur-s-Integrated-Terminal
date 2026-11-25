@@ -12,7 +12,7 @@ from config import COLORS
 from i18n import tr
 from knowledge import get_knowledge, select_vault
 from knowledge.kb_ai import complete_card, import_previews
-from knowledge.kb_auto_import import auto_generate
+from knowledge.kb_auto_import import auto_generate, clear_auto_progress, load_auto_progress
 from knowledge.kb_store import read_json
 from .widgets import Modal, ScrollArea, wrap_label
 
@@ -773,7 +773,9 @@ class KnowledgePage(tk.Frame):
                 self.background(lambda: import_previews(kb, self.call_ai, paths), self.import_preview)
         ttk.Button(dlg.body, text=tr("选择文件"), command=choose).pack(fill="x", pady=6)
         ttk.Button(dlg.body, text=tr("选择文件夹"), command=lambda: choose(True)).pack(fill="x", pady=6)
-        ttk.Button(dlg.body, text=tr("自动生成"), command=lambda: (dlg.destroy(), self.auto_import())).pack(fill="x", pady=6)
+        saved = load_auto_progress(self.kb)
+        auto_label = tr("自动生成（继续上次进度）") if saved else tr("自动生成")
+        ttk.Button(dlg.body, text=auto_label, command=lambda: (dlg.destroy(), self.auto_import())).pack(fill="x", pady=6)
 
     def help(self, parent=None):
         dlg = modal(parent or self, "知识库帮助", height=560)
@@ -792,38 +794,48 @@ class KnowledgePage(tk.Frame):
         area.bind_children()
 
     def auto_import(self):
-        dlg = modal(self, "自动生成", height=520)
+        dlg = modal(self, "自动生成", height=540)
         area = ScrollArea(dlg.body, bg=COLORS["bg"])
         area.pack(fill="both", expand=True)
-        folder = tk.StringVar()
+        saved = load_auto_progress(self.kb)
+        folder = tk.StringVar(value=saved["root"] if saved else "")
         row = tk.Frame(area.inner, bg=COLORS["bg"])
         row.pack(fill="x", pady=4)
         ttk.Entry(row, textvariable=folder).pack(side="left", fill="x", expand=True)
         ttk.Button(row, text=tr("选择文件夹"), command=lambda: folder.set(filedialog.askdirectory(parent=dlg) or folder.get())).pack(side="left", padx=5)
         tk.Label(area.inner, text=tr("选择要扫描的文件类型"), bg=COLORS["bg"], fg=COLORS["text"], font=config.font("body", bold=True)).pack(anchor="w", pady=(12, 4))
         choices = [("image", "图像（合并为一种类型）"), ("txt", "txt"), ("md", "md"), ("json", "json"), ("anki", "Anki 卡片（.apkg）")]
-        selected = {key: tk.BooleanVar(value=True) for key, _ in choices}
+        saved_types = set(saved["file_types"]) if saved else None
+        selected = {key: tk.BooleanVar(value=(key in saved_types if saved_types is not None else True)) for key, _ in choices}
         for key, label in choices:
             ttk.Checkbutton(area.inner, text=tr(label), variable=selected[key]).pack(anchor="w", pady=2)
-        note = tk.Label(area.inner, text=tr("自动生成只扫描选定文件夹；技巧卡会进入待审提案，重复卡片会跳过。"), bg=COLORS["bg"], fg=COLORS["text_dim"], justify="left", anchor="w", font=config.font("body"))
+        note = tk.Label(area.inner, text=tr("自动生成只扫描选定文件夹；技巧卡会进入待审提案，重复卡片会跳过，进度会实时保存。"), bg=COLORS["bg"], fg=COLORS["text_dim"], justify="left", anchor="w", font=config.font("body"))
         note.pack(fill="x", pady=12)
         wrap_label(note)
         progress_row = tk.Frame(area.inner, bg=COLORS["bg"])
         progress_row.pack(fill="x", pady=(0, 6))
-        progress_bar = ttk.Progressbar(progress_row, mode="determinate", maximum=1, value=0)
+        init_total = max(1, saved["total_files"]) if saved else 1
+        init_done = min(saved["done_files"], saved["total_files"]) if saved else 0
+        progress_bar = ttk.Progressbar(progress_row, mode="determinate", maximum=init_total, value=init_done)
         progress_bar.pack(side="left", fill="x", expand=True)
-        progress_text = tk.Label(progress_row, text="0/0", bg=COLORS["bg"], fg=COLORS["text_dim"], font=config.font("small"), width=10, anchor="e")
+        progress_text = tk.Label(progress_row, text=(f"{init_done}/{saved['total_files']}" if saved else "0/0"), bg=COLORS["bg"], fg=COLORS["text_dim"], font=config.font("small"), width=10, anchor="e")
         progress_text.pack(side="left", padx=(8, 0))
-        status = tk.Label(area.inner, text="", bg=COLORS["bg"], fg=COLORS["text_dim"], justify="left", anchor="w", font=config.font("body"))
+        init_status = ""
+        if saved:
+            rep = saved["report"]
+            init_status = tr("检测到上次未完成的进度：已完成 {done}/{total} 个文件（已创建 {created} 张概念卡，{proposals} 个技巧提案），可直接继续。",
+                             done=init_done, total=saved["total_files"], created=rep.get("created", 0), proposals=rep.get("proposals", 0))
+        status = tk.Label(area.inner, text=init_status, bg=COLORS["bg"], fg=COLORS["text_dim"], justify="left", anchor="w", font=config.font("body"))
         status.pack(fill="x")
         wrap_label(status)
+        running_cancel = {"event": None}
         def update_progress(pair):
             if not dlg.winfo_exists():
                 return
             done_n, total_n = pair
             progress_bar.configure(maximum=max(1, total_n), value=done_n)
             progress_text.configure(text=f"{done_n}/{total_n}")
-        def start():
+        def start(resume=True):
             root = folder.get().strip()
             types = [key for key, _ in choices if selected[key].get()]
             if not root or not types:
@@ -832,28 +844,83 @@ class KnowledgePage(tk.Frame):
             if not Path(root).is_dir():
                 toast.warn(tr("请选择一个现有文件夹"))
                 return
+            if not resume:
+                clear_auto_progress(self.kb)
+            ev = threading.Event()
+            running_cancel["event"] = ev
             start_button.state(["disabled"])
-            progress_bar.configure(maximum=1, value=0)
-            progress_text.configure(text="0/0")
+            reset_button.state(["disabled"])
+            pause_button.state(["!disabled"])
+            if not resume:
+                progress_bar.configure(maximum=1, value=0)
+                progress_text.configure(text="0/0")
             status.configure(text=tr("正在扫描并生成卡片…"))
             def on_prog(done_n, total_n):
                 self._jobs.put((update_progress, (done_n, total_n), None))
-            self.background(lambda: auto_generate(self.kb, self.call_ai, root, types, on_progress=on_prog), done)
+            self.background(lambda: auto_generate(self.kb, self.call_ai, root, types, on_progress=on_prog, resume=resume, cancel_event=ev), done)
+        def pause():
+            ev = running_cancel.get("event")
+            if ev is not None:
+                ev.set()
+                pause_button.state(["disabled"])
+                status.configure(text=tr("正在保存当前进度并暂停…"))
+        def clear_saved():
+            clear_auto_progress(self.kb)
+            progress_bar.configure(maximum=1, value=0)
+            progress_text.configure(text="0/0")
+            status.configure(text=tr("已清除上次进度。"))
+            start_button.configure(text=tr("开始自动生成"))
+            reset_button.state(["disabled"])
         def done(report):
+            running_cancel["event"] = None
             if not dlg.winfo_exists():
+                self.show()
                 return
             total_n = int(report.get("files", 0))
+            if report.get("paused"):
+                summary = tr("已暂停并保存进度：当前已完成 {done}/{total} 组（创建 {created} 张概念卡，生成 {proposals} 个技巧提案），下次打开可继续。",
+                             done=int(report.get("resumed", 0)) + int(report.get("created", 0) > 0 or 0),
+                             total=int(report.get("groups", 0)),
+                             created=report.get("created", 0), proposals=report.get("proposals", 0))
+                cur = load_auto_progress(self.kb)
+                if cur:
+                    summary = tr("已暂停并保存进度：已完成 {done}/{total} 个文件（创建 {created} 张概念卡，生成 {proposals} 个技巧提案），下次打开可继续。",
+                                 done=cur["done_files"], total=cur["total_files"],
+                                 created=report.get("created", 0), proposals=report.get("proposals", 0))
+                status.configure(text=summary)
+                start_button.configure(text=tr("继续生成"))
+                start_button.state(["!disabled"])
+                reset_button.state(["!disabled"])
+                pause_button.state(["disabled"])
+                self.show()
+                return
             progress_bar.configure(maximum=max(1, total_n), value=total_n)
             progress_text.configure(text=f"{total_n}/{total_n}")
             summary = tr("自动生成完成：扫描 {files} 个文件，处理 {groups} 组，创建 {created} 张概念卡，生成 {proposals} 个技巧提案，跳过重复 {duplicates} 项，忽略 {ignored} 组，失败 {errors} 组。", **report)
             if report.get("errors") and report.get("last_error"):
                 summary += "\n" + str(report["last_error"])
             status.configure(text=summary)
+            start_button.configure(text=tr("开始自动生成"))
             start_button.state(["!disabled"])
+            reset_button.state(["disabled"])
+            pause_button.state(["disabled"])
             self.show()
-        start_button = ttk.Button(dlg.buttons, text=tr("开始自动生成"), command=start)
+        def on_close():
+            ev = running_cancel.get("event")
+            if ev is not None:
+                ev.set()
+            dlg.cancel()
+        dlg.protocol("WM_DELETE_WINDOW", on_close)
+        start_button = ttk.Button(dlg.buttons, text=tr("继续生成") if saved else tr("开始自动生成"), command=lambda: start(resume=True))
         start_button.pack(side="right")
-        ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right", padx=(0, 8))
+        pause_button = ttk.Button(dlg.buttons, text=tr("暂停保存"), command=pause)
+        pause_button.state(["disabled"])
+        pause_button.pack(side="right", padx=(0, 8))
+        reset_button = ttk.Button(dlg.buttons, text=tr("清除进度"), command=clear_saved)
+        if not saved:
+            reset_button.state(["disabled"])
+        reset_button.pack(side="right", padx=(0, 8))
+        ttk.Button(dlg.buttons, text=tr("关闭"), command=on_close).pack(side="right", padx=(0, 8))
         area.bind_children()
 
     def import_preview(self, cards):

@@ -15,6 +15,10 @@ import config
 import tempstore
 from .kb_ai import FIELD_GUIDE
 from .kb_rank import tokens
+from .kb_stats import now
+from .kb_store import read_json, write_json
+
+AUTO_PROGRESS_FILE = "auto_import_progress.json"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 FILE_TYPES = {
@@ -309,7 +313,8 @@ def _anki_groups(path):
                                     images.append((f"Anki 图片 {Path(ref).name}", data))
                         except (KeyError, OSError, zipfile.BadZipFile):
                             continue
-                    yield {"source": f"{path.name} · 卡片 {index}", "text": "\n".join(texts), "images": images}
+                    yield {"source": f"{path.name} · 卡片 {index}", "group_key": f"{path.resolve()}#anki#{index}",
+                           "text": "\n".join(texts), "images": images}
             finally:
                 connection.close()
     finally:
@@ -415,61 +420,169 @@ def _duplicate(kb, candidate):
     return None
 
 
-def auto_generate(kb, call, root, file_types, on_progress=None):
-    extensions = set().union(*(FILE_TYPES[key] for key in file_types if key in FILE_TYPES))
+def _group_key(group):
+    if group.get("group_key"):
+        return str(group["group_key"])
+    src = str(group.get("source") or "")
+    try:
+        return str(Path(src).resolve())
+    except OSError:
+        return src
+
+
+def _progress_path(kb):
+    return kb.internal / AUTO_PROGRESS_FILE
+
+
+def load_auto_progress(kb):
+    """读取上次未完成的自动生成进度；无有效记录或目录不存在时返回 None。"""
+    data = read_json(_progress_path(kb))
+    if not isinstance(data, dict) or not data.get("root"):
+        return None
+    root = str(data.get("root") or "")
+    types = [t for t in (data.get("file_types") or ()) if t in FILE_TYPES]
+    if not types or not Path(root).is_dir():
+        return None
+    done_groups = [str(k) for k in (data.get("done_groups") or ()) if isinstance(k, str) and k]
+    report = data.get("report") if isinstance(data.get("report"), dict) else {}
+    return {
+        "root": root,
+        "file_types": types,
+        "total_files": max(0, int(data.get("total_files") or 0)),
+        "total_groups": max(0, int(data.get("total_groups") or 0)),
+        "done_files": max(0, int(data.get("done_files") or 0)),
+        "done_groups": done_groups,
+        "report": {
+            "files": max(0, int(report.get("files") or 0)),
+            "groups": max(0, int(report.get("groups") or 0)),
+            "created": max(0, int(report.get("created") or 0)),
+            "proposals": max(0, int(report.get("proposals") or 0)),
+            "duplicates": max(0, int(report.get("duplicates") or 0)),
+            "ignored": max(0, int(report.get("ignored") or 0)),
+            "errors": max(0, int(report.get("errors") or 0)),
+            "last_error": str(report.get("last_error") or ""),
+        },
+        "updated_at": str(data.get("updated_at") or ""),
+    }
+
+
+def _save_auto_progress(kb, root_str, file_types, file_count, total_groups, done_groups, done_files_count, report):
+    payload = {
+        "root": root_str,
+        "file_types": sorted(file_types),
+        "total_files": file_count,
+        "total_groups": total_groups,
+        "done_files": min(done_files_count, file_count),
+        "done_groups": sorted(done_groups),
+        "report": dict(report),
+        "updated_at": now(),
+    }
+    try:
+        with kb.lock:
+            write_json(_progress_path(kb), payload)
+    except OSError:
+        pass
+
+
+def clear_auto_progress(kb):
+    try:
+        with kb.lock:
+            p = _progress_path(kb)
+            if p.exists():
+                p.unlink()
+    except OSError:
+        pass
+
+
+def auto_generate(kb, call, root, file_types, on_progress=None, resume=True, cancel_event=None):
+    norm_types = sorted({key for key in file_types if key in FILE_TYPES})
+    extensions = set().union(*(FILE_TYPES[key] for key in norm_types))
     if not extensions:
         raise ValueError("至少选择一种文件类型")
+    root_str = str(Path(root).resolve())
     groups, file_count = _source_groups(root, extensions)
     report = {"files": file_count, "groups": len(groups), "created": 0, "proposals": 0,
-              "duplicates": 0, "ignored": 0, "errors": 0, "last_error": ""}
+              "duplicates": 0, "ignored": 0, "errors": 0, "last_error": "", "resumed": 0, "paused": False}
+    done_groups = set()
+    if resume:
+        saved = load_auto_progress(kb)
+        if saved and os.path.normcase(saved["root"]) == os.path.normcase(root_str) and sorted(saved["file_types"]) == norm_types:
+            done_groups = set(saved["done_groups"])
+            for field in ("created", "proposals", "duplicates", "ignored", "errors"):
+                report[field] = int(saved["report"].get(field, 0))
+            report["last_error"] = str(saved["report"].get("last_error") or "")
     remaining = {}
     for group in groups:
         for fpath in group.get("file_paths") or ():
             remaining[fpath] = remaining.get(fpath, 0) + 1
     done_files = set()
+    pending_groups = []
+    for group in groups:
+        gkey = _group_key(group)
+        if gkey in done_groups:
+            report["resumed"] += 1
+            for fpath in group.get("file_paths") or ():
+                remaining[fpath] = remaining.get(fpath, 1) - 1
+                if remaining[fpath] <= 0:
+                    done_files.add(fpath)
+        else:
+            pending_groups.append((gkey, group))
     if callable(on_progress):
-        on_progress(0, file_count)
+        on_progress(min(len(done_files), file_count), file_count)
+    _save_auto_progress(kb, root_str, norm_types, file_count, len(groups), done_groups, len(done_files), report)
     reset_ctx = getattr(getattr(call, "__self__", None), "reset_ai_context", None)
+    completed = True
     try:
-        for index, group in enumerate(groups):
+        for index, (gkey, group) in enumerate(pending_groups):
+            if cancel_event is not None and cancel_event.is_set():
+                completed = False
+                report["paused"] = True
+                break
             if callable(reset_ctx) and index > 0 and index % max(1, int(config.KB_AI_CONTEXT_MAX_TURNS)) == 0:
                 reset_ctx()
+            succeeded = False
             try:
                 cards = _auto_extract(kb, call, group)
                 if not cards:
                     report["ignored"] += 1
-                    continue
-                for card in cards:
-                    card["generality"] = card.get("generality") if card.get("generality") in {"universal", "explain_first", "non_universal"} else "explain_first"
-                    card["source"] = str(group["source"])
-                    if _duplicate(kb, card):
-                        report["duplicates"] += 1
-                        continue
-                    if card["kind"] == "tactical":
-                        review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
-                        kb.propose("ADD_CARD", subject=card["subject"], title=card["title"],
-                                   proposed_card=card, summary=review_summary,
-                                   evidence=[{"source": str(group["source"])[:1200]}])
-                        report["proposals"] += 1
-                    else:
-                        kb.save_card(card, maintainer=True)
-                        report["created"] += 1
+                else:
+                    for card in cards:
+                        card["generality"] = card.get("generality") if card.get("generality") in {"universal", "explain_first", "non_universal"} else "explain_first"
+                        card["source"] = str(group["source"])
+                        if _duplicate(kb, card):
+                            report["duplicates"] += 1
+                            continue
+                        if card["kind"] == "tactical":
+                            review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
+                            kb.propose("ADD_CARD", subject=card["subject"], title=card["title"],
+                                       proposed_card=card, summary=review_summary,
+                                       evidence=[{"source": str(group["source"])[:1200]}])
+                            report["proposals"] += 1
+                        else:
+                            kb.save_card(card, maintainer=True)
+                            report["created"] += 1
+                succeeded = True
             except Exception as error:
                 logging.getLogger(__name__).warning("Auto import failed for %s: %s", group.get("source"), error)
                 report["errors"] += 1
                 if not report["last_error"]:
                     report["last_error"] = f"{type(error).__name__}: {str(error)[:160]}"
             finally:
+                if succeeded:
+                    done_groups.add(gkey)
                 for fpath in group.get("file_paths") or ():
                     remaining[fpath] = remaining.get(fpath, 1) - 1
                     if remaining[fpath] <= 0:
                         done_files.add(fpath)
+                _save_auto_progress(kb, root_str, norm_types, file_count, len(groups), done_groups, len(done_files), report)
                 if callable(on_progress):
                     on_progress(min(len(done_files), file_count), file_count)
     finally:
         if callable(reset_ctx):
             reset_ctx()
-    if callable(on_progress):
-        on_progress(file_count, file_count)
-    kb.audit("auto_import", **report)
+    if completed:
+        clear_auto_progress(kb)
+        if callable(on_progress):
+            on_progress(file_count, file_count)
+        kb.audit("auto_import", **report)
     return report
