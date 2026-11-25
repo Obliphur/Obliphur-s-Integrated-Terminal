@@ -20,6 +20,7 @@ LABELS = {"title": "标题", "topic": "主题", "aliases": "别名", "triggers":
           "proof_sketch": "大题补证提示", "generality": "通用性", "examples": "典型例题", "body": "正文"}
 
 GENERALITY_LABELS = {"universal": "通用", "explain_first": "解释后通用", "non_universal": "不通用"}
+ACTION_LABELS = {"ADD_CARD": "新增技巧", "ADD_DERIVED": "新增衍生技巧", "UPDATE_CARD": "更新技巧", "MERGE_CARD": "合并技巧"}
 
 
 def open_obsidian(path, data_dir=None):
@@ -402,15 +403,84 @@ class KnowledgePage(tk.Frame):
         pr = self.kb._proposal(key)
         if not pr:
             return
-        dlg = modal(self, "审核提案")
-        text = tk.Text(dlg.body, wrap="word", bg=COLORS["bg_card"], fg=COLORS["text"], font=config.font("body"))
-        text.pack(fill="both", expand=True)
-        text.tag_configure("add", foreground=COLORS["success"])
-        text.tag_configure("remove", foreground=COLORS["warn"])
-        for line in self.kb.proposal_diff(key):
-            text.insert("end", line, "add" if line.startswith("+") else "remove" if line.startswith("-") else "")
-        text.insert("end", "\n" + json.dumps(pr.get("evidence", []), ensure_ascii=False, indent=2))
-        text.configure(state="disabled")
+        dlg = modal(self, "审核提案", width=700, height=640)
+        area = ScrollArea(dlg.body, bg=COLORS["bg"])
+        area.pack(fill="both", expand=True)
+        body = area.inner
+        old = self.kb.cards.get(pr.get("target_card_id") or "") or {}
+        proposed = pr.get("proposed_card") or {}
+
+        # 顶部标题与元信息卡片
+        header = tk.Frame(body, bg=COLORS["bg_card"], highlightbackground=COLORS["border"], highlightthickness=1)
+        header.pack(fill="x", pady=(0, 10))
+        title_lbl = tk.Label(header, text=pr.get("title") or proposed.get("title") or "",
+                             bg=COLORS["bg_card"], fg=COLORS["text"], font=config.font("h2", bold=True),
+                             anchor="w", justify="left")
+        title_lbl.pack(fill="x", padx=14, pady=(12, 4))
+        wrap_label(title_lbl, 28)
+
+        action_text = tr(ACTION_LABELS.get(pr.get("action", ""), pr.get("action", "")))
+        subject_text = tr(self.kb.subjects.get(pr.get("subject", ""), pr.get("subject", "")))
+        gen_key = proposed.get("generality", old.get("generality", "explain_first"))
+        gen_text = tr(GENERALITY_LABELS.get(gen_key, "解释后通用"))
+        meta_parts = [action_text, subject_text, f"{tr('通用性')}: {gen_text}"]
+        if proposed.get("topic"):
+            meta_parts.append(str(proposed["topic"]))
+        if pr.get("count", 1) > 1:
+            meta_parts.append(f"×{pr['count']}")
+        meta_lbl = tk.Label(header, text="  ·  ".join(p for p in meta_parts if p),
+                            bg=COLORS["bg_card"], fg=COLORS["accent"], font=config.font("small"),
+                            anchor="w", justify="left")
+        meta_lbl.pack(fill="x", padx=14, pady=(0, 10))
+        wrap_label(meta_lbl, 28)
+
+        def fmt_field(value):
+            if isinstance(value, list):
+                items = [str(v).strip() for v in value if str(v).strip()]
+                return "\n".join(f"• {item}" for item in items)
+            return str(value or "").strip()
+
+        def add_section(label_text, new_text, old_text="", *, warn=False):
+            card_box = tk.Frame(body, bg=COLORS["bg_card"], highlightbackground=COLORS["border"], highlightthickness=1)
+            card_box.pack(fill="x", pady=(0, 8))
+            tk.Label(card_box, text=label_text, bg=COLORS["bg_card"],
+                     fg=COLORS["warn"] if warn else COLORS["accent"],
+                     font=config.font("body", bold=True), anchor="w").pack(fill="x", padx=14, pady=(10, 4))
+            if old and old_text and old_text != new_text:
+                old_lbl = tk.Label(card_box, text=tr("原内容") + ":\n" + old_text, bg=COLORS["bg_card"],
+                                   fg=COLORS["warn"], font=config.font("small"), anchor="w", justify="left")
+                old_lbl.pack(fill="x", padx=14, pady=(0, 6))
+                wrap_label(old_lbl, 28)
+            content_fg = COLORS["success"] if (old and old_text != new_text) else COLORS["text"]
+            val_lbl = tk.Label(card_box, text=new_text or tr("（空）"), bg=COLORS["bg_card"],
+                               fg=content_fg, font=config.font("body"), anchor="w", justify="left")
+            val_lbl.pack(fill="x", padx=14, pady=(0, 10))
+            wrap_label(val_lbl, 28)
+
+        for field in ("statement", "preconditions", "proof_sketch", "triggers", "examples", "aliases"):
+            new_text = fmt_field(proposed.get(field, ""))
+            old_text = fmt_field(old.get(field, "")) if old else ""
+            if not new_text and not old_text:
+                continue
+            add_section(tr(LABELS[field]), new_text, old_text, warn=(field == "preconditions"))
+
+        notes = []
+        if pr.get("summary"):
+            notes.append(str(pr["summary"]).strip())
+        for ev in pr.get("evidence") or []:
+            if isinstance(ev, dict):
+                line = " · ".join(str(v).strip() for v in ev.values() if str(v).strip())
+                if line:
+                    notes.append(line)
+            elif str(ev).strip():
+                notes.append(str(ev).strip())
+        if notes:
+            foot = tk.Label(body, text=tr("来源与依据") + "\n" + "\n".join(notes),
+                            bg=COLORS["bg"], fg=COLORS["text_dim"], font=config.font("small"),
+                            anchor="w", justify="left")
+            foot.pack(fill="x", padx=4, pady=(4, 6))
+            wrap_label(foot, 12)
+
         def apply(edits=None):
             try:
                 self.kb.merge(key, maintainer=True, edits=edits)
@@ -422,11 +492,12 @@ class KnowledgePage(tk.Frame):
             self.kb.reject(key, maintainer=True)
             dlg.destroy()
             self.show()
-        actions = tk.Frame(dlg.body, bg=COLORS["bg"])
-        actions.pack(fill="x")
-        ttk.Button(actions, text=tr("合入主库"), command=apply).pack(side="left", padx=3)
-        ttk.Button(actions, text=tr("编辑后合入"), command=lambda: self.edit({**pr["proposed_card"], "title": pr["title"], "kind": "tactical", "subject": pr["subject"]}, on_save=apply)).pack(side="left", padx=3)
-        ttk.Button(actions, text=tr("拒绝提案"), command=reject).pack(side="left", padx=3)
+
+        ttk.Button(dlg.buttons, text=tr("合入主库"), style="Accent.TButton", command=apply).pack(side="right", padx=(6, 0))
+        ttk.Button(dlg.buttons, text=tr("编辑后合入"),
+                   command=lambda: self.edit({**proposed, "title": pr["title"], "kind": "tactical", "subject": pr["subject"]}, on_save=apply)).pack(side="right", padx=(6, 0))
+        ttk.Button(dlg.buttons, text=tr("拒绝提案"), command=reject).pack(side="left")
+        area.bind_children()
 
     def import_notes(self):
         dlg = modal(self, "导入笔记", height=350)
