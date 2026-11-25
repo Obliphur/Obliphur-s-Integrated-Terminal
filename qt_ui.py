@@ -21,7 +21,7 @@ from settings_manager import SETTINGS_PAGES, page_specs
 
 try:
     from PySide6.QtCore import QTimer, Qt
-    from PySide6.QtGui import QCloseEvent, QFontDatabase
+    from PySide6.QtGui import QCloseEvent, QFontDatabase, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QHBoxLayout,
@@ -32,6 +32,7 @@ try:
         QLineEdit,
         QListWidget,
         QProgressBar,
+        QPlainTextEdit,
         QScrollArea,
         QSpinBox,
         QTableWidget,
@@ -821,6 +822,111 @@ if QApplication is not None:
         def refresh(self):
             self.confirm.clear()
 
+    class QtPrescriptPage(QWidget):
+        """Qt version of the focused instruction screen for the urban theme."""
+
+        def __init__(self, model, parent=None):
+            super().__init__(parent)
+            self.model = model
+            self.legacy = getattr(model, "pages", {}).get("prescript")
+            self.setObjectName("prescriptPage")
+            root = QVBoxLayout(self)
+            root.setContentsMargins(config.scaled(24), config.scaled(18), config.scaled(24), config.scaled(18))
+            self.exit = QPushButton("×", self)
+            self.exit.setObjectName("prescriptExit")
+            self.exit.clicked.connect(self._exit)
+            root.addWidget(self.exit, 0, Qt.AlignLeft)
+            root.addStretch(1)
+            center = QVBoxLayout()
+            center.setAlignment(Qt.AlignCenter)
+            self.mark = QLabel(self)
+            self.mark.setAlignment(Qt.AlignCenter)
+            path = config.asset_path("themes", "urban_will", "image", "Index.png")
+            pixmap = QPixmap(path)
+            if not pixmap.isNull():
+                self.mark.setPixmap(pixmap.scaled(config.scaled(128), config.scaled(128), Qt.KeepAspectRatio,
+                                                  Qt.SmoothTransformation))
+            center.addWidget(self.mark)
+            self.code = QLabel(self)
+            self.code.setObjectName("prescriptCode")
+            self.code.setAlignment(Qt.AlignCenter)
+            center.addWidget(self.code)
+            self.body = QLabel(self)
+            self.body.setObjectName("prescriptBody")
+            self.body.setAlignment(Qt.AlignCenter)
+            self.body.setWordWrap(True)
+            self.body.setMaximumWidth(config.scaled(680))
+            center.addWidget(self.body, 0, Qt.AlignHCenter)
+            self.receive = QPushButton(tr("- 接收指令 -"), self)
+            self.receive.setObjectName("prescriptReceive")
+            self.receive.clicked.connect(self._receive)
+            center.addWidget(self.receive, 0, Qt.AlignHCenter)
+            self.editor = QPlainTextEdit(self)
+            self.editor.setMaximumWidth(config.scaled(680))
+            self.editor.setMaximumHeight(config.scaled(210))
+            self.editor.hide()
+            center.addWidget(self.editor, 0, Qt.AlignHCenter)
+            self.editor_buttons = QWidget(self)
+            edit_buttons = QHBoxLayout(self.editor_buttons)
+            self.submit = QPushButton(tr("确认"), self.editor_buttons)
+            self.abandon = QPushButton(tr("放弃"), self.editor_buttons)
+            self.submit.clicked.connect(self._submit)
+            self.abandon.clicked.connect(self._abandon)
+            edit_buttons.addWidget(self.submit)
+            edit_buttons.addWidget(self.abandon)
+            self.editor_buttons.hide()
+            center.addWidget(self.editor_buttons, 0, Qt.AlignHCenter)
+            root.addLayout(center, 0)
+            root.addStretch(1)
+
+        def _engine(self):
+            return getattr(self.legacy, "engine", None)
+
+        def _exit(self):
+            if self.legacy is not None:
+                self.legacy._exit()
+
+        def _receive(self):
+            if self.legacy is not None:
+                self.legacy._on_click()
+            self.refresh()
+
+        def _submit(self):
+            engine = self._engine()
+            if engine is not None:
+                engine.submit_log(self.editor.toPlainText())
+            self.refresh()
+
+        def _abandon(self):
+            engine = self._engine()
+            if engine is not None:
+                engine.abandon_log()
+            self.refresh()
+
+        def refresh(self):
+            if self.legacy is None:
+                return
+            engine = self._engine()
+            if engine is None:
+                return
+            current = engine.current
+            body = self.legacy._body_text(current) if current else tr("谨遵指令之意")
+            if current:
+                from prescript.prescript_common import pad_code, type_code
+                codes = [pad_code(type_code(current.get("type")))]
+            else:
+                from prescript.prescript_common import pad_code
+                codes = [pad_code(str(item.get("code") or "")) for item in self.legacy._fresh_grants()]
+                codes = codes or [pad_code("NONE")]
+            self.body.setText(body)
+            self.code.setText("\n".join(codes))
+            self.receive.setEnabled(engine.can_draw() and not (current and current.get("type") == "X"))
+            editing = bool(current and current.get("type") == "X")
+            if editing and not self.editor.isVisible():
+                self.editor.setPlainText(engine.log_prefill())
+            self.editor.setVisible(editing)
+            self.editor_buttons.setVisible(editing)
+
     class QtNetPage(QWidget):
         """Qt presentation for the network request workflow."""
 
@@ -1112,7 +1218,8 @@ if QApplication is not None:
                             QtHourLogPage(self.model, self._stack) if key == "log" else
                             QtContractPage(self.model, self._stack) if key == "contract" else
                             QtKnowledgePage(self.model, self._stack) if key == "knowledge" else
-                            QtResetPage(self.model, self._stack) if key == "reset" else QLabel(
+                            QtResetPage(self.model, self._stack) if key == "reset" else
+                            QtPrescriptPage(self.model, self._stack) if key == "prescript" else QLabel(
                         tr("正在迁移此页面到 Qt6"), self._stack))
                     if isinstance(page, QLabel):
                         page.setAlignment(Qt.AlignCenter)
@@ -1230,6 +1337,11 @@ if QApplication is not None:
                 QPushButton#accentButton {{ background: {COLORS.get('accent_fill', accent)}; color: {COLORS.get('on_accent_fill', COLORS.get('on_accent', '#ffffff'))}; border: 0; font-weight: 700; }}
                 QPushButton#dangerButton {{ background: {COLORS.get('danger_fill', COLORS.get('danger', accent))}; color: {COLORS.get('on_danger_fill', text)}; border-color: {COLORS.get('danger', accent)}; font-weight: 700; }}
                 QLabel#resetWarning {{ color: {COLORS.get('danger', accent)}; background: {COLORS.get('danger_bg', card)}; border: 1px solid {COLORS.get('danger', accent)}; padding: {config.scaled(12)}px; font-weight: 700; }}
+                QWidget#prescriptPage {{ background: #000000; color: #ffffff; }}
+                QLabel#prescriptCode {{ color: #96c4ec; font-family: Consolas, monospace; font-size: {px('big')}px; font-weight: 700; padding: {config.scaled(10)}px; }}
+                QLabel#prescriptBody {{ color: #ffffff; font-size: {body_px}px; padding: {config.scaled(10)}px; }}
+                QPushButton#prescriptReceive {{ background: #000000; color: #ffffff; border: 0; font-size: {button_px}px; }}
+                QPushButton#prescriptExit {{ background: #000000; color: #2a3535; border: 0; padding: 2px 8px; }}
                 QLabel#calendarHeader {{ background: {card}; color: {dim}; padding: {config.scaled(6)}px; font-size: {small_px}px; }}
                 QLabel#calendarCell {{ background: {card}; border: 1px solid {border}; padding: {config.scaled(4)}px; font-size: {small_px}px; }}
                 QLabel#calendarCell[today="true"] {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
@@ -1259,6 +1371,7 @@ if QApplication is not None:
             if key not in self._pages:
                 key = "timer"
             self._current_key = key
+            self.sidebar.setVisible(key != "prescript")
             try:
                 self.model.show_page(key)
             except Exception:
@@ -1278,6 +1391,8 @@ if QApplication is not None:
                 self._pages[key].refresh()
             elif key == "reset":
                 self._pages[key].refresh()
+            elif key == "prescript":
+                self._pages[key].refresh()
             for name, button in self._nav.items():
                 button.setProperty("active", name == key)
                 button.style().unpolish(button)
@@ -1292,7 +1407,7 @@ if QApplication is not None:
                 return
             self._refresh()
             self._qt_tick += 1
-            if self._qt_tick % 15 == 0 and self._current_key in ("net", "log", "contract"):
+            if self._qt_tick % 15 == 0 and self._current_key in ("net", "log", "contract", "prescript"):
                 self._pages[self._current_key].refresh()
 
         def _refresh(self):
