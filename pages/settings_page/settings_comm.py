@@ -44,6 +44,8 @@ class CommSettingsMixin:
         from .. import ai_dialogs
         ai_dialogs.open_task_model_settings(self.winfo_toplevel(), self.comm.ai, role, title)
         self._refresh_models_page()
+        if role == "main" and self.comm is not None:
+            self.comm._changed()
 
     def _refresh_models_page(self):
         if self.comm is None or not hasattr(self, "lbl_main_model"):

@@ -446,7 +446,8 @@ def open_task_model_settings(parent, cfg: "ai_assist.AIConfig", role: str, title
         index = labels.index(selected.get()) if selected.get() in labels else 0
         cid = ids[index]
         if role == "main":
-            cfg.set_active(cid)
+            if cfg.set_active(cid):
+                cfg.assign.clear()
         else:
             cfg.assign_task(role, cid)
         if cfg.save():

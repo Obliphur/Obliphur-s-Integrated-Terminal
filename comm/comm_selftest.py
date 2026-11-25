@@ -365,11 +365,12 @@ def _selftest():
     cid = c.ai.add_config("备用")
     assert cid and c.ai.config_name(cid) == "备用" and c.ai.profile(cid)["provider"] == "custom"
     assert c.ai.rename_config(cid, "备用2") and c.ai.config_name(cid) == "备用2"
-    c.set_config(cid)                                     # 小夏.txt 单独用 "备用2"
-    assert c.current_config() == cid and c.profile()["config_id"] == cid
-    assert ai_assist.AIConfig(c.ai.path).config_for("小夏.txt") == cid, "每个 AI 用的配置存盘了"
+    c.set_config(cid)                                     # 沟通页切换模型直接联动主模型设置
+    assert c.current_config() == cid and c.profile()["config_id"] == cid and c.ai.provider == cid
+    reloaded = ai_assist.AIConfig(c.ai.path)
+    assert reloaded.provider == cid and reloaded.config_for("小夏.txt") == cid, "主模型与当前人设配置同步存盘了"
     c.set_config("deepseek")
-    assert c.current_config() == "deepseek"
+    assert c.current_config() == "deepseek" and c.ai.provider == "deepseek"
     while c.ai.add_config("x"):
         pass
     assert len(c.ai.order) == ai_assist.MAX_CONFIGS, "最多 10 份配置"

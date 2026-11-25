@@ -431,7 +431,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
     def set_config(self, cid: str):
         if not cid or cid == self.current_config():
             return
-        self.ai.assign_config(self.persona_name(), cid)
+        if self.ai.set_active(cid):
+            self.ai.assign.clear()
+        else:
+            self.ai.assign_config(self.persona_name(), cid)
         self.ai.save()
         self._changed()
 

@@ -233,27 +233,33 @@ class PcLocal:
 
     # ---- 文档 ----
 
+    @staticmethod
+    def _is_shared_ai_profile(cid: str, prof: dict) -> bool:
+        if not cid or cid in ai_assist.CLI_PROVIDERS or cid.startswith("device_"):
+            return False
+        prof = prof or {}
+        preset = str(prof.get("preset") or "")
+        kind = str(prof.get("kind") or "api")
+        if kind in ("device", "cli") or preset in ai_assist.CLI_PROVIDERS or preset == "device":
+            return False
+        return True
+
     def _ai_doc(self) -> dict:
-        """API 配置: 最多 20 份命名配置 + 默认配置 + 每个 AI 用哪份. Key 在同步通道里由配对密钥封着传,
-        落到对方设备后再用本机的 DPAPI 加密保存; 空 Key 不往外发 (免得未配置的设备把另一台的 Key 冲掉)."""
+        """API 配置: 最多 20 份命名配置 (仅同步共享 API 配置, 不同步本机选中的主模型 / 设备代理 / 桌面 CLI).
+        Key 在同步通道里由配对密钥封着传, 落到对方设备后再用本机的 DPAPI 加密保存; 空 Key 不往外发."""
         cfg = self.app.comm.ai
-        shared_order = [cid for cid in cfg.order if (cfg.profiles.get(cid) or {}).get("kind") != "device"]
-        out = {"provider": cfg.provider if cfg.provider in shared_order else (shared_order[0] if shared_order else ""),
-               "order": ",".join(shared_order)}
+        shared_order = [cid for cid in cfg.order if self._is_shared_ai_profile(cid, cfg.profiles.get(cid))]
+        out = {"order": ",".join(shared_order)}
         for cid in shared_order:
             prof = cfg.profiles[cid]
             out[f"{cid}/preset"] = str(prof.get("preset") or "custom")
             out[f"{cid}/family"] = str(prof.get("family") or "")
             out[f"{cid}/base_url"] = str(prof.get("base_url") or "")
             out[f"{cid}/model"] = str(prof.get("model") or "")
-            out[f"{cid}/kind"] = str(prof.get("kind") or "api")
-            out[f"{cid}/target_device"] = str(prof.get("target_device") or "")
-            out[f"{cid}/target_name"] = str(prof.get("target_name") or "")
+            out[f"{cid}/kind"] = "api"
             if prof.get("api_key"):
                 out[f"{cid}/api_key"] = str(prof.get("api_key") or "")
             out[f"names/{cid}"] = cfg.config_name(cid)
-        for persona, cid in cfg.assign.items():
-            out[f"assign/{persona}"] = cid
         return out
 
     def voice_files(self):
@@ -386,58 +392,58 @@ class PcLocal:
             cfg = a.comm.ai
             items = dict(changes)
             order_text = items.pop("order", None)
-            active = items.pop("provider", None)
-            if isinstance(order_text, str):                 # 配置列表 (增删) 以这份为准, 再把每一项填进去
-                ids = [x for x in order_text.split(",") if x]
+            items.pop("provider", None)                 # 本机当前选中的主模型不同步，避免跨设备互冲
+            if isinstance(order_text, str):             # 配置列表 (增删) 以这份为准, 但保留本机 CLI / 设备代理
+                ids = [x for x in order_text.split(",")
+                       if x and x not in ai_assist.CLI_PROVIDERS and not x.startswith("device_")]
+                local_only = [cid for cid in cfg.order
+                              if cid in cfg.profiles and not self._is_shared_ai_profile(cid, cfg.profiles.get(cid))]
+                for cid, prof in cfg.profiles.items():
+                    if cid not in local_only and not self._is_shared_ai_profile(cid, prof):
+                        local_only.append(cid)
+                local_only_set = set(local_only)
                 for cid in ids:
                     if cid not in cfg.profiles:
                         cfg.profiles[cid] = ai_assist.default_profile("custom")
                         cfg.names.setdefault(cid, cid)
-                cfg.order = [cid for cid in ids if cid in cfg.profiles][:ai_assist.MAX_CONFIGS]
+                shared_cap = max(0, ai_assist.MAX_CONFIGS - len(local_only))
+                new_shared = [cid for cid in ids if cid in cfg.profiles and cid not in local_only_set][:shared_cap]
+                cfg.order = new_shared + [cid for cid in local_only if cid in cfg.profiles]
+                keep = set(cfg.order)
                 for cid in list(cfg.profiles):
-                    if cid not in cfg.order:
+                    if cid not in keep:
                         cfg.profiles.pop(cid, None)
                         cfg.names.pop(cid, None)
-                cfg.assign = {p: c for p, c in cfg.assign.items() if c in cfg.order}
-                # 设备代理只由本机绑定列表生成，不能被另一台设备的配置快照删除。
-                local_devices = [cid for cid, prof in cfg.profiles.items() if prof.get("kind") == "device"]
-                for cid in local_devices:
-                    if cid not in cfg.order:
-                        cfg.order.append(cid)
-                if cfg.order and cfg.provider not in cfg.order:
+                cfg.assign = {p: c for p, c in cfg.assign.items() if c in cfg.profiles}
+                cfg.task_assign = {r: c for r, c in cfg.task_assign.items() if c in cfg.profiles}
+                if cfg.order and cfg.provider not in cfg.profiles:
                     cfg.provider = cfg.order[0]
-            allowed = ("preset", "family", "base_url", "model", "api_key", "kind", "target_device", "target_name")
+            allowed = ("preset", "family", "base_url", "model", "api_key", "kind")
             for key, val in items.items():
+                if key.startswith("assign/"):
+                    continue
                 text = "" if val is None else str(val)
                 if key.startswith("names/"):
                     cid = key[len("names/"):]
-                    if cid in cfg.profiles and text:
+                    if cid in cfg.profiles and self._is_shared_ai_profile(cid, cfg.profiles.get(cid)) and text:
                         cfg.rename_config(cid, text)
-                    continue
-                if key.startswith("assign/"):
-                    persona = key[len("assign/"):]
-                    if persona:
-                        if text:
-                            cfg.assign_config(persona, text)
-                        else:
-                            cfg.assign.pop(persona, None)
                     continue
                 cid, _, field = key.partition("/")
                 if cid not in cfg.profiles or field not in allowed:
                     continue
+                if not self._is_shared_ai_profile(cid, cfg.profiles.get(cid)):
+                    continue
                 if field == "preset":
-                    if text not in ai_assist.PROVIDERS:
+                    if text not in ai_assist.PROVIDERS or text in ai_assist.CLI_PROVIDERS or text == "device":
                         continue
                 elif field == "family":
                     if text not in ai_assist.FAMILY_PROTOCOL:
                         continue
-                elif field == "kind" and text not in ("api", "cli", "device"):
+                elif field == "kind" and text != "api":
                     continue
                 elif text == "" and str(cfg.profiles[cid].get(field) or ""):
                     continue          # 空值不覆盖已有的: 没配置过的设备不会把另一台的型号 / Key 冲掉
                 cfg.set_profile(cid, **{field: text})
-            if isinstance(active, str) and active in cfg.profiles:
-                cfg.set_active(active)
             cfg.save()
         elif doc in ("personas", "persona_profiles"):
             profiles = doc == "persona_profiles"

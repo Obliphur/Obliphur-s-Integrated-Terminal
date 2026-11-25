@@ -2303,8 +2303,8 @@ class Comm(
     fun setConfig(id: String) {
         if (id.isEmpty()) return
         val cfg = aiConfig()
-        if (id == cfg.configFor(personaName())) return
-        cfg.assignConfig(personaName(), id)
+        if (id == cfg.configFor(personaName()) && id == cfg.provider && cfg.assign.isEmpty()) return
+        if (cfg.setActive(id)) cfg.assign.clear() else cfg.assignConfig(personaName(), id)
         cfg.save()
         problemAt = 0L
         changed()
@@ -3343,8 +3343,9 @@ class Comm(
 
     fun aiConfig(): AiConfig {
         val cfg = AiConfig(File(dir, "ai_config.json"))
-        // deviceList 的第一项是本机；代理目标只列出其他绑定设备。
-        cfg.refreshDevices(devices().drop(1))
+        // deviceList 的第一项是本机；代理目标只列出其他绑定设备。尚未初始化同步时不清空已存设备代理。
+        val devs = devices()
+        if (devs.isNotEmpty()) cfg.refreshDevices(devs.drop(1))
         return cfg
     }
 

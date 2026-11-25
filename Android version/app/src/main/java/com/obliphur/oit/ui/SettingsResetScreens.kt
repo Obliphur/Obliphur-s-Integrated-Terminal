@@ -25,6 +25,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -159,9 +160,10 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
 @Composable
 private fun ModelAssignmentRow(role: String, title: String, revision: Int, changed: () -> Unit) {
     val o = LocalOit.current
-    val cfg = remember(revision) { OitApp.instance.core.comm.aiConfig() }
+    val appVer by OitApp.instance.version.collectAsState()
+    val cfg = remember(revision, appVer) { OitApp.instance.core.comm.aiConfig() }
     val ids = if (role == "main") cfg.order else listOf("") + cfg.order
-    var selected by remember(revision) { mutableStateOf(if (role == "main") cfg.provider else cfg.taskAssign[role].orEmpty()) }
+    var selected by remember(revision, appVer) { mutableStateOf(if (role == "main") cfg.provider else cfg.taskAssign[role].orEmpty()) }
     var open by remember { mutableStateOf(false) }
     val label = if (selected.isEmpty()) tr("跟随聊天模型") else
         "${cfg.configName(selected)} · ${cfg.profile(selected).model.ifEmpty { "—" }}"
@@ -178,10 +180,13 @@ private fun ModelAssignmentRow(role: String, title: String, revision: Int, chang
                         val name = if (id.isEmpty()) tr("跟随聊天模型") else cfg.configName(id)
                         DropdownMenuItem(text = { Text(name, color = o.text) }, onClick = {
                             selected = id
-                            if (role == "main") cfg.setActive(id) else cfg.assignTask(role, id)
+                            if (role == "main") {
+                                if (cfg.setActive(id)) cfg.assign.clear()
+                            } else cfg.assignTask(role, id)
                             cfg.save()
                             open = false
                             changed()
+                            OitApp.instance.core.changed()
                         })
                     }
                 }

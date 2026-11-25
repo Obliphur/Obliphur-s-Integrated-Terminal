@@ -201,13 +201,20 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         else v?.toString() ?: ""
     }
 
-    /** API 配置: 最多 20 份命名配置 + 默认配置 + 每个 AI 用哪份. Key 在同步通道里由配对密钥封着传,
-     *  落到对方设备后再用本机的 Keystore 加密保存; 空 Key 不往外发 (免得未配置的设备把另一台的 Key 冲掉). */
+    private val desktopCliIds = setOf("claude_code", "codex", "antigravity")
+
+    private fun isSharedAiProfile(id: String, p: Profile?): Boolean {
+        if (id.isEmpty() || id in desktopCliIds || id.startsWith("device_")) return false
+        if (p == null) return false
+        return p.kind != "device" && p.kind != "cli" && p.preset !in desktopCliIds && p.preset != "device"
+    }
+
+    /** API 配置: 最多 20 份命名配置 (仅同步共享 API 配置, 不同步本机选中的主模型 / 设备代理 / 桌面 CLI).
+     *  Key 在同步通道里由配对密钥封着传, 落到对方设备后再用本机的 Keystore 加密保存; 空 Key 不往外发. */
     private fun aiDoc(): Map<String, Any?> {
         val cfg = AiConfig(java.io.File(core.dir, "ai_config.json"))
         val out = LinkedHashMap<String, Any?>()
-        val sharedOrder = cfg.order.filter { cfg.profiles[it]?.kind != "device" }
-        out["provider"] = if (cfg.provider in sharedOrder) cfg.provider else sharedOrder.firstOrNull().orEmpty()
+        val sharedOrder = cfg.order.filter { isSharedAiProfile(it, cfg.profiles[it]) }
         out["order"] = sharedOrder.joinToString(",")
         for (id in sharedOrder) {
             val p = cfg.profiles[id] ?: continue
@@ -215,13 +222,10 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             out["$id/family"] = p.family
             out["$id/base_url"] = p.baseUrl
             out["$id/model"] = p.model
-            out["$id/kind"] = p.kind
-            out["$id/target_device"] = p.targetDevice
-            out["$id/target_name"] = p.targetName
+            out["$id/kind"] = "api"
             if (p.apiKey.isNotEmpty()) out["$id/api_key"] = p.apiKey
             out["names/$id"] = cfg.configName(id)
         }
-        for ((persona, id) in cfg.assign) out["assign/$persona"] = id
         return out
     }
 
@@ -335,55 +339,56 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                 val cfg = AiConfig(java.io.File(core.dir, "ai_config.json"))
                 val items = LinkedHashMap(changes)
                 val orderText = items.remove("order")?.toString() ?: ""
-                val active = items.remove("provider")?.toString() ?: ""
-                if ("order" in changes) {                    // 配置列表 (增删) 以这份为准, 再把每一项填进去
-                    val ids = orderText.split(",").filter { it.isNotEmpty() }
+                items.remove("provider")                     // 本机当前选中的主模型不同步，避免跨设备互冲
+                if ("order" in changes) {                    // 配置列表 (增删) 以这份为准, 但保留本机设备代理并忽略桌面 CLI
+                    val ids = orderText.split(",").filter {
+                        it.isNotEmpty() && it !in desktopCliIds && !it.startsWith("device_")
+                    }
+                    val localDeviceIds = cfg.order.filter { cfg.profiles[it]?.kind == "device" }.toMutableList()
+                    for ((id, p) in cfg.profiles) if (p.kind == "device" && id !in localDeviceIds) localDeviceIds.add(id)
+                    val localDeviceSet = localDeviceIds.toSet()
                     for (id in ids) if (id !in cfg.profiles) {
                         cfg.profiles[id] = Profile("custom", "", "openai", "", "", "other", "custom")
                         cfg.names.putIfAbsent(id, id)
                     }
+                    val sharedCap = (Ai.MAX_CONFIGS - localDeviceIds.size).coerceAtLeast(0)
                     cfg.order.clear()
-                    cfg.order.addAll(ids.filter { it in cfg.profiles }.take(Ai.MAX_CONFIGS))
-                    val localDeviceIds = cfg.profiles.filterValues { it.kind == "device" }.keys
-                    for (id in localDeviceIds) if (id !in cfg.order) cfg.order.add(id)
+                    cfg.order.addAll(ids.filter { it in cfg.profiles && it !in localDeviceSet }.take(sharedCap))
+                    for (id in localDeviceIds) if (id in cfg.profiles && id !in cfg.order) cfg.order.add(id)
+                    val keep = cfg.order.toSet()
                     for (id in cfg.profiles.keys.toList()) {
-                        if (id !in cfg.order && id !in localDeviceIds) { cfg.profiles.remove(id); cfg.names.remove(id) }
+                        if (id !in keep) { cfg.profiles.remove(id); cfg.names.remove(id) }
                     }
-                    cfg.assign.entries.removeAll { it.value !in cfg.order }
-                    if (cfg.order.isNotEmpty() && cfg.provider !in cfg.order) cfg.provider = cfg.order.first()
+                    cfg.assign.entries.removeAll { it.value !in cfg.profiles }
+                    cfg.taskAssign.entries.removeAll { it.value !in cfg.profiles }
+                    if (cfg.order.isNotEmpty() && cfg.provider !in cfg.profiles) cfg.provider = cfg.order.first()
                 }
                 for ((key, v) in items) {
+                    if (key.startsWith("assign/")) continue
                     val text = v?.toString() ?: ""
                     if (key.startsWith("names/")) {
                         val id = key.removePrefix("names/")
-                        if (id in cfg.profiles && text.isNotEmpty()) cfg.renameConfig(id, text)
-                        continue
-                    }
-                    if (key.startsWith("assign/")) {
-                        val persona = key.removePrefix("assign/")
-                        if (persona.isNotEmpty()) {
-                            if (text.isEmpty()) cfg.assign.remove(persona) else cfg.assignConfig(persona, text)
+                        if (id in cfg.profiles && isSharedAiProfile(id, cfg.profiles[id]) && text.isNotEmpty()) {
+                            cfg.renameConfig(id, text)
                         }
                         continue
                     }
                     val id = key.substringBefore('/')
                     val field = key.substringAfter('/', "")
                     val cur = cfg.profiles[id] ?: continue
+                    if (!isSharedAiProfile(id, cur)) continue
                     val next = when (field) {
-                        "preset" -> if (text in Ai.PROVIDERS) cur.copy(preset = text) else cur
+                        "preset" -> if (text in Ai.PROVIDERS && text !in desktopCliIds && text != "device") cur.copy(preset = text) else cur
                         "family" -> if (text in Ai.FAMILY_PROTOCOL) cur.copy(family = text, protocol = Ai.FAMILY_PROTOCOL[text]!!) else cur
                         // 空值不覆盖已有的: 没配置过的设备不会把另一台的型号 / Key 冲掉
                         "base_url" -> if (text.isEmpty() && cur.baseUrl.isNotEmpty()) cur else cur.copy(baseUrl = text)
                         "model" -> if (text.isEmpty() && cur.model.isNotEmpty()) cur else cur.copy(model = text)
                         "api_key" -> if (text.isEmpty() && cur.apiKey.isNotEmpty()) cur else cur.copy(apiKey = text)
-                        "kind" -> if (text in setOf("api", "device")) cur.copy(kind = text) else cur
-                        "target_device" -> cur.copy(targetDevice = text)
-                        "target_name" -> cur.copy(targetName = text)
+                        "kind" -> if (text == "api") cur.copy(kind = "api") else cur
                         else -> cur
                     }
                     if (next != cur) cfg.putProfile(id, next)
                 }
-                if (active in cfg.profiles) cfg.setActive(active)
                 cfg.save()
             }
             "comm" -> core.comm.applyDoc(changes)
