@@ -15,13 +15,38 @@ SCHEMA = ('返回严格 JSON 卡片：{"kind":"conceptual 或 tactical","subject
           '"examples":[],"body":"概念卡的 Markdown 正文"}。公式用 LaTeX。不得臆造缺失事实。')
 
 
+def _loads_relaxed(text):
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # AI 在 JSON 字符串里写 LaTeX（如 \frac、\cdot、\bar）常漏双反斜杠，补转义后再解析。
+        fixed = re.sub(r'\\(?!(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))', r'\\\\', text)
+        return json.loads(fixed)
+
+
 def json_result(text):
-    text = str(text).strip()
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
-    value = json.loads(text)
-    if not isinstance(value, (dict, list)):
-        raise ValueError("AI 未返回结构化卡片")
-    return value
+    text = str(text or "").strip()
+    candidates = [re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I)]
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.I)
+    if fenced:
+        candidates.append(fenced.group(1).strip())
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start, end = text.find(opener), text.rfind(closer)
+        if 0 <= start < end:
+            candidates.append(text[start:end + 1])
+    last_error = None
+    for candidate in dict.fromkeys(candidates):
+        if not candidate:
+            continue
+        try:
+            value = _loads_relaxed(candidate)
+            if isinstance(value, (dict, list)):
+                return value
+        except json.JSONDecodeError as error:
+            last_error = error
+    if last_error:
+        raise last_error
+    raise ValueError("AI 未返回结构化卡片")
 
 
 def exclusions(kb):

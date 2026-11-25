@@ -470,7 +470,10 @@ class KnowledgePage(tk.Frame):
             status.configure(text=tr("正在扫描并生成卡片…"))
             self.background(lambda: auto_generate(self.kb, self.call_ai, root, types), done)
         def done(report):
-            status.configure(text=tr("自动生成完成：扫描 {files} 个文件，处理 {groups} 组，创建 {created} 张概念卡，生成 {proposals} 个技巧提案，跳过重复 {duplicates} 项，忽略 {ignored} 组，失败 {errors} 组。", **report))
+            summary = tr("自动生成完成：扫描 {files} 个文件，处理 {groups} 组，创建 {created} 张概念卡，生成 {proposals} 个技巧提案，跳过重复 {duplicates} 项，忽略 {ignored} 组，失败 {errors} 组。", **report)
+            if report.get("errors") and report.get("last_error"):
+                summary += "\n" + str(report["last_error"])
+            status.configure(text=summary)
             start_button.state(["!disabled"])
             self.show()
         start_button = ttk.Button(dlg.buttons, text=tr("开始自动生成"), command=start)

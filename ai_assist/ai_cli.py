@@ -4,6 +4,7 @@ CLI 会话只保存会话 id；OIT 的可见聊天仍由 comm 自己存档。每
 最后一条用户消息交给本地 CLI，历史由 CLI 会话负责保留。
 """
 
+import base64
 import json
 import os
 import shutil
@@ -11,7 +12,74 @@ import subprocess
 import time
 import threading
 
+import tempstore
 from .ai_common import AIError
+
+_MIME_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+def _save_cli_image(b64_data: str, mime: str, image_dir_holder: list, image_paths: list) -> str:
+    try:
+        raw = base64.b64decode(b64_data)
+    except (ValueError, TypeError):
+        return ""
+    if not raw:
+        return ""
+    if not image_dir_holder:
+        image_dir_holder.append(tempstore.mkdtemp("misc", prefix="cli-img-"))
+    ext = _MIME_EXT.get(str(mime or "").lower(), ".png")
+    path = os.path.join(image_dir_holder[0], f"img_{len(image_paths) + 1}{ext}")
+    with open(path, "wb") as stream:
+        stream.write(raw)
+    image_paths.append(path)
+    return path
+
+
+def _flatten_content(content, image_dir_holder: list, image_paths: list) -> str:
+    """将多模态 content 转为 CLI 可读文本，并把 base64 图片落盘为临时文件避免命令行超长。"""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return str(content or "").strip()
+    texts, local_imgs = [], []
+    for part in content:
+        if isinstance(part, str):
+            if part.strip():
+                texts.append(part.strip())
+            continue
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "text" and part.get("text"):
+            texts.append(str(part["text"]).strip())
+        elif "text" in part and part.get("text"):
+            texts.append(str(part["text"]).strip())
+        elif part.get("type") == "image" and isinstance(part.get("source"), dict):
+            src = part["source"]
+            if src.get("data"):
+                saved = _save_cli_image(src["data"], src.get("media_type", ""), image_dir_holder, image_paths)
+                if saved:
+                    local_imgs.append(saved)
+        elif isinstance(part.get("inlineData"), dict) and part["inlineData"].get("data"):
+            inline = part["inlineData"]
+            saved = _save_cli_image(inline["data"], inline.get("mimeType", ""), image_dir_holder, image_paths)
+            if saved:
+                local_imgs.append(saved)
+        elif part.get("type") == "image_url" and isinstance(part.get("image_url"), dict):
+            url = str(part["image_url"].get("url") or "")
+            if url.startswith("data:") and ";base64," in url:
+                header, b64_data = url.split(";base64,", 1)
+                mime = header[5:]
+                saved = _save_cli_image(b64_data, mime, image_dir_holder, image_paths)
+                if saved:
+                    local_imgs.append(saved)
+    if local_imgs:
+        texts.append("\n".join(f"[附带本地图片，请直接读取查看: {p}]" for p in local_imgs))
+    return "\n\n".join(t for t in texts if t).strip()
 
 
 _HELP = {}
@@ -94,51 +162,58 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
     # 首次建立会话时用 OIT 的干净历史重建；之后历史留在 Claude Code 会话里。
     is_antigravity = (_label(profile) == "Antigravity")
     is_codex = _is_codex(profile)
-    if sid:
-        prompt = str(messages[-1].get("content") or "").strip()
-    else:
-        lines = []
-        for message in messages:
-            role = "用户" if message.get("role") == "user" else "对方"
-            content = str(message.get("content") or "").strip()
-            if content:
-                lines.append(f"{role}: {content}")
-        prompt = "\n\n".join(lines)
-        if (is_antigravity or is_codex) and system:
-            prompt = "【OIT 前置协议】\n" + str(system).strip() + "\n\n【OIT 对话】\n" + prompt
-    if not prompt:
-        raise AIError("format", "没有要发送的消息")
-    if is_codex:
-        args = [path, "exec"]
-        if sid:
-            args += ["resume", sid]
-        args += ["--json", "--skip-git-repo-check", prompt]
-    else:
-        args = [path, "-p", prompt, "--output-format", "json"]
-    caps = capabilities(profile)
-    requested_effort = str(profile.get("effort") or "auto").lower()
-    if requested_effort not in ("low", "medium", "high", "xhigh", "max"):
-        requested_effort = "medium" if _kwargs.get("think") else "low"
-    if caps.get("effort"):
-        if is_codex:
-            args[1:1] = ["-c", f'model_reasoning_effort="{requested_effort}"']
-        else:
-            args[1:1] = ["--effort", requested_effort]
-    model = str(profile.get("model") or "").strip()
-    if caps.get("model") and model and model not in ("订阅模型", "subscription", "auto"):
-        args[1:1] = ["--model", model]
-    if sid and not is_codex:
-        args[1:1] = (["--conversation", sid] if is_antigravity else ["--resume", sid])
-    if system and not sid and not is_antigravity and not is_codex:
-        args[1:1] = ["--system-prompt", system]
+    image_dir_holder, image_paths = [], []
     try:
-        proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=max(10.0, float(timeout)),
-                              stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except FileNotFoundError:
-        raise AIError("config", f"没有找到{_label(profile)}，请先安装并登录.")
-    except subprocess.TimeoutExpired:
-        raise AIError("network", f"{_label(profile)} 响应超时.")
+        if sid:
+            prompt = _flatten_content(messages[-1].get("content"), image_dir_holder, image_paths)
+        else:
+            lines = []
+            for message in messages:
+                role = "用户" if message.get("role") == "user" else "对方"
+                content = _flatten_content(message.get("content"), image_dir_holder, image_paths)
+                if content:
+                    lines.append(f"{role}: {content}")
+            prompt = "\n\n".join(lines)
+            if (is_antigravity or is_codex) and system:
+                prompt = "【OIT 前置协议】\n" + str(system).strip() + "\n\n【OIT 对话】\n" + prompt
+        if not prompt:
+            raise AIError("format", "没有要发送的消息")
+        if is_codex:
+            args = [path, "exec"]
+            if sid:
+                args += ["resume", sid]
+            for img_path in image_paths:
+                args += ["-i", img_path]
+            args += ["--json", "--skip-git-repo-check", prompt]
+        else:
+            args = [path, "-p", prompt, "--output-format", "json"]
+        caps = capabilities(profile)
+        requested_effort = str(profile.get("effort") or "auto").lower()
+        if requested_effort not in ("low", "medium", "high", "xhigh", "max"):
+            requested_effort = "medium" if _kwargs.get("think") else "low"
+        if caps.get("effort"):
+            if is_codex:
+                args[1:1] = ["-c", f'model_reasoning_effort="{requested_effort}"']
+            else:
+                args[1:1] = ["--effort", requested_effort]
+        model = str(profile.get("model") or "").strip()
+        if caps.get("model") and model and model not in ("订阅模型", "subscription", "auto"):
+            args[1:1] = ["--model", model]
+        if sid and not is_codex:
+            args[1:1] = (["--conversation", sid] if is_antigravity else ["--resume", sid])
+        if system and not sid and not is_antigravity and not is_codex:
+            args[1:1] = ["--system-prompt", system]
+        try:
+            proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=max(10.0, float(timeout)),
+                                  stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except FileNotFoundError:
+            raise AIError("config", f"没有找到{_label(profile)}，请先安装并登录.")
+        except subprocess.TimeoutExpired:
+            raise AIError("network", f"{_label(profile)} 响应超时.")
+    finally:
+        for directory in image_dir_holder:
+            shutil.rmtree(directory, ignore_errors=True)
     if proc.returncode:
         # CLI 失败后丢弃会话 id；下一轮由 OIT 回退或新建会话。
         store.pop(key, None)

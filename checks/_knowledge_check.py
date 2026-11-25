@@ -182,4 +182,30 @@ def manual_ai(prompt, *, image=None, **kwargs):
 preview_cards = import_previews(kb, manual_ai, [single_note])
 assert len(preview_cards) == 1 and manual_images == [pasted_jpg.read_bytes()]
 
+# 4) AI 返回含未转义 LaTeX 反斜杠与前后说明文字的 JSON 时，应能正常解析
+from knowledge.kb_ai import json_result
+latex_reply = '以下是提取结果：\n```json\n{"knowledge":true,"cards":[{"kind":"tactical","subject":"math","title":"共轭模长","statement":"$z \\cdot \\bar{z} = |z|^2$, \\frac{1}{z}=\\frac{\\bar{z}}{|z|^2}"}]}\n```'.replace("\\\\", "\\")
+parsed_latex = json_result(latex_reply)
+assert parsed_latex["knowledge"] is True and parsed_latex["cards"][0]["title"] == "共轭模长"
+
+# 5) 订阅 CLI 传入多模态图片时：不把 base64 塞进命令行，落盘临时图片并用完即删（Codex 附带 -i）
+import subprocess as _subprocess
+from ai_assist import ai_cli, ai_http
+cli_seen = []
+def fake_cli_run(args, **kwargs):
+    cli_seen.append(list(args))
+    img_arg = args[args.index("-i") + 1]
+    assert Path(img_arg).is_file() and Path(img_arg).read_bytes() == pasted_jpg.read_bytes()
+    assert "base64," not in " ".join(args)
+    return _subprocess.CompletedProcess(args, 0, '{"result":"ok","thread_id":"t1"}', "")
+
+cli_profile = {"kind": "cli", "provider": "codex", "command": "codex", "model": "auto"}
+cli_content = ai_http.image_content(cli_profile, pasted_jpg.read_bytes(), "image/jpeg", "提取知识")
+with patch.object(ai_cli, "command_path", return_value="C:/fake/codex.exe"), \
+        patch.object(ai_cli, "capabilities", return_value={"effort": False, "model": False}), \
+        patch.object(ai_cli.subprocess, "run", side_effect=fake_cli_run):
+    assert ai_cli.chat_messages(cli_profile, "sys", [{"role": "user", "content": cli_content}]) == "ok"
+temp_img_arg = cli_seen[0][cli_seen[0].index("-i") + 1]
+assert not Path(temp_img_arg).exists(), "临时图片目录应在 CLI 返回后清理"
+
 print("knowledge check OK")

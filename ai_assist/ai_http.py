@@ -793,10 +793,11 @@ def image_mime(data: bytes) -> str:
 def image_content(profile: dict, data: bytes, mime: str, text: str) -> list:
     """一条带图片的用户消息的 content (各协议的写法不同)."""
     b64 = base64.b64encode(data).decode("ascii")
-    if profile["protocol"] == "anthropic":
+    protocol = profile.get("protocol")
+    if protocol == "anthropic":
         return [{"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
                 {"type": "text", "text": text}]
-    if profile["protocol"] == "gemini":
+    if protocol == "gemini":
         return [{"inlineData": {"mimeType": mime, "data": b64}}, {"text": text}]
     return [{"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
             {"type": "text", "text": text}]
