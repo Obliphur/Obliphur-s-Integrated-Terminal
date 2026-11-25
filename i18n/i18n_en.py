@@ -713,6 +713,8 @@ EN = {
     "窗口": "Window",
     "提醒库": "Reminders",
     "提醒性": "Reminder",
+    "分类": "Category",
+    "全部分类": "All categories",
     "重置提醒频率": "Reset reminder frequency",
     "已提醒 {n} 次 · 当前冷却 {d:.1f} 天": "Reminded {n} times · Cooldown {d:.1f} days",
     "提醒库记录踩过的坑与易错检查点；解题命中时 AI 会顺带提醒，并随提醒次数自动拉长间隔（置顶可始终提醒）": "Reminders store pitfalls and check items. AI reminds you when triggered during solving, with cooldown lengthening automatically over time (pin to always remind).",

@@ -32,7 +32,7 @@ MAX_IMAGES_PER_GROUP = 16
 
 AUTO_SCHEMA = (
     '只返回严格 JSON：{"knowledge":true,"cards":[{"kind":"conceptual 或 tactical 或 reminder",'
-    '"subject":"math/physics/chemistry","title":"简短标题（尽量8字以内）","topic":"主题","aliases":[],"triggers":[],'
+    '"subject":"math/physics/chemistry","category":"所属大类板块（2-6字）","title":"简短标题（尽量8字以内）","topic":"细分主题","aliases":[],"triggers":[],'
     '"parent_ids":[],"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
     '"generality":"universal/explain_first/non_universal","examples":[],"body":"Markdown 正文",'
     '"review_summary":"纯自然语言简短审核说明（不用Markdown和LaTeX）"}]}。'

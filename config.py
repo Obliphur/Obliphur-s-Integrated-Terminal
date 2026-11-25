@@ -221,7 +221,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.733"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.734"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 KB_MIN_MATCH_THRESHOLD = 0.15
 KB_REVIEW_MIN_CHARS = 360
 KB_IMPORT_MAX_BYTES = 2 * 1024 * 1024

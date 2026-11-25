@@ -11,6 +11,11 @@ from .kb_stats import StatsMixin, now
 from .kb_pr import ProposalMixin
 
 SUBJECTS = {"math": "数学", "physics": "物理", "chemistry": "化学"}
+DEFAULT_CATEGORIES = {
+    "math": ["集合与逻辑", "函数与导数", "三角与解三角形", "平面向量", "复数", "数列", "不等式", "立体几何", "解析几何", "概率与统计", "排列组合"],
+    "physics": ["运动学", "力学与牛顿定律", "曲线运动与天体", "功与能量", "动量与碰撞", "振动与波", "静电场", "恒定电流", "磁场", "电磁感应", "交变电流", "热学", "光学", "原子物理", "实验"],
+    "chemistry": ["物质结构与周期律", "反应原理与平衡", "电化学", "水溶液离子平衡", "元素化合物", "有机化学", "化学实验", "化学计算"],
+}
 
 
 class KnowledgeBase(StatsMixin, ProposalMixin):
@@ -117,14 +122,49 @@ class KnowledgeBase(StatsMixin, ProposalMixin):
                 pass
         return result
 
-    def search_reminders(self, domain, query, top_k=3):
+    def categories(self, domain=None):
+        """返回指定学科（或全部学科）的已知分类列表（预设大类 + 库内已有分类）。"""
+        if domain:
+            base = list(DEFAULT_CATEGORIES.get(domain, ()))
+            seen = set(base)
+            for card in list(self.cards.values()) + self.conceptual_cards() + self.reminder_cards():
+                if card.get("subject") == domain:
+                    cat = str(card.get("category") or "").strip()
+                    if cat and cat not in seen:
+                        seen.add(cat)
+                        base.append(cat)
+            return base
+        out = []
+        seen = set()
+        for key in self.subjects:
+            for cat in self.categories(key):
+                if cat not in seen:
+                    seen.add(cat)
+                    out.append(cat)
+        return out
+
+    @staticmethod
+    def _filter_by_categories(cards_dict, categories):
+        wanted = {str(c).strip() for c in (categories or ()) if str(c).strip()}
+        if not wanted:
+            return cards_dict
+        scoped = {k: c for k, c in cards_dict.items()
+                  if not str(c.get("category") or "").strip() or str(c.get("category") or "").strip() in wanted}
+        return scoped or cards_dict
+
+    def search_reminders(self, domain, query, top_k=3, categories=None):
         with self.lock:
             cards = {c["id"]: c for c in self.reminder_cards() if c.get("subject") == domain and c.get("id")}
             if not cards:
                 return []
             import config
             threshold = float(config.KB_MIN_MATCH_THRESHOLD)
-            return rank_reminders(cards, read_json(self.internal / "stats.json"), query, top_k=top_k, threshold=threshold)
+            stats = read_json(self.internal / "stats.json")
+            scoped = self._filter_by_categories(cards, categories)
+            hits = rank_reminders(scoped, stats, query, top_k=top_k, threshold=threshold)
+            if not hits and scoped is not cards:
+                hits = rank_reminders(cards, stats, query, top_k=top_k, threshold=threshold)
+            return hits
 
     def reminder_reference(self, hits):
         if not hits:
@@ -149,7 +189,7 @@ class KnowledgeBase(StatsMixin, ProposalMixin):
                     cards[key] = draft
         return cards
 
-    def search_tactical(self, domain, query, top_k=4, problem_mode=None):
+    def search_tactical(self, domain, query, top_k=4, problem_mode=None, categories=None):
         with self.lock:
             self.refresh()
             cards = {k: c for k, c in self._search_cards().items() if c.get("subject") == domain}
@@ -159,7 +199,11 @@ class KnowledgeBase(StatsMixin, ProposalMixin):
                          if card.get("generality", "explain_first") != "non_universal"}
             import config
             threshold = float(config.KB_MIN_MATCH_THRESHOLD)
-            result = rank(cards, read_json(self.internal / "stats.json"), query, max(1, min(20, int(top_k))), threshold)
+            stats = read_json(self.internal / "stats.json")
+            scoped = self._filter_by_categories(cards, categories)
+            result = rank(scoped, stats, query, max(1, min(20, int(top_k))), threshold)
+            if not result and scoped is not cards:
+                result = rank(cards, stats, query, max(1, min(20, int(top_k))), threshold)
             if problem_mode in (None, "answer_only"):
                 return result
             return [{**card, "reference_only": card.get("generality", "explain_first") == "non_universal"}
@@ -195,11 +239,15 @@ class KnowledgeBase(StatsMixin, ProposalMixin):
             else:
                 existing = next((c for c in self.reminder_cards() if c.get("id") == key), None)
             old = existing or {}
-            path = Path(old["file_path"]) if old else self.root / group / safe_name(self.subjects[subject]) / (safe_name(title) + ".md")
+            category = str(card.get("category", old.get("category", "")) or "").strip()
+            base_dir = self.root / group / safe_name(self.subjects[subject])
+            if category:
+                base_dir = base_dir / safe_name(category)
+            path = Path(old["file_path"]) if old else base_dir / (safe_name(title) + ".md")
             if not old and path.exists():
                 path = path.with_name(path.stem + "_" + uuid.uuid4().hex[:8] + ".md")
             meta = {k: v for k, v in old.items() if k not in {"body", "_front", "file_path", "statement", "preconditions", "proof_sketch", "relations", "examples"}}
-            for field in ("topic", "aliases", "triggers", "parent_ids", "source", "ai_completed"):
+            for field in ("category", "topic", "aliases", "triggers", "parent_ids", "source", "ai_completed"):
                 if field in card:
                     meta[field] = card[field]
             generality = str(card.get("generality", old.get("generality", "explain_first")))

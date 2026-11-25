@@ -7,7 +7,7 @@ from .kb_store import read_json, write_json, atomic_text, read_card, serialize, 
 from .kb_stats import now
 
 ACTIONS = {"ADD_CARD", "ADD_DERIVED", "UPDATE_CARD", "MERGE_ALIAS", "REPARENT"}
-FIELDS = {"topic", "aliases", "triggers", "statement", "preconditions", "proof_sketch", "examples", "parent_ids", "generality"}
+FIELDS = {"category", "topic", "aliases", "triggers", "statement", "preconditions", "proof_sketch", "examples", "parent_ids", "generality"}
 
 
 class ProposalMixin:

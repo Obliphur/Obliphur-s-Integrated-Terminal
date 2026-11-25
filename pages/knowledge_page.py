@@ -16,7 +16,7 @@ from knowledge.kb_auto_import import auto_generate
 from knowledge.kb_store import read_json
 from .widgets import Modal, ScrollArea, wrap_label
 
-LABELS = {"title": "标题", "topic": "主题", "aliases": "别名", "triggers": "触发特征",
+LABELS = {"title": "标题", "category": "分类", "topic": "主题", "aliases": "别名", "triggers": "触发特征",
           "parent_ids": "父结论 ID", "statement": "结论本体", "preconditions": "适用前提与禁区",
           "proof_sketch": "大题补证提示", "generality": "通用性", "examples": "典型例题", "body": "正文"}
 
@@ -81,7 +81,7 @@ class KnowledgePage(tk.Frame):
         self._jobs = queue.Queue()
         self._poll_job = self.after(100, self._poll)
         self.bind("<Destroy>", self._destroy, add="+")
-        self.subject, self.query, self.sort = tk.StringVar(value=tr("全部")), tk.StringVar(), tk.StringVar(value=tr("综合权重"))
+        self.subject, self.category, self.query, self.sort = tk.StringVar(value=tr("全部")), tk.StringVar(value=tr("全部分类")), tk.StringVar(), tk.StringVar(value=tr("综合权重"))
         tk.Label(self, text=tr("📚  知识库"), bg=COLORS["bg"], fg=COLORS["text"], font=config.font("h1", bold=True)).pack(anchor="w", padx=18, pady=12)
         tools = tk.Frame(self, bg=COLORS["bg"])
         tools.pack(fill="x", padx=16)
@@ -98,9 +98,12 @@ class KnowledgePage(tk.Frame):
                             command=lambda: self.kb.configure(solver_mode=self.mode.get())).pack(side="left", padx=(0, 12))
         filters = tk.Frame(self, bg=COLORS["bg"])
         filters.pack(fill="x", padx=18, pady=6)
-        self.subject_box = ttk.Combobox(filters, textvariable=self.subject, state="readonly", width=9)
+        self.subject_box = ttk.Combobox(filters, textvariable=self.subject, state="readonly", width=8)
         self.subject_box.pack(side="left")
-        self.subject_box.bind("<<ComboboxSelected>>", lambda _: self.show())
+        self.subject_box.bind("<<ComboboxSelected>>", lambda _: (self.category.set(tr("全部分类")), self.show()))
+        self.category_box = ttk.Combobox(filters, textvariable=self.category, state="readonly", width=11)
+        self.category_box.pack(side="left", padx=(4, 0))
+        self.category_box.bind("<<ComboboxSelected>>", lambda _: self.show())
         search_box = tk.Frame(filters, bg=COLORS["bg_card"], highlightbackground=COLORS["border"], highlightthickness=1)
         search_box.pack(side="left", fill="x", expand=True, padx=6)
         self.search_entry = tk.Entry(search_box, textvariable=self.query, bg=COLORS["bg_card"], fg=COLORS["text"],
@@ -324,7 +327,7 @@ class KnowledgePage(tk.Frame):
         def collect(obj):
             if not isinstance(obj, dict):
                 return
-            for key in ("title", "topic", "body", "summary", "statement", "preconditions", "proof_sketch", "aliases", "triggers", "examples"):
+            for key in ("title", "category", "topic", "body", "summary", "statement", "preconditions", "proof_sketch", "aliases", "triggers", "examples"):
                 val = obj.get(key)
                 if isinstance(val, list):
                     bag.extend(str(x) for x in val)
@@ -343,6 +346,13 @@ class KnowledgePage(tk.Frame):
             self.mode.set(self.kb.config.get("solver_mode", "exploration"))
         self.subject_box.configure(values=[tr("全部"), *[tr(v) for v in self.kb.subjects.values()]])
         domain = next((k for k, v in self.kb.subjects.items() if tr(v) == self.subject.get()), None)
+        cat_values = [tr("全部分类"), *self.kb.categories(domain)]
+        self.category_box.configure(values=cat_values)
+        selected_cat = self.category.get().strip()
+        if selected_cat not in cat_values:
+            selected_cat = tr("全部分类")
+            self.category.set(selected_cat)
+        active_cat = "" if selected_cat == tr("全部分类") else selected_cat
         query = self.query.get().strip()
         stats = read_json(self.kb.internal / "stats.json")
         concepts = self.kb.conceptual_cards()
@@ -381,10 +391,15 @@ class KnowledgePage(tk.Frame):
             for card in entries:
                 if domain and card.get("subject") != domain:
                     continue
+                card_cat = str(card.get("category") or (card.get("proposed_card") or {}).get("category") or "").strip()
+                if active_cat and card_cat != active_cat:
+                    continue
                 if key != "tactical" and query and not self._card_matches(card, query):
                     continue
                 ident = card.get("pr_id") or card["id"]
                 info = tr(self.kb.subjects.get(card.get("subject"), card.get("subject", "")))
+                if card_cat:
+                    info += f"·{card_cat}"
                 st = stats.get(ident, {})
                 title = card.get("title", "")
                 if key == "tactical":
@@ -643,6 +658,8 @@ class KnowledgePage(tk.Frame):
         gen_key = proposed.get("generality", old.get("generality", "explain_first"))
         gen_text = tr(GENERALITY_LABELS.get(gen_key, "解释后通用"))
         meta_parts = [action_text, subject_text, f"{tr('通用性')}: {gen_text}"]
+        if proposed.get("category"):
+            meta_parts.append(str(proposed["category"]))
         if proposed.get("topic"):
             meta_parts.append(str(proposed["topic"]))
         if pr.get("count", 1) > 1:

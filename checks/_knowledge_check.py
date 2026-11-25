@@ -382,4 +382,20 @@ assert len(kb.search_reminders("math", "解一个分母含参的分式方程", 3
 kb.set_stats(rem["id"], pinned=False, reset_reminder=True)
 assert len(kb.search_reminders("math", "解一个分母含参的分式方程", 3)) == 1
 
+# 15) 卡片按 category 分类存放，并在解题检索时按分类缩小候选范围
+cat_complex = kb.save_card({"kind": "tactical", "subject": "math", "category": "复数", "title": "复数模长",
+                            "generality": "universal", "triggers": ["旋转", "模长"],
+                            "statement": "乘单位复数保模长", "preconditions": "复平面", "proof_sketch": "直接取模"})
+cat_geo = kb.save_card({"kind": "tactical", "subject": "math", "category": "立体几何", "title": "空间旋转",
+                        "generality": "universal", "triggers": ["旋转", "模长"],
+                        "statement": "空间旋转体体积", "preconditions": "轴对称", "proof_sketch": "积分"})
+assert Path(cat_complex["file_path"]).parent.name == "复数"
+scoped_hits = kb.search_tactical("math", "旋转 模长", 4, categories=["复数"])
+scoped_ids = [h["card_id"] for h in scoped_hits]
+assert cat_complex["id"] in scoped_ids and cat_geo["id"] not in scoped_ids
+task_cat, sel_cat = prepare_subject(kb, lambda *a, **k: '{"problem_mode":"requires_working","categories":["复数"]}',
+                                    "math", "求复数旋转后的模长")
+assert "命中知识分类: 复数" in task_cat
+assert cat_complex["id"] in [h["card_id"] for h in sel_cat] and cat_geo["id"] not in [h["card_id"] for h in sel_cat]
+
 print("knowledge check OK")
