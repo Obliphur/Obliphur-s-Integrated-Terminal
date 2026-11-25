@@ -166,8 +166,6 @@ class UpdateMixin:
                 self.net.block(sync=True)
             except Exception:
                 pass
-        if getattr(self, "_rebuilding", False):
-            return
         self.update_settings_badge()
         self.refresh_net(force=True)
         self.pages["settings"].refresh()

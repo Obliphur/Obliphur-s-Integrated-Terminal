@@ -5,7 +5,7 @@ release 里的 setup.exe 就是这个文件用 PyInstaller 打包出来的 (rele
 运行 setup.exe:
   1. 要管理员权限 (写 Program Files 和注册表; OIT 本身也要管理员);
   2. 检查依赖: OIT 需要 Python 3.10+ (带 tkinter). 电脑上没有就从 python.org 下载官方安装包 (核对数字签名是 Python Software Foundation 才运行),
-     静默装一份 (所有用户, 不改 PATH, 不抢 .py 的关联); PySide6、pywin32 和蓝牙 MIDI 支持用 pip 按需安装;
+     静默装一份 (所有用户, 不改 PATH, 不抢 .py 的关联); pywin32 和蓝牙 MIDI 支持用 pip 按需安装;
   3. 把程序文件复制到安装位置 (默认 C:\\Program Files\\OIT; 同一个位置再装一遍 = 升级, 数据不动) 并预编译;
   4. 注册成系统里的软件 (registration.py): 设置 → 应用 里有 OIT, 卸载按钮运行 uninstall.py; 可选桌面 / 开始菜单快捷方式;
   5. 可选: 装完直接打开 OIT.
@@ -46,9 +46,6 @@ BLUETOOTH_MIDI_PACKAGES = (
     "winrt-Windows.Devices.Midi==4!10.0.28000.2957",
     "winrt-Windows.Devices.Enumeration==4!10.0.28000.2957",
 )
-# Qt6 is the desktop UI runtime.  Keep the upper bound so a future major Qt
-# release cannot silently change the widget ABI used by the staged shell.
-UI_PACKAGES = ("PySide6-Essentials>=6.7,<7",)
 PYTHON_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-amd64.exe"
 PYTHON_SIGNER = "Python Software Foundation"
 MIN_PYTHON = (3, 10)
@@ -67,7 +64,7 @@ TEXT = {
     "browse": ("浏览…", "Browse…"),
     "desktop": ("桌面快捷方式", "Desktop shortcut"),
     "start": ("开始菜单快捷方式", "Start menu shortcut"),
-    "pywin32": ("安装桌面 UI 和可选依赖库 PySide6-Essentials / pywin32 (需要联网, 装不上时回退 Tk)", "Install desktop UI and optional PySide6-Essentials / pywin32 libraries (needs internet; Tk fallback remains available)"),
+    "pywin32": ("安装可选依赖库 pywin32 (需要联网, 装不上不影响使用)", "Install optional library pywin32 (needs internet; OK if it fails)"),
     "bluetooth_midi": ("安装蓝牙 MIDI 支持 (需要 Python 3.11+, 可稍后重装启用)", "Install Bluetooth MIDI support (requires Python 3.11+; can be enabled later)"),
     "run": ("安装完成后打开 OIT", "Launch OIT when finished"),
     "install": ("安装", "Install"),
@@ -86,7 +83,7 @@ TEXT = {
     "py_badsig": ("安装包的数字签名不是 Python Software Foundation, 已放弃.", "The installer is not signed by Python Software Foundation; aborted."),
     "py_install": ("安装 Python (几分钟) …", "Installing Python (a few minutes) …"),
     "py_fail": ("没能安装 Python ({e}). 请手动安装 Python {p}+ (勾选 tcl/tk) 后再运行安装程序.", "Could not install Python ({e}). Install Python {p}+ (with tcl/tk) yourself and run setup again."),
-    "step_pip": ("安装桌面 UI 和可选依赖库 PySide6-Essentials / pywin32 …", "Installing desktop UI and optional PySide6-Essentials / pywin32 libraries …"),
+    "step_pip": ("安装可选依赖库 pywin32 …", "Installing optional library pywin32 …"),
     "step_bluetooth_midi": ("安装 Windows 蓝牙 MIDI 支持 …", "Installing Windows Bluetooth MIDI support …"),
     "bluetooth_midi_fail": ("蓝牙 MIDI 支持没装上 (普通 MIDI 输入仍可用).", "Bluetooth MIDI support was not installed; other MIDI inputs remain available."),
     "bluetooth_midi_python": ("蓝牙 MIDI 支持需要 Python 3.11+; 当前版本不安装.", "Bluetooth MIDI support requires Python 3.11+; skipped for this Python version."),
@@ -421,7 +418,7 @@ def install(opts: dict, log=print, progress=lambda n: None, zip_path: str = None
         if opts.get("pip", True) and opts.get("python_exe") is None:
             log(t("step_pip"))
             try:
-                r = subprocess.run([python, "-m", "pip", "install", "--disable-pip-version-check", *UI_PACKAGES, "pywin32"],
+                r = subprocess.run([python, "-m", "pip", "install", "--disable-pip-version-check", "pywin32"],
                                    capture_output=True, timeout=600, creationflags=NO_WINDOW)
                 if r.returncode != 0:
                     log(t("pip_fail"))
