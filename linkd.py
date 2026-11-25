@@ -38,6 +38,17 @@ import devsync
 import instance
 import securefile
 
+
+_HOLD_CACHE: dict[str, int] = {}
+
+
+def clear_hold_cache(dd=None):
+    """数据目录被重置后可显式失效；不同目录的状态彼此隔离。"""
+    if dd is None:
+        _HOLD_CACHE.clear()
+    else:
+        _HOLD_CACHE.pop(os.path.normcase(os.path.abspath(dd)), None)
+
 LINK_PORT = 17940
 APP_NAME = "Obliphur's Integrated Terminal"      # 同 config.APP_NAME (自检里核对), 这里不能 import config (它要 tkinter)
 PROBE_EVERY = 10              # 秒: 多久看一次绑定的设备的 OIT 还在不在
@@ -99,7 +110,12 @@ def hold_until(dd: str) -> int:
 def write_hold(dd: str, until_ms: int):
     """OIT 主体: 记下 hold_until (0 = 没有). 没变的时候不写."""
     path = os.path.join(dd, "link_state.json")
-    if hold_until(dd) == int(until_ms) and os.path.exists(path):
+    key = os.path.normcase(os.path.abspath(dd))
+    value = int(until_ms)
+    if _HOLD_CACHE.get(key) == value and os.path.exists(path):
+        return
+    if hold_until(dd) == value and os.path.exists(path):
+        _HOLD_CACHE[key] = value
         return
     try:
         os.makedirs(dd, exist_ok=True)
@@ -107,8 +123,9 @@ def write_hold(dd: str, until_ms: int):
         with securefile.open(tmp, "w", encoding="utf-8") as f:
             json.dump({"hold_until": int(until_ms), "ts": now_ms()}, f)
         os.replace(tmp, path)
+        _HOLD_CACHE[key] = value
     except OSError:
-        pass
+        _HOLD_CACHE.pop(key, None)
 
 
 # ---- 联动程序 ----

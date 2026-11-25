@@ -297,6 +297,19 @@ class WindowMixin(SidebarMixin):
             pass
         page.grid_remove()
 
+    def _ensure_page(self, key: str):
+        """按需创建登记过的页面；已创建页面直接复用。"""
+        page = self.pages.get(key)
+        if page is not None:
+            return page
+        factory = getattr(self, "_page_factories", {}).get(key)
+        if factory is None:
+            raise KeyError(key)
+        page = factory()
+        self.pages[key] = page
+        self._prepare_page(page)
+        return page
+
     def _layout_steps(self, parent):
         bg, card = COLORS["bg"], COLORS["bg_card"]
         self._marks_shown = None            # 按钮是新建的: 标记要重新画
@@ -351,6 +364,7 @@ class WindowMixin(SidebarMixin):
         self.content.grid_columnconfigure(0, weight=1)
 
         self.pages = {}
+        self._page_factories = {}
         self.pages["knowledge"] = KnowledgePage(self.content, self.dm.data_dir, self.comm, self.show_page)
         self._prepare_page(self.pages["knowledge"])
         if self._prescript_enabled():
@@ -438,7 +452,7 @@ class WindowMixin(SidebarMixin):
             self.content, self.comm, username=lambda: self.dm.username,
             on_open_settings=self._open_comm_settings, on_joint=self._joint_pick_start,
             on_coread=self._open_coread, on_coread_end=self._end_coread_session)
-        self.pages["comm"].open_knowledge_card = self.pages["knowledge"].open_card
+        self.pages["comm"].open_knowledge_card = lambda card_id: self._ensure_page("knowledge").open_card(card_id)
         self._prepare_page(self.pages["comm"])
         yield
         self.pages["net"] = tk.Frame(self.content, bg=bg)
@@ -648,7 +662,7 @@ class WindowMixin(SidebarMixin):
                 pass
         self._paint_sidebar()
         # 只把目标页挂到界面上, 其余页收起 (不参与布局 / 重画)
-        target = self.pages[key]
+        target = self._ensure_page(key)
         if key != "prescript" and target.winfo_manager() != "grid":
             target.grid(row=0, column=0, sticky="nsew")
         for k, f in self.pages.items():

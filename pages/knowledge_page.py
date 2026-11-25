@@ -79,7 +79,7 @@ class KnowledgePage(tk.Frame):
         self._kb_ctx_turns = 0
         self._kb_ctx_started = 0.0
         self._jobs = queue.Queue()
-        self._poll_job = self.after(100, self._poll)
+        self._poll_job = None
         self.bind("<Destroy>", self._destroy, add="+")
         self.subject, self.category, self.query, self.sort = tk.StringVar(value=tr("全部")), tk.StringVar(value=tr("全部分类")), tk.StringVar(), tk.StringVar(value=tr("综合权重"))
         tk.Label(self, text=tr("📚  知识库"), bg=COLORS["bg"], fg=COLORS["text"], font=config.font("h1", bold=True)).pack(anchor="w", padx=18, pady=12)
@@ -175,7 +175,11 @@ class KnowledgePage(tk.Frame):
 
     def _destroy(self, event):
         if event.widget is self:
-            self.after_cancel(self._poll_job)
+            if self._poll_job is not None:
+                try:
+                    self.after_cancel(self._poll_job)
+                except tk.TclError:
+                    pass
             if getattr(self, "_search_job", None):
                 try:
                     self.after_cancel(self._search_job)
@@ -199,6 +203,7 @@ class KnowledgePage(tk.Frame):
             self._kb_ctx_started = 0.0
 
     def _poll(self):
+        self._poll_job = None
         while not self._jobs.empty():
             fn, value, error = self._jobs.get_nowait()
             if error:
@@ -208,7 +213,16 @@ class KnowledgePage(tk.Frame):
                     fn(value)
                 except (ValueError, OSError, tk.TclError) as error:
                     toast.warn(tr(str(error)))
-        self._poll_job = self.after(100, self._poll)
+        if not self._jobs.empty():
+            self._poll_job = self.after(100, self._poll)
+
+    def _ensure_poll(self):
+        if self._poll_job is not None:
+            return
+        try:
+            self._poll_job = self.after(0, self._poll)
+        except tk.TclError:
+            self._poll_job = None
 
     def background(self, work, done):
         def run():
@@ -216,6 +230,10 @@ class KnowledgePage(tk.Frame):
                 self._jobs.put((done, work(), None))
             except Exception as error:
                 self._jobs.put((done, None, error))
+            try:
+                self.after(0, self._ensure_poll)
+            except tk.TclError:
+                pass
         threading.Thread(target=run, daemon=True).start()
 
     def call_ai(self, prompt, *, image=None, timeout=90):

@@ -68,10 +68,51 @@ class ScrollArea(tk.Frame):
         self.inner = tk.Frame(self.canvas, bg=bg)
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self._scroller = attach_smooth_scroll(self.canvas, self.scroll, self.inner, self._win)
-        self._wheel_bound = set()       # 兼容: 以前按 winfo_id 记绑定, 现在用控件上的 _oit_wheel
+        self._oit_scroller = self._scroller
+        self.canvas._oit_scroller = self._scroller
+        self._install_wheel_dispatcher()
         self.bind_children()
 
     def bind_children(self):
+        """兼容旧调用方; 新控件只绑定一次，实际路由仍可由顶层分发器完成。"""
+        def walk(widget):
+            if not getattr(widget, "_oit_wheel", False):
+                try:
+                    widget.bind("<MouseWheel>", self._wheel, add="+")
+                    widget._oit_wheel = True
+                except Exception:
+                    return
+            for child in widget.winfo_children():
+                walk(child)
+        walk(self.inner)
+
+    def _install_wheel_dispatcher(self):
+        try:
+            root = self.winfo_toplevel()
+            if getattr(root, "_oit_wheel_dispatch_bound", False):
+                return
+            root.bind_all("<MouseWheel>", self._dispatch_wheel, add="+")
+            root._oit_wheel_dispatch_bound = True
+        except Exception:
+            pass
+
+    @staticmethod
+    def _dispatch_wheel(event):
+        widget = getattr(event, "widget", None)
+        if widget is None or isinstance(widget, (tk.Text, tk.Listbox, ttk.Treeview, ttk.Combobox)):
+            return None
+        cur = widget
+        while cur is not None:
+            scroller = getattr(cur, "_oit_scroller", None)
+            if scroller is not None:
+                return scroller.on_wheel(event)
+            try:
+                cur = cur.master
+            except Exception:
+                break
+        return None
+
+    def _bind_children_legacy(self):
         """给 inner 里现有的所有控件绑上滚轮 (动态加进来的控件要再调一次).
 
         标记放在控件对象上而不是 winfo_id(): 控件销毁重建时 id 可能会被重用,
@@ -617,8 +658,6 @@ class _RegionCover:
         _ctypes, _wt, u, g, _k, d = api
         try:
             g.GdiFlush()
-            if d is not None:
-                d.DwmFlush()
         except Exception:
             pass
         try:
@@ -669,6 +708,8 @@ class _SmoothScroll:
         self._pending_wheel = 0
         self._wheel_accum = 0
         self._scroll_job = None
+
+        self.on_after_scroll = None
 
         scrollbar.configure(command=self.on_yview)
         inner.bind("<Configure>", self._on_inner_configure, add="+")
@@ -729,6 +770,11 @@ class _SmoothScroll:
     def moveto(self, fraction: float):
         self._cancel_pending()
         self._apply_covered(lambda: self.canvas.yview_moveto(fraction))
+        self._after_scroll()
+
+    def _after_scroll(self):
+        if self.on_after_scroll is not None:
+            self.on_after_scroll()
 
     def _cancel_pending(self):
         self._pending_yview = None
@@ -744,7 +790,7 @@ class _SmoothScroll:
     def _schedule(self):
         if self._scroll_job is None:
             try:
-                self._scroll_job = self.canvas.after_idle(self._flush)
+                self._scroll_job = self.canvas.after(16, self._flush)
             except Exception:
                 self._scroll_job = None
 
@@ -753,7 +799,7 @@ class _SmoothScroll:
         try:
             action()
             if covered:
-                settle(self.canvas, passes=2)
+                settle(self.canvas, passes=1)
         finally:
             if covered:
                 self._cover.release()
@@ -778,7 +824,11 @@ class _SmoothScroll:
             if wh:
                 self.canvas.yview_scroll(wh, "units")
 
-        self._apply_covered(do)
+        if yv is not None and yv[0] == "moveto":
+            self._apply_covered(do)
+        else:
+            do()
+        self._after_scroll()
 
 
 def attach_smooth_scroll(canvas: tk.Canvas, scrollbar, inner: tk.Frame, win_id: int) -> _SmoothScroll:
@@ -845,7 +895,7 @@ def frozen(widget):
     finally:
         try:
             if depth == 0:
-                settle(top)                 # 冻结状态下把布局 (含二次布局) 全部算完
+                settle(top, passes=2)       # 冻结状态下把布局 (含二次布局) 算完
         finally:
             _freeze_depth[key] -= 1
             if _freeze_depth[key] <= 0:
@@ -860,7 +910,7 @@ def frozen(widget):
                         pass
                 # 重绘请求已经排队, 立刻一口气画完, 不留到下一轮事件循环里零碎地画
                 try:
-                    settle(top, passes=2)
+                    settle(top, passes=1)
                 finally:
                     if snap is not None:
                         snap.close()            # 新页面已经完整显示, 撤掉定格画面
@@ -891,7 +941,8 @@ def cfg(widget, **options):
             pass
         changed[k] = v
     if changed:
-        widget.configure(**changed)
+        setter = getattr(widget, "configure", None) or getattr(widget, "config")
+        setter(**changed)
     return bool(changed)
 
 
@@ -1111,6 +1162,8 @@ class FocusGlow:
         if self._geom != (x, y, ww, hh, pad, tuple(colors)):
             self._paint(ww, hh, pad, colors)
             self._geom = (x, y, ww, hh, pad, tuple(colors))
+        else:
+            return
         boxes = {
             "top":    (x - pad, y - pad, ww + pad * 2, pad),
             "bottom": (x - pad, y + hh, ww + pad * 2, pad),

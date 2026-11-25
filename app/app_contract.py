@@ -5,6 +5,7 @@
 """
 
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -63,12 +64,35 @@ class ContractMixin:
         if sys.platform != "win32" or time.monotonic() - self._desk_at < 2:
             return
         self._desk_at = time.monotonic()
-        try:
-            import ctypes
-            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
-        except Exception:
+        hwnd = getattr(self, "_desktop_hwnd", None)
+        if hwnd is None:
+            try:
+                import ctypes
+                hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+                self._desktop_hwnd = hwnd
+            except Exception:
+                return
+        if getattr(self, "_desktop_probe_pending", False):
             return
-        away = window_guard.on_current_desktop(hwnd) is False
+        self._desktop_probe_pending = True
+
+        def probe():
+            try:
+                result = window_guard.on_current_desktop(hwnd)
+            except Exception:
+                result = None
+            try:
+                self.root.after(0, lambda: self._apply_desktop_probe(result))
+            except Exception:
+                self._desktop_probe_pending = False
+
+        threading.Thread(target=probe, name="oit-desktop-probe", daemon=True).start()
+
+    def _apply_desktop_probe(self, result):
+        self._desktop_probe_pending = False
+        if result is None or self.shutting_down:
+            return
+        away = result is False
         if away == self._desk_away:
             return
         self._desk_away = away

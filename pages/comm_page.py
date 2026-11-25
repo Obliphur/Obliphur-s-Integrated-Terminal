@@ -89,9 +89,9 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.area = ScrollArea(self, height=300, bg=bg)
         self.area.pack(fill="both", expand=True, padx=26, pady=(4, 4))
         self.area.canvas.bind("<Configure>", self._on_resize, add="+")
-        self.area.canvas.bind("<MouseWheel>", lambda _e: self.after_idle(self._check_top), add="+")
         self.area.scroll.bind("<B1-Motion>", lambda _e: self.after_idle(self._check_top), add="+")
         self.area.scroll.bind("<ButtonRelease-1>", lambda _e: self.after_idle(self._check_top), add="+")
+        self.area._scroller.on_after_scroll = self._check_top
 
         self.lbl_status = tk.Label(self, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("small"),
                                    anchor="w")

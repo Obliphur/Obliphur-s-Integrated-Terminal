@@ -18,6 +18,7 @@ from config import (COLORS, IDLE, ON_BREAK, READY_BREAK, RUNNING,
                     compute_F, fmt_hm, fmt_ms,
                     load_json_file, save_json_file)
 from i18n import tr
+from pages.widgets import cfg
 
 
 class TimerMixin:
@@ -877,11 +878,11 @@ class TimerMixin:
             cur_m = self.contract.focus_minutes(self.start_wall, elapsed)
             if self.contract.fog():
                 # 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
-                self.lbl_time.config(text="???")
-                self.lbl_sub.config(text="")
+                cfg(self.lbl_time, text="???")
+                cfg(self.lbl_sub, text="")
                 self.update_job = self.root.after(200, self.update)
                 return
-            self.lbl_time.config(text=f"{cur_m:.2f} min")
+            cfg(self.lbl_time, text=f"{cur_m:.2f} min")
             rem = compute_F(cur_m) * float(config.BREAK_TIME_SCALE) * self.contract.rest_factor()
             if rem > 0:
                 sub = tr("预计停止时的休息时长:  {m:.2f} 分钟").format(m=rem)
@@ -891,7 +892,7 @@ class TimerMixin:
                 sub += "\n" + tr("阻滞: 这段专注的时间按 {p}% 增长", p=int(round(rate * 100)))
             if self._pause_mono is not None:
                 sub = tr("暂停中: 专注时间按 ×{r:g} 倒退").format(r=float(config.PAUSE_REWIND))
-            self.lbl_sub.config(text=sub)
+            cfg(self.lbl_sub, text=sub)
             self.update_job = self.root.after(200, self.update)
 
         elif self.state == ON_BREAK:
@@ -901,7 +902,7 @@ class TimerMixin:
                     self._break_one_min_warn()
                 m = self.countdown_seconds // 60
                 s = self.countdown_seconds % 60
-                self.lbl_time.config(text=f"{m:02d}:{s:02d}")
+                cfg(self.lbl_time, text=f"{m:02d}:{s:02d}")
                 sub = tr("休息剩余 {m} 分 {s:02d} 秒").format(m=m, s=s)
                 if self._contract_rest_over:
                     sub += "\n" + tr("暂停休息: 立即消耗所有的合约休息时间, 但是不对正常休息打折")
@@ -909,7 +910,7 @@ class TimerMixin:
                     sub += "\n" + tr("合约前保存的休息时间: {t}").format(t=fmt_ms(int(self._break_pre)))
                 if self._break_locked():
                     sub += "\n" + self._pause_block()
-                self.lbl_sub.config(text=sub)
+                cfg(self.lbl_sub, text=sub)
                 self.countdown_seconds -= 1
                 self.update_job = self.root.after(1000, self.update)
             else:

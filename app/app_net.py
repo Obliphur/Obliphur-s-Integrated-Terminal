@@ -452,9 +452,18 @@ class NetMixin:
         dt = now - self._net_last
         self._net_last = now
         event = self.net.tick(dt)
-        self.refresh_net()
+        if self.current_page == "net" or event:
+            self.refresh_net()
         self._sync_break_lock()
-        if "rules" in self.pages:
+        self.net.proxy.rules.promote_due()
+        rules_visible = self.current_page == "rules"
+        rules_win = getattr(self, "_rules_win", None)
+        if rules_win is not None:
+            try:
+                rules_visible = rules_visible or bool(rules_win.winfo_exists() and rules_win.winfo_ismapped())
+            except tk.TclError:
+                pass
+        if rules_visible and "rules" in self.pages:
             self.pages["rules"].refresh()
         self._comm_tick()
         self._alarm_tick()
@@ -514,7 +523,8 @@ class NetMixin:
             self._check_contract()
         except Exception as e:
             self._log_window(f"ERROR    contract {type(e).__name__}: {e}")
-        self._sync_bonus_button()               # "我累了": 本周领完了就藏起来, 新的一周 (或同步来的领取记录) 随之变化
+        if self.current_page == "timer":
+            self._sync_bonus_button()           # 计时页可见时更新每周领取按钮
         if self.current_page == "timer" and hasattr(self, "lbl_peers"):
             text, off = self._peer_line()
             cfg(self.lbl_peers, text=text, fg=COLORS["warn"] if off else COLORS["text_dim"])

@@ -43,7 +43,12 @@ class SyncMixin:
             return
         self.sync_runner.pump()
         try:
-            self.comm.ai.refresh_devices(self.sync.device_states())
+            states = self.sync.device_states()
+            summary = tuple(sorted((str(d.get("id") or ""), str(d.get("name") or ""))
+                                   for d in states))
+            if summary != getattr(self, "_device_summary", None):
+                self.comm.ai.refresh_devices(states)
+                self._device_summary = summary
         except Exception:
             pass
         self.sync_job = self.root.after(100, self._pump_sync)

@@ -5,6 +5,7 @@
 """
 
 import time
+import threading
 from datetime import datetime
 
 import tkinter as tk
@@ -383,12 +384,31 @@ class GuardMixin:
             return
         try:
             if getattr(config, "WINDOW_FOCUS_ENABLED", 0) and not self.dm.resetting:
-                self.dm.add_window_time(window_guard.foreground_program(),
-                                        self._window_focus_sec())
-                self._window_focus_ticks += 1
-                if self._window_focus_ticks % 6 == 0:      # 大约每分钟写一次文件
-                    self.dm.save_window_usage()
-                    self._refresh_if_visible("stats")
+                seconds = self._window_focus_sec()
+
+                def probe():
+                    try:
+                        program = window_guard.foreground_program()
+                    except Exception:
+                        program = ""
+                    try:
+                        self.root.after(0, lambda: self._record_window_focus(program, seconds))
+                    except Exception:
+                        pass
+
+                threading.Thread(target=probe, name="oit-window-focus", daemon=True).start()
         except Exception as e:
             self._log_window(f"ERROR    focus {type(e).__name__}: {e}")
         self.window_focus_job = self.root.after(self._window_focus_ms(), self._window_focus_tick)
+
+    def _record_window_focus(self, program: str, seconds: float):
+        if self.shutting_down or self.dm.resetting:
+            return
+        try:
+            self.dm.add_window_time(program, seconds)
+            self._window_focus_ticks += 1
+            if self._window_focus_ticks % 6 == 0:      # 大约每分钟写一次文件
+                self.dm.save_window_usage()
+                self._refresh_if_visible("stats")
+        except Exception as e:
+            self._log_window(f"ERROR    focus {type(e).__name__}: {e}")
