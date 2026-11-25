@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.core.Comm
 import com.obliphur.oit.core.I18n
+import com.obliphur.oit.core.SidebarOrder
 import com.obliphur.oit.core.tr
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -475,31 +476,29 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                 "comm" -> base + (if (core.comm.unread > 0) " ●" else "")
                 else -> base
             }.let { I18n.ic(it) }
-            ModalNavigationDrawer(drawerState = drawer, drawerContent = {
+            var sidebarOrder by remember(core.dir) { mutableStateOf(SidebarOrder.load(core.dir)) }
+            var sidebarDragging by remember { mutableStateOf(false) }
+            ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = !sidebarDragging, drawerContent = {
                 ModalDrawerSheet(drawerContainerColor = sideBg) {
                     Text("OIT", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = cp?.text ?: o.text,
                         modifier = Modifier.padding(20.dp))
                     HorizontalDivider(color = cp?.line ?: o.border)
                     Spacer(Modifier.height(8.dp))
-                    val navItem: @Composable (String, String) -> Unit = { key, label ->
-                        val on = key == page || (key == "settings" && page == "ach")
-                        // 指令标记: 持有合约 / 统计任务时, 在对应入口上盖一朵几乎看不见的花
-                        Box(Modifier.fillMaxWidth().background(if (cp != null && on) cp.sideOn else sideBg).clickable {
-                            go(key); scope.launch { drawer.close() }
-                        }, contentAlignment = Alignment.CenterStart) {
-                            Text(navLabel(key, tr(label)), color = if (cp != null) (if (on) cp.startText else cp.sideText)
-                                else if (on) o.accent else o.text, fontSize = 16.sp,
-                                fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 14.dp))
-                            if ((key == "contract" && prescriptMark("contract")) || (key == "stats" && prescriptMark("stats")))
-                                PrescriptMark(Modifier.align(Alignment.CenterEnd).padding(end = 24.dp))
-                        }
-                    }
-                    // 沟通和重置固定在最下面 (和设置之间空开), 其余的放不下时可以滚动
-                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                        for ((key, label) in pages) if (key != "reset" && key != "comm") navItem(key, label)
-                    }
-                    for ((key, label) in pages) if (key == "comm" || key == "reset") navItem(key, label)
+                    SidebarNavList(
+                        pages = pages,
+                        order = sidebarOrder,
+                        currentPage = page,
+                        cp = cp,
+                        sideBg = sideBg,
+                        navLabel = ::navLabel,
+                        onSelect = { key -> go(key); scope.launch { drawer.close() } },
+                        onReorder = { next ->
+                            sidebarOrder = next
+                            SidebarOrder.save(core.dir, next)
+                        },
+                        onDragStateChanged = { sidebarDragging = it },
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
                 }
             }) {
                 Scaffold(
