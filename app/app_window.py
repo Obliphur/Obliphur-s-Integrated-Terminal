@@ -25,6 +25,28 @@ from pages.knowledge_page import KnowledgePage
 from .app_sidebar import SidebarMixin
 
 
+class _LazyPages(dict):
+    """页面注册表：直接索引未创建页面时才实例化。"""
+
+    def __init__(self):
+        super().__init__()
+        self.factories = {}
+
+    def add_factory(self, key, factory):
+        self.factories[key] = factory
+
+    def __contains__(self, key):
+        return dict.__contains__(self, key) or key in self.factories
+
+    def __getitem__(self, key):
+        if not dict.__contains__(self, key):
+            factory = self.factories.pop(key, None)
+            if factory is None:
+                raise KeyError(key)
+            dict.__setitem__(self, key, factory())
+        return dict.__getitem__(self, key)
+
+
 class WindowMixin(SidebarMixin):
     def _work_area(self):
         """主屏幕去掉任务栏之后的区域 (左, 上, 右, 下); 取不到就用整个屏幕."""
@@ -299,15 +321,9 @@ class WindowMixin(SidebarMixin):
 
     def _ensure_page(self, key: str):
         """按需创建登记过的页面；已创建页面直接复用。"""
-        page = self.pages.get(key)
-        if page is not None:
-            return page
-        factory = getattr(self, "_page_factories", {}).get(key)
-        if factory is None:
-            raise KeyError(key)
-        page = factory()
-        self.pages[key] = page
-        self._prepare_page(page)
+        page = self.pages[key]
+        if key != "prescript" and page.winfo_manager() != "grid":
+            self._prepare_page(page)
         return page
 
     def _layout_steps(self, parent):
@@ -363,52 +379,49 @@ class WindowMixin(SidebarMixin):
         self.content.grid_rowconfigure(0, weight=1)
         self.content.grid_columnconfigure(0, weight=1)
 
-        self.pages = {}
-        self._page_factories = {}
-        self.pages["knowledge"] = KnowledgePage(self.content, self.dm.data_dir, self.comm, self.show_page)
-        self._prepare_page(self.pages["knowledge"])
+        self.pages = _LazyPages()
+        self.pages.add_factory("knowledge", lambda: KnowledgePage(
+            self.content, self.dm.data_dir, self.comm, self.show_page))
         if self._prescript_enabled():
             # 指令页整页盖在窗口上 (遮住侧边栏), 不放进 content 的 grid.
-            self.pages["prescript"] = PrescriptPage(
-                self.shell, self.prescripts, on_exit=self._exit_prescript)
+            self.pages.add_factory("prescript", lambda: PrescriptPage(
+                self.shell, self.prescripts, on_exit=self._exit_prescript))
         yield
 
         # 只有当前页挂在界面上 (grid), 其余页 grid_remove:
         # 看不见的页面不参与布局和重画, 每秒的刷新也不会去画它们.
-        self.pages["cal"] = CalendarPage(self.content, self.dm)
-        self.pages["cal"].fog = self._fog_seed
-        self.pages["cal"].live = self._calendar_live
-        self._prepare_page(self.pages["cal"])
+        def make_cal():
+            page = CalendarPage(self.content, self.dm)
+            page.fog = self._fog_seed
+            page.live = self._calendar_live
+            return page
+        self.pages.add_factory("cal", make_cal)
         yield
-        self.pages["stats"] = StatsPage(self.content, self.dm, self.net,
-                                        focus_live=self._focus_live)
-        self.pages["stats"].fog = self._fog_seed
-        # 日志的 2 小时冷却随设备同步: 几台设备共用 (MECHANICS 8.7)
-        self.pages["stats"].journal_get = self.prescripts.journal_view
-        self.pages["stats"].journal_set = self.prescripts.note_journal
-        self.pages["stats"].journal_logs = self.prescripts.logs_newest
-        self.pages["stats"].journal_synced = lambda: self.sync.sync_now() if self.sync.peers() else None
-        self.pages["stats"].contract_log = lambda: self.contract.history
-        self.pages["stats"].violation_log = lambda: self.dm.recent_violations()
-        self._prepare_page(self.pages["stats"])
+        def make_stats():
+            page = StatsPage(self.content, self.dm, self.net, focus_live=self._focus_live)
+            page.fog = self._fog_seed
+            page.journal_get = self.prescripts.journal_view
+            page.journal_set = self.prescripts.note_journal
+            page.journal_logs = self.prescripts.logs_newest
+            page.journal_synced = lambda: self.sync.sync_now() if self.sync.peers() else None
+            page.contract_log = lambda: self.contract.history
+            page.violation_log = lambda: self.dm.recent_violations()
+            return page
+        self.pages.add_factory("stats", make_stats)
         yield
-        self.pages["log"] = HourLogPage(
-            self.content, self.dm,
-            on_text_changed=self.update_log_badge,
+        self.pages.add_factory("log", lambda: HourLogPage(
+            self.content, self.dm, on_text_changed=self.update_log_badge,
             on_toggle=self.on_hour_log_toggle,
             on_open_settings=lambda: self.show_page("settings"),
             locked=lambda a, b, text, now: self.contract.hour_locked(
                 a, b, text, now, config.FILL_WINDOW, self.dm.auto_text_for_key),
             split=self.contract.fine_hour,
-            split_all=lambda: self.contract.has("fine"),     # 细化规范 + 黑雾: 所有格子都分成两段 (18.3)
-            on_filled=self._seal_extra,                      # 记录封锁: 完成填写时另外封锁两个格子 (18.4)
-            fog=self._fog_words,                             # 黑雾: 只露出"现在"和待填写的格子 (18.3)
-            rest=lambda a, b, text: self.contract.rest_cell(a, b, text, self.dm.auto_text_for_key),   # 休息中没填写的格子也露出来
-            sealed=lambda a, b: self.contract.hour_sealed(a, b)   # 记录封锁: 按 Enter 提交前先确认
-        )
-        self._prepare_page(self.pages["log"])
+            split_all=lambda: self.contract.has("fine"),
+            on_filled=self._seal_extra, fog=self._fog_words,
+            rest=lambda a, b, text: self.contract.rest_cell(a, b, text, self.dm.auto_text_for_key),
+            sealed=lambda a, b: self.contract.hour_sealed(a, b)))
         yield
-        self.pages["contract"] = ContractPage(self.content, self.contract, on_start=self.start_contract,
+        self.pages.add_factory("contract", lambda: ContractPage(self.content, self.contract, on_start=self.start_contract,
                                               on_abandon=self.abandon_contract,
                                               blocked=self.contract_block,
                                               net_used=lambda: self.net.used_all,
@@ -419,9 +432,8 @@ class WindowMixin(SidebarMixin):
                                               on_lift_ban=self.lift_net_ban,
                                               on_pick=self._warn_pick_term, on_joint_pick=self._joint_pick_done,
                                               invite_fn=self._joint_invite_info, on_invite=self._joint_invite_respond,
-                                              locked_fn=lambda: self.comm.joint_state() == "yes")
-        self._prepare_page(self.pages["contract"])
-        self.pages["settings"] = SettingsPage(
+                                              locked_fn=lambda: self.comm.joint_state() == "yes"))
+        self.pages.add_factory("settings", lambda: SettingsPage(
             self.content, self.settings,
             on_changed=self.on_settings_changed, on_sound=self.play_chime,
             on_dev_mode=self.on_dev_toggled,
@@ -440,32 +452,39 @@ class WindowMixin(SidebarMixin):
             comm=self.comm, on_open_rules=self.open_rules_popup,
             alarm=self.alarm, ringer=self.ringer, co_alarm_fn=self._co_alarm_fn,
             ring_busy=lambda: self._alarm_win is not None
-        )
-        self._prepare_page(self.pages["settings"])
+        ))
         yield
         # 成就 (MECHANICS 17): 单独一页, 左侧导航里没有它 (由 设置 → 基本设置 的"🏆 成就"按钮打开)
-        self.pages["ach"] = AchievementsPage(self.content, self.ach,
-                                             on_back=lambda: self.show_page("settings"))
-        self._prepare_page(self.pages["ach"])
+        self.pages.add_factory("ach", lambda: AchievementsPage(
+            self.content, self.ach, on_back=lambda: self.show_page("settings")))
         yield
-        self.pages["comm"] = CommPage(
-            self.content, self.comm, username=lambda: self.dm.username,
-            on_open_settings=self._open_comm_settings, on_joint=self._joint_pick_start,
-            on_coread=self._open_coread, on_coread_end=self._end_coread_session)
-        self.pages["comm"].open_knowledge_card = lambda card_id: self._ensure_page("knowledge").open_card(card_id)
-        self._prepare_page(self.pages["comm"])
+        def make_comm():
+            page = CommPage(
+                self.content, self.comm, username=lambda: self.dm.username,
+                on_open_settings=self._open_comm_settings, on_joint=self._joint_pick_start,
+                on_coread=self._open_coread, on_coread_end=self._end_coread_session)
+            page.open_knowledge_card = lambda card_id: self._ensure_page("knowledge").open_card(card_id)
+            return page
+        self.pages.add_factory("comm", make_comm)
         yield
-        self.pages["net"] = tk.Frame(self.content, bg=bg)
-        self._build_net_page(self.pages["net"])
-        self._prepare_page(self.pages["net"])
+        def make_net():
+            page = tk.Frame(self.content, bg=bg)
+            self._build_net_page(page)
+            return page
+        self.pages.add_factory("net", make_net)
         yield
-        self.pages["timer"] = tk.Frame(self.content, bg=bg)
-        self._build_timer_page(self.pages["timer"])
-        self._prepare_page(self.pages["timer"])
+        def make_timer():
+            page = tk.Frame(self.content, bg=bg)
+            self._build_timer_page(page)
+            return page
+        self.pages.add_factory("timer", make_timer)
+        self._ensure_page("timer")
         yield
-        self.pages["reset"] = tk.Frame(self.content, bg=bg)
-        self._build_reset_page(self.pages["reset"])
-        self._prepare_page(self.pages["reset"])
+        def make_reset():
+            page = tk.Frame(self.content, bg=bg)
+            self._build_reset_page(page)
+            return page
+        self.pages.add_factory("reset", make_reset)
         # share data: 页面下方的聊天悬浮窗 (第 1 行), 和盖在原页面上的"AI 的数据" (第 0 行, 在所有页面上面)
         self.share_dock = ShareDock(self.content, self.comm, on_view=lambda: self._share_sync_ui(True))
         self.ai_data_view = AiDataView(self.content)
