@@ -491,6 +491,11 @@ class WindowMixin(SidebarMixin):
         self.midnight_job = self.hourly_job = self.update_job = None
         self.net_job = self.apply_job = None
 
+        # Tk's settle/update calls during rebuilding can run delayed callbacks.
+        # Drop references before destroying their widgets so those callbacks
+        # cannot refresh the old page tree.
+        self.pages = {}
+        self.nav_btns = {}
         for w in (getattr(self, "topbar", None), getattr(self, "shell", None)):
             if w is not None:
                 try:
@@ -502,8 +507,6 @@ class WindowMixin(SidebarMixin):
             cover.recolor()
             cover.step()
         self._close_rules_popup()
-        self.pages = {}
-        self.nav_btns = {}
         self._apply_geometry()
         self._build_layout(self.root, cover)
         key = self.current_page if self.current_page in self.pages else "timer"
