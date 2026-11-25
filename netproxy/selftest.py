@@ -422,6 +422,29 @@ def run():
     finally:
         p2.stop()
 
+    # ── bypass_pid (release.py 特权): 全屏蔽模式下匹配 PID 仍放行, 不匹配仍拦截
+    state["online"] = False
+    state["mode"] = "blockall"
+    p_rel = _Proxy(decide, port=0, targets={"blocked.example": web_port, "echo.example": echo_port},
+                   bypass_pid=lambda pid: pid == os.getpid())
+    port_rel = p_rel.start()
+    try:
+        r = _http_get(port_rel, "http://blocked.example/rel")
+        if os.name == "nt":
+            assert r.startswith(b"HTTP/1.1 200") and b"hello GET /rel" in r, r
+            st, body = _connect(port_rel, "echo.example:443")
+            assert b" 200" in st and body == b"PING", (st, body)
+    finally:
+        p_rel.stop()
+    p_rel_no = _Proxy(decide, port=0, targets={"blocked.example": web_port},
+                      bypass_pid=lambda pid: False)
+    port_rel_no = p_rel_no.start()
+    try:
+        r = _http_get(port_rel_no, "http://blocked.example/rel")
+        assert r.startswith(b"HTTP/1.1 403") and b"X-OIT-Reason: blockall" in r, r
+    finally:
+        p_rel_no.stop()
+
     # ── 端口被占用 → 顺延
     hold = socket.socket()
     hold.bind(("127.0.0.1", 0))

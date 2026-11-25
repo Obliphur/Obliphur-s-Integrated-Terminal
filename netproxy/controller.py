@@ -22,7 +22,7 @@ from .upgate import UpGate, UpResolver
 class ProxyController:
 
     def __init__(self, data_dir: str, port: int = DEFAULT_PORT, rules: RuleStore = None,
-                 sysproxy: SystemProxy = None, mode_getter=None, dev_getter=None):
+                 sysproxy: SystemProxy = None, mode_getter=None, dev_getter=None, bypass_pid=None):
         self.rules = rules or RuleStore(os.path.join(data_dir, "net_rules.json"),
                                          template=DEFAULT_TEMPLATE)
         self.sys = sysproxy or SystemProxy(os.path.join(data_dir, "sysproxy_backup.json"))
@@ -33,6 +33,7 @@ class ProxyController:
         self.rules.up_probe = UpGate(Watcher(), self.up)
         self.preferred_port = port
         self._mode_getter = mode_getter or (lambda: MODE_BLACKLIST)
+        self._bypass_pid = bypass_pid
         self.online = False
         self.allowed = 0
         self.blocked = 0
@@ -93,7 +94,8 @@ class ProxyController:
         with self._lock:
             if not self.running:
                 srv = FilterProxy(self._decide, port=self.preferred_port,
-                                  upstream=self._upstream, on_event=self._on_event)
+                                  upstream=self._upstream, on_event=self._on_event,
+                                  bypass_pid=self._bypass_pid)
                 srv.start()
                 self._server = srv
                 self._block_pages = BlockPageWatcher(self._decide, srv.block_page_url)

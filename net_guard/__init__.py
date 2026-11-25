@@ -77,10 +77,12 @@ class NetGuard(QuotaMixin, StoreMixin, BackendMixin, SessionMixin, LiveMixin, Ti
         self.grant_end = 0.0                  # 这次联网到几点 (墙上时间, 秒)
         self._grant_info = {}                 # 这次联网的理由 / 申请的分钟数
         self._saved_live = None
+        lease_path = os.path.join(data_dir, bypassguard.RELEASE_LEASE_FILE)
         self.proxy = ProxyController(
             data_dir, mode_getter=lambda: ("blockall" if getattr(config, "NET_MODE", "") == "proxy_all"
                                            else getattr(config, "FILTER_MODE", "blacklist")),
-            dev_getter=config.changes_instant)
+            dev_getter=config.changes_instant,
+            bypass_pid=lambda pid, lp=lease_path: bypassguard.is_release_pid(pid, lease_path=lp))
         self._nic_off_by_fallback = False
         # 防绕过 (MECHANICS 3.2.2): 系统代理被改了马上改回去; 浏览器围栏 (防火墙出站规则, browserfence.py)
         self.fence = browserfence.BrowserFence()
@@ -88,7 +90,7 @@ class NetGuard(QuotaMixin, StoreMixin, BackendMixin, SessionMixin, LiveMixin, Ti
         self._fence_busy = False
         self._fence_clean = False             # 围栏规则已经删干净了 (不在 Proxy 方式时只删一次)
         # 不走系统代理的程序 (MECHANICS 3.2.3): 发现它直连外面就封锁 (防火墙规则 + 掐断已有的连接, bypassguard.py)
-        self.bypass = bypassguard.BypassGuard()
+        self.bypass = bypassguard.BypassGuard(lease_path=lease_path)
         self._bp_at = 0.0
         self._bp_busy = False
         self._bp_clean = False

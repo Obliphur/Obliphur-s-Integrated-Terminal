@@ -56,13 +56,14 @@ def split_hostport(target: str, default_port: int):
 class FilterProxy:
 
     def __init__(self, decide, host: str = "127.0.0.1", port: int = DEFAULT_PORT,
-                 upstream=None, on_event=None, max_conns: int = 256):
+                 upstream=None, on_event=None, max_conns: int = 256, bypass_pid=None):
         self.decide = decide
         self.host = host
         self.preferred_port = port
         self.port = port
         self.upstream = upstream or (lambda: None)
         self.on_event = on_event or (lambda *a, **k: None)
+        self.bypass_pid = bypass_pid
         self._sem = threading.BoundedSemaphore(max_conns)
         self._sock = None
         self._thread = None
@@ -224,6 +225,15 @@ class FilterProxy:
     def _is_self(self, host: str, port: int) -> bool:
         return port == self.port and (host in ("localhost", "::1") or host.startswith("127."))
 
+    def _decide(self, host: str, exe: str, pid: int = 0):
+        if self.bypass_pid and pid:
+            try:
+                if self.bypass_pid(pid):
+                    return True, "release"
+            except Exception:
+                pass
+        return self.decide(host, exe)
+
     def _handle(self, cli, addr):
         cli.settimeout(15)
         head, rest = self._read_head(cli)
@@ -235,11 +245,11 @@ class FilterProxy:
         except ValueError:
             self._reply(cli, 400, "Bad Request")
             return
-        exe = procinfo.exe_for_client(addr[1], self.port)
+        pid, exe = procinfo.client_info(addr[1], self.port)
 
         if method.upper() == "CONNECT":
             host, port = split_hostport(target, 443)
-            allow, why = self.decide(host, exe)
+            allow, why = self._decide(host, exe, pid)
             if allow and self._is_self(host, port):
                 allow, why = False, "self"
             self.on_event(host, exe, allow, why)
@@ -256,7 +266,7 @@ class FilterProxy:
                 if rest:
                     up.sendall(rest)
                 cli.settimeout(None)
-                self._relay(cli, up, check=self._rechecker(host, exe))
+                self._relay(cli, up, check=self._rechecker(host, exe, pid))
             finally:
                 up.close()
             return
@@ -290,7 +300,7 @@ class FilterProxy:
         if self._local_page(cli, method, host, port, path):
             return
 
-        allow, why = self.decide(host, exe)
+        allow, why = self._decide(host, exe, pid)
         if allow and self._is_self(host, port):
             allow, why = False, "self"
         self.on_event(host, exe, allow, why)
@@ -314,15 +324,15 @@ class FilterProxy:
             up.sendall("\r\n".join(out).encode("latin-1") + rest)
             up.settimeout(None)
             cli.settimeout(None)
-            self._relay(cli, up, check=self._rechecker(host, exe))
+            self._relay(cli, up, check=self._rechecker(host, exe, pid))
         finally:
             up.close()
 
-    def _rechecker(self, host: str, exe: str):
+    def _rechecker(self, host: str, exe: str, pid: int = 0):
         """已建立的隧道也要服从新规则:名单改了,联网会话结束了,下一秒内就掐断.
         (浏览器会把连接长期复用,只在建立时检查一次的话,新加的黑名单对已打开的站点无效.)"""
         def check() -> bool:
-            allow, why = self.decide(host, exe)
+            allow, why = self._decide(host, exe, pid)
             if not allow:
                 self.on_event(host, exe, False, why)
             return allow

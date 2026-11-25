@@ -91,12 +91,17 @@ def _exe_for_pid(pid: int) -> str:
     return name
 
 
-def exe_for_client(client_port: int, proxy_port: int) -> str:
-    """发起这条连接的程序的 exe 文件名(小写);查不到返回 ''."""
+def client_info(client_port: int, proxy_port: int):
+    """发起这条连接的 (pid, exe 文件名小写); 查不到返回 (0, '')."""
     if sys.platform != "win32":
-        return ""
+        return 0, ""
     try:
         pid = _pid_for_client(int(client_port), int(proxy_port))
-        return _exe_for_pid(pid) if pid else ""
+        return (pid, _exe_for_pid(pid)) if pid else (0, "")
     except Exception:
-        return ""
+        return 0, ""
+
+
+def exe_for_client(client_port: int, proxy_port: int) -> str:
+    """发起这条连接的程序的 exe 文件名(小写);查不到返回 ''."""
+    return client_info(client_port, proxy_port)[1]

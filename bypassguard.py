@@ -28,6 +28,7 @@ IPv6 的已建立连接掐不断, 只靠规则挡新连接.
 import ctypes
 from contextlib import contextmanager
 import ipaddress
+import json
 import os
 import socket
 import struct
@@ -40,13 +41,22 @@ import appban
 RULE = "OIT bypass block"
 SCAN_EVERY = 2.0              # 秒
 RULE_TTL = 600.0              # 秒: 规则管的这条连接这么久没再见到就删掉
+RELEASE_LEASE_FILE = "release_lease.json"
+RELEASE_LEASE_TTL = 15.0      # 秒: release.py 租约心跳超时自动失效
+RELEASE_LEASE_HEARTBEAT = 3.0 # 秒: release.py 刷新租约间隔
+_RELEASE_PYTHON_EXES = frozenset({"python.exe", "pythonw.exe", "py.exe"})
 _TEMP_EXEMPT_PREFIXES = {}
 _TEMP_EXEMPT_LOCK = threading.RLock()
+_PARENTS_CACHE = (0.0, {})
+_PARENTS_LOCK = threading.Lock()
+_PARENTS_TTL = 0.5
 AF_INET, AF_INET6 = 2, 23
 TCP_TABLE_OWNER_PID_ALL = 5
 ST_LISTEN, ST_SYN_SENT, ST_ESTAB = 2, 3, 5
 ST_DELETE_TCB = 12
 ERROR_INSUFFICIENT_BUFFER = 122
+TH32CS_SNAPPROCESS = 0x00000002
+STILL_ACTIVE = 259
 
 # 路径以这些开头的程序不封 (展开环境变量后比较)
 EXEMPT_PREFIXES = (
@@ -201,11 +211,258 @@ def allow_path_prefix(path: str):
                 _TEMP_EXEMPT_PREFIXES.pop(prefix, None)
 
 
+class _ProcessEntry32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.c_ulong),
+        ("cntUsage", ctypes.c_ulong),
+        ("th32ProcessID", ctypes.c_ulong),
+        ("th32DefaultHeapID", ctypes.c_void_p),
+        ("th32ModuleID", ctypes.c_ulong),
+        ("cntThreads", ctypes.c_ulong),
+        ("th32ParentProcessID", ctypes.c_ulong),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", ctypes.c_ulong),
+        ("szExeFile", ctypes.c_wchar * 260),
+    ]
+
+
+def default_release_lease_path() -> str:
+    """release.py 与 OIT 约定的本机特权租约文件路径 (放在 OIT 数据目录里)."""
+    return os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")),
+                        "AppData", "LocalLow", "Obliphur's Integrated Terminal", RELEASE_LEASE_FILE)
+
+
+def pid_alive(pid: int) -> bool:
+    """进程是否仍在运行 (Windows)."""
+    if sys.platform != "win32" or pid <= 0:
+        return False
+    try:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = ctypes.c_void_p
+        k32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        k32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        h = k32.OpenProcess(0x1000, False, int(pid))
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong(0)
+            return bool(k32.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == STILL_ACTIVE
+        finally:
+            k32.CloseHandle(h)
+    except Exception:
+        return False
+
+
+def process_parents() -> dict:
+    """返回当前所有进程的 {pid: parent_pid} 映射 (短缓存, 避免代理高频请求重复拍快照)."""
+    if sys.platform != "win32":
+        return {}
+    now = time.monotonic()
+    with _PARENTS_LOCK:
+        if now - _PARENTS_CACHE[0] < _PARENTS_TTL:
+            return _PARENTS_CACHE[1]
+    out = {}
+    try:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+        k32.CreateToolhelp32Snapshot.argtypes = [ctypes.c_ulong, ctypes.c_ulong]
+        k32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_ProcessEntry32W)]
+        k32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_ProcessEntry32W)]
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not snap or snap == ctypes.c_void_p(-1).value:
+            return out
+        try:
+            entry = _ProcessEntry32W()
+            entry.dwSize = ctypes.sizeof(_ProcessEntry32W)
+            if k32.Process32FirstW(snap, ctypes.byref(entry)):
+                while True:
+                    out[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+                    if not k32.Process32NextW(snap, ctypes.byref(entry)):
+                        break
+        finally:
+            k32.CloseHandle(snap)
+    except Exception:
+        return out
+    with _PARENTS_LOCK:
+        globals()["_PARENTS_CACHE"] = (now, out)
+    return out
+
+
+def _is_descendant(pid: int, root_pid: int, parents: dict) -> bool:
+    cur = int(pid)
+    seen = set()
+    for _ in range(32):
+        if cur == root_pid:
+            return True
+        if cur <= 0 or cur in seen:
+            return False
+        seen.add(cur)
+        cur = parents.get(cur, 0)
+    return False
+
+
+def active_release_lease(lease_path: str = None, *, now: float = None,
+                         alive_fn=pid_alive, path_of=pid_path):
+    """校验并返回当前活跃的 release.py 特权租约; 无效 / 过期 / 进程已退出返回 None."""
+    p = lease_path or default_release_lease_path()
+    if not p or not os.path.isfile(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        pid = int(data.get("pid") or 0)
+        updated = float(data.get("updated_at") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    ts = time.time() if now is None else float(now)
+    if pid <= 0 or updated < ts - RELEASE_LEASE_TTL or updated > ts + 5.0:
+        return None
+    script = str(data.get("script") or "")
+    exe = str(data.get("exe") or "")
+    if os.path.basename(script).lower() != "release.py" or not os.path.isfile(script):
+        return None
+    if os.path.basename(exe).lower() not in _RELEASE_PYTHON_EXES:
+        return None
+    if not alive_fn(pid):
+        return None
+    actual = path_of(pid) or ""
+    if not actual or os.path.normcase(actual) != os.path.normcase(exe):
+        return None
+    extras = {
+        os.path.normcase(os.path.abspath(str(x)))
+        for x in (data.get("extra_paths") or ())
+        if isinstance(x, str) and x.strip()
+    }
+    return {"pid": pid, "exe": os.path.normcase(actual), "extra_paths": extras}
+
+
+def is_release_pid(pid: int, *, lease_path: str = None, parents_fn=None,
+                   path_of=pid_path, alive_fn=pid_alive, now: float = None) -> bool:
+    """给定 PID 是否属于正在运行的 release.py 进程树 (或其构建期间临时登记的受控工具)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    lease = active_release_lease(lease_path, now=now, alive_fn=alive_fn, path_of=path_of)
+    if not lease:
+        return False
+    if pid == lease["pid"]:
+        return True
+    if lease["extra_paths"]:
+        actual = path_of(pid) or ""
+        if actual and os.path.normcase(actual) in lease["extra_paths"]:
+            return True
+    parents = (parents_fn or process_parents)()
+    return _is_descendant(pid, lease["pid"], parents)
+
+
+def release_exempt_paths(*, lease_path: str = None, path_of=pid_path,
+                         alive_fn=pid_alive, now: float = None) -> set:
+    lease = active_release_lease(lease_path, now=now, alive_fn=alive_fn, path_of=path_of)
+    if not lease:
+        return set()
+    return {lease["exe"]} | set(lease["extra_paths"])
+
+
+class ReleaseLease:
+    """release.py 运行期间持有的跨进程网络特权租约 (仅在非 adapter 模式下豁免 OIT 代理与防绕过守卫)."""
+
+    def __init__(self, script_path: str, lease_path: str = None):
+        self.script_path = os.path.abspath(script_path)
+        self.lease_path = lease_path or default_release_lease_path()
+        self.pid = os.getpid()
+        self.exe = os.path.abspath(sys.executable)
+        self._extras = {}
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _write(self):
+        with self._lock:
+            payload = {
+                "pid": self.pid,
+                "exe": self.exe,
+                "script": self.script_path,
+                "extra_paths": sorted(self._extras),
+                "updated_at": time.time(),
+            }
+        try:
+            os.makedirs(os.path.dirname(self.lease_path), exist_ok=True)
+            tmp = f"{self.lease_path}.{self.pid}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            os.replace(tmp, self.lease_path)
+        except OSError:
+            pass
+
+    def _remove(self):
+        try:
+            with open(self.lease_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if int(data.get("pid") or 0) != self.pid:
+                return
+        except (OSError, ValueError, TypeError):
+            pass
+        try:
+            os.remove(self.lease_path)
+        except OSError:
+            pass
+
+    def _beat(self):
+        while not self._stop.wait(RELEASE_LEASE_HEARTBEAT):
+            self._write()
+
+    def start(self):
+        self._stop.clear()
+        self._write()
+        if self._thread is None or not self._thread.is_alive():
+            self._thread = threading.Thread(target=self._beat, daemon=True, name="oit-release-lease")
+            self._thread.start()
+        return self
+
+    def stop(self):
+        self._stop.set()
+        self._remove()
+
+    @contextmanager
+    def allow_extra_path(self, path: str):
+        norm = os.path.abspath(path)
+        with self._lock:
+            self._extras[norm] = self._extras.get(norm, 0) + 1
+        self._write()
+        try:
+            yield
+        finally:
+            with self._lock:
+                n = self._extras.get(norm, 0) - 1
+                if n > 0:
+                    self._extras[norm] = n
+                else:
+                    self._extras.pop(norm, None)
+            self._write()
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, *_exc):
+        self.stop()
+
+
 class BypassGuard(appban.AppBan):
     """封锁不走系统代理的直连连接. self.rules: {(程序路径, 远端地址): 最后一次见到的时刻}; self.paths: 有规则的程序."""
 
     def __init__(self, run=appban._run, tcp=tcp_conns, path_of=pid_path, kill=kill_conn, upstream=None, own_pid=None,
-                 allow=None, exes=None, prefixes=None, clock=time.monotonic):
+                 allow=None, exes=None, prefixes=None, clock=time.monotonic,
+                 lease_path=None, parents_fn=None, alive_fn=pid_alive, wall_clock=time.time):
         super().__init__(run, rule=RULE)
         self.tcp, self.path_of, self.kill = tcp, path_of, kill
         self._upstream = upstream or _upstream_port
@@ -215,6 +472,10 @@ class BypassGuard(appban.AppBan):
         self._prefixes = prefixes
         self.trusted_exes = set()             # 桌面版接管宿主的 exe 名; 由 NetGuard 动态更新
         self.clock = clock
+        self.lease_path = lease_path
+        self._parents = parents_fn
+        self._alive = alive_fn
+        self._wall_clock = wall_clock
         self.rules = {}
         self.seen = set()                       # 已经提示过的程序
         self.last = []                          # 上一轮看到的直连程序 [(路径, 连接数)] (只读用)
@@ -252,11 +513,17 @@ class BypassGuard(appban.AppBan):
                     if p:
                         up_paths.add(os.path.normcase(p))
         groups = {}
+        lease = active_release_lease(self.lease_path, now=self._wall_clock(), alive_fn=self._alive, path_of=self.path_of)
+        parents = (self._parents or process_parents)() if lease else None
         for c in conns:
             if c.state not in (ST_ESTAB, ST_SYN_SENT) or c.pid in (0, 4, self.own_pid) or not is_external(c.raddr):
                 continue
             path = self.path_of(c.pid)
             if not path or self.exempt(path, up_paths):
+                continue
+            if lease and (c.pid == lease["pid"]
+                          or os.path.normcase(path) in lease["extra_paths"]
+                          or _is_descendant(c.pid, lease["pid"], parents)):
                 continue
             groups.setdefault(path, []).append(c)
         return groups, up_paths
@@ -271,9 +538,12 @@ class BypassGuard(appban.AppBan):
         """找出直连的连接, 封锁 (掐断 + "这个程序 → 这个地址"的防火墙规则). 返回 [(路径, 掐断的连接数, 这个程序是不是第一次被提示)]."""
         now = self.clock()
         groups, _ = self.find()
-        # 接管开关可能在上一轮扫描后才开启; 立即撤掉旧的同程序规则, 不等待 RULE_TTL.
+        # 接管开关或 release.py 租约可能刚激活; 立即撤掉旧的同程序规则, 不等待 RULE_TTL.
+        rel_paths = release_exempt_paths(lease_path=self.lease_path, path_of=self.path_of,
+                                         alive_fn=self._alive, now=self._wall_clock())
         for path, ip in list(self.rules):
-            if os.path.basename(os.path.normcase(path)) in self.trusted_exes:
+            norm = os.path.normcase(path)
+            if os.path.basename(norm) in self.trusted_exes or norm in rel_paths:
                 self._delete(path, ip)
         self.last = [(p, len(cs)) for p, cs in groups.items()]
         out = []
@@ -388,6 +658,54 @@ def _selftest():
     assert g2.rules == {} and g2.paths == set()
     # 用户没有原来的代理: Clash 的直连也算 (没有人给它豁免)
     assert r"C:\Clash\clash.exe" in g2.find()[0]
+    # release.py 特权租约: 活跃时豁免本体、子进程树与临时登记的构建工具, 过期或退出后失效
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fake_script = os.path.join(td, "release.py")
+        with open(fake_script, "w", encoding="utf-8") as f:
+            f.write("# test\n")
+        lease_file = os.path.join(td, RELEASE_LEASE_FILE)
+        rel_pid, child_pid, grand_pid, daemon_pid = 200, 201, 202, 203
+        rel_py = r"C:\OtherPython\python.exe"
+        git_exe = r"C:\Git\bin\git.exe"
+        java_exe = r"C:\JDK\bin\java.exe"
+        rel_paths = {**paths, rel_pid: rel_py, child_pid: git_exe, grand_pid: git_exe, daemon_pid: java_exe}
+        rel_parents = {child_pid: rel_pid, grand_pid: child_pid, daemon_pid: 9999}
+        wall = [2000.0]
+        with open(lease_file, "w", encoding="utf-8") as f:
+            json.dump({"pid": rel_pid, "exe": rel_py, "script": fake_script,
+                       "extra_paths": [java_exe], "updated_at": wall[0]}, f)
+        rel_rows = [
+            Conn(4, rel_pid, ST_ESTAB, "192.168.1.5", 51000, "140.82.112.4", 443, raw=(1, 2, 3, 4)),
+            Conn(4, child_pid, ST_ESTAB, "192.168.1.5", 51001, "140.82.112.4", 443, raw=(1, 2, 3, 5)),
+            Conn(4, grand_pid, ST_ESTAB, "192.168.1.5", 51002, "140.82.112.4", 443, raw=(1, 2, 3, 6)),
+            Conn(4, daemon_pid, ST_ESTAB, "192.168.1.5", 51003, "142.250.1.1", 443, raw=(1, 2, 3, 7)),
+            Conn(4, 10, ST_ESTAB, "192.168.1.5", 51004, "93.184.216.34", 443, raw=(1, 2, 3, 8)),
+        ]
+        gr = mk(tcp=lambda: rel_rows, path_of=lambda pid: rel_paths.get(pid, ""),
+                lease_path=lease_file, parents_fn=lambda: rel_parents,
+                alive_fn=lambda pid: pid in rel_paths, wall_clock=lambda: wall[0])
+        assert sorted(gr.find()[0]) == [GAME], gr.find()[0]
+        assert is_release_pid(rel_pid, lease_path=lease_file, parents_fn=lambda: rel_parents,
+                              path_of=lambda pid: rel_paths.get(pid, ""), alive_fn=lambda pid: True, now=wall[0])
+        assert is_release_pid(grand_pid, lease_path=lease_file, parents_fn=lambda: rel_parents,
+                              path_of=lambda pid: rel_paths.get(pid, ""), alive_fn=lambda pid: True, now=wall[0])
+        assert is_release_pid(daemon_pid, lease_path=lease_file, parents_fn=lambda: rel_parents,
+                              path_of=lambda pid: rel_paths.get(pid, ""), alive_fn=lambda pid: True, now=wall[0])
+        assert not is_release_pid(10, lease_path=lease_file, parents_fn=lambda: rel_parents,
+                                  path_of=lambda pid: rel_paths.get(pid, ""), alive_fn=lambda pid: True, now=wall[0])
+        # 之前被封过的旧规则在租约激活后立即删除
+        gr.rules[(java_exe, "142.250.1.1")] = t[0]
+        gr.paths.add(java_exe)
+        calls.clear()
+        gr.scan()
+        assert (java_exe, "142.250.1.1") not in gr.rules
+        assert any(c[3] == "delete" and f"program={java_exe}" in c for c in calls), calls
+        # 租约过期后不再豁免
+        wall[0] += RELEASE_LEASE_TTL + 1.0
+        assert not is_release_pid(rel_pid, lease_path=lease_file, parents_fn=lambda: rel_parents,
+                                  path_of=lambda pid: rel_paths.get(pid, ""), alive_fn=lambda pid: True, now=wall[0])
+        assert sorted(gr.find()[0]) == sorted([GAME, rel_py, git_exe, java_exe])
     # 清掉所有规则
     g.clear_all()
     assert calls[-1] == appban._netsh("delete", "rule", f"name={RULE}") and g.paths == set() and g.rules == {}
