@@ -120,6 +120,11 @@ function buildTools(): ToolSpec[] {
           network_minutes: { type: "number", minimum: 1, maximum: 30 },
           network_now: { type: "boolean" },
           share_data: { type: "boolean" },
+          scenario_action: {
+            type: "string",
+            enum: ["request", "end"],
+            description: "申请开启情景模拟填 request（需用户接受且须已解锁）；随时结束当前情景模拟填 end。",
+          },
           answer: { type: "string", enum: ["yes", "no"] },
           accept_relationship: { type: "boolean" },
           end_burst: { type: "boolean" },

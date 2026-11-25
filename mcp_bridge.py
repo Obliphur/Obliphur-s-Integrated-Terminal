@@ -1800,6 +1800,16 @@ class OitMcpBridge:
                     self.comm._deliver_invites(self.comm.messages[-1])
                 applied["share_data"] = True
 
+            scenario_action = str(body.get("scenario_action") or "").strip().lower()
+            if scenario_action == "request" and items and hasattr(self.comm, "scenario_unlocked") and self.comm.scenario_unlocked() and not self.comm.scenario_on():
+                self.comm.messages[-1]["scenario_invite"] = True
+                if hasattr(self.comm, "_deliver_invites"):
+                    self.comm._deliver_invites(self.comm.messages[-1])
+                applied["scenario_action"] = "request"
+            elif scenario_action == "end" and hasattr(self.comm, "scenario_on") and self.comm.scenario_on():
+                self.comm.set_scenario(False)
+                applied["scenario_action"] = "end"
+
             if body.get("accept_relationship") and hasattr(self.comm, "_love_confirm"):
                 self.comm._love_confirm("user")
                 applied["accept_relationship"] = True
@@ -1821,6 +1831,9 @@ class OitMcpBridge:
             if hasattr(self.comm, "_coread_asking") and self.comm._coread_asking():
                 self.comm._coread_answer(ans)
                 applied["coread"] = ans or "none"
+            if hasattr(self.comm, "scenario_asking") and self.comm.scenario_asking():
+                self.comm._scenario_answer(ans)
+                applied["scenario"] = ans or "none"
 
             # 结算 Tension / Valence / Offenses / Burst
             if hasattr(self.comm, "_interaction_judged") and hasattr(self.comm, "_interaction_prepare"):
@@ -1915,6 +1928,8 @@ class OitMcpBridge:
                 banners.append({"kind": "coread", "label": "对方邀请你共同阅读"})
             if hasattr(self.comm, "share_invite") and self.comm.share_invite():
                 banners.append({"kind": "share", "label": "对方邀请你开启 share data"})
+            if hasattr(self.comm, "scenario_invite") and self.comm.scenario_invite():
+                banners.append({"kind": "scenario", "label": "对方申请开启情景模拟"})
             joint = self.comm.cfg.get("joint") or {}
             if joint.get("state") == "invite":
                 banners.append({"kind": "joint", "label": "对方发起了联合行动邀请"})
@@ -2035,7 +2050,12 @@ class OitMcpBridge:
         def work():
             pid = getattr(self.comm, "pid", "")
             if action == "toggle_scenario" and hasattr(self.comm, "set_scenario"):
-                self.comm.set_scenario(not self.comm.scenario_on())
+                if self.comm.scenario_on():
+                    self.comm.set_scenario(False)
+                elif hasattr(self.comm, "scenario_asking") and self.comm.scenario_asking():
+                    self.comm.scenario_cancel()
+                elif hasattr(self.comm, "toggle_request_draft"):
+                    self.comm.toggle_request_draft("scenario")
                 return {"ok": True, "scenario": self.comm.scenario_on()}
             if action == "toggle_mute" and hasattr(self.comm, "set_muted"):
                 self.comm.set_muted(not self.comm.is_muted(pid), pid)
@@ -2057,6 +2077,10 @@ class OitMcpBridge:
                     result = self._open_native_dialog(kind, params)
                     return {"ok": True, "kind": kind, "result": result}
                 return {"ok": False, "error": "native dialog handler unavailable"}
+            if action == "respond_scenario" and hasattr(self.comm, "scenario_respond"):
+                accept = bool(params.get("accept"))
+                why = self.comm.scenario_respond(accept)
+                return {"ok": not why, "action": action, "accept": accept, "scenario": self.comm.scenario_on(), "error": why}
             if action in ("respond_coread", "respond_share", "respond_joint", "respond_love"):
                 accept = bool(params.get("accept"))
                 if callable(self._open_native_dialog):

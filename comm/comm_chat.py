@@ -397,6 +397,13 @@ class ChatMixin:
                 return tr("⏳ 等待共读同意")
             shown.append(tr("📚 共读"))
             parts.append(oit_text(CONSENT_TUTORIAL + "\n\n这是用户发来的共同阅读请求。请按人设与实时状态决定是否接受：只有明确同意后才会打开共读室；用户还须在OIT接受你的主动申请才会打开。进入共读后围绕当前书籍、页码和批注交流，循环专注、重要活动和睡眠的累计重叠最多10分钟；Claudia可说明结束原因后调用oit_reading_end，结束说明显示后才结束会话。仅对此请求填写answer。"))
+        if requests.get("scenario"):
+            if not self.scenario_unlocked():
+                return ""
+            if self.scenario_on() or self.scenario_asking():
+                return tr("情景模拟已开启或正在等待回复")
+            shown.append(tr("🎭 情景模拟"))
+            parts.append(oit_text(CONSENT_TUTORIAL + "\n\n这是用户发来的情景模拟开启申请。请按人设与当前状态判断是否同意：同意就在oit_reply中填写answer=\"yes\"，不同意填写answer=\"no\"；只有明确同意后才会开启情景模拟。开启后双方均可随时结束。仅对此请求填写answer。"))
         music = requests.get("music")
         if music:
             shown.append(tr("🎼 演奏评判"))
@@ -420,6 +427,8 @@ class ChatMixin:
             self.share_ask = {"pid": self.pid, "ts": self._ms(), "sent": True}
         if requests.get("coread"):
             self.coread_ask = {"pid": self.pid, "ts": message["ts"]}
+        if requests.get("scenario"):
+            self.scenario_ask = {"pid": self.pid, "ts": self._ms()}
         self._sent()
         self._ask_user()
         return ""

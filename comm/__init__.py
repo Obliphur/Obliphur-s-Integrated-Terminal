@@ -160,8 +160,9 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._focus_notice_seen = set()
         self.shift_ask = None          # 用户请求平移对方的日程起点, 等对方回 [Yes] / [No]: {"pid", "ts", "sent", "to"}; 本机界面状态, 不存盘 / 不同步 (结果记进聊天状态里的 shift, 同步)
         self.share_ask = None          # 用户点了 share data, 等对方回 [Yes] / [No]: {"pid", "ts", "sent"}; 本机界面状态, 不存盘 / 不同步
-        self.request_draft = {"share": False, "coread": False, "music": False}  # 待随下一条用户消息发送的请求附件, 仅本机
+        self.request_draft = {"share": False, "coread": False, "scenario": False, "music": False}  # 待随下一条用户消息发送的请求附件, 仅本机
         self.coread_ask = None       # 用户发起共读, 等人设明确同意; 仅本机
+        self.scenario_ask = None     # 用户申请开启情景模拟, 等人设明确同意; 仅本机
         self._share_end = ""           # 排着的"总结这次 share data"请求 (对方正在回别的话时等一等)
         self.on_change = None          # 界面线程里调用
         self._lock = threading.Lock()
@@ -1552,7 +1553,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             text = ""
         refused = not err and is_refusal(reply)
         share_invite = not err and not refused and not queried and (bool(args_of(reply).get("share_data")) if unpack(reply) is not None else bool(_SHARE_RE.search(reply)))
-        if not text and not err and not refused and not queried and (op or share_invite):
+        scenario_action = str(args_of(reply).get("scenario_action") or "").strip().lower() if unpack(reply) is not None else ""
+        scenario_invite = not err and not refused and not queried and scenario_action == "request" and self.scenario_unlocked() and not self.scenario_on()
+        scenario_end = not err and not refused and not queried and scenario_action == "end" and self.scenario_on()
+        if not text and not err and not refused and not queried and (op or share_invite or scenario_invite or scenario_end):
             if isinstance(op, dict) and op.get("type") in ("music_select", "music_perform"):
                 try:
                     import music_library
@@ -1569,6 +1573,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 text = tr("我想邀请你一起阅读")
             elif isinstance(op, dict) and op.get("type") == "coread_end":
                 text = tr("我想结束这次共同阅读")
+            elif scenario_invite:
+                text = tr("我想申请开启情景模拟")
+            elif scenario_end:
+                text = tr("结束了情景模拟")
             else:
                 text = tr("🤝  联合行动邀请") if op else tr("share data 邀请")
         catchup = bool(extra) and CATCHUP_TAG in str(extra[0])          # 这是补问 (见 CATCHUP_BODY)
@@ -1585,6 +1593,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             share_ans = native_answer(reply)
             if share_ans and not text:                          # 只回了 [Yes] / [No]: 聊天里写一行结果
                 text = tr("✓ 同意了 share data") if share_ans == "yes" else tr("✗ 拒绝了 share data")
+        scenario_ans = ""
+        if kind in ("user", "retry") and self.scenario_asking() and not err and not refused and not queried:
+            scenario_ans = native_answer(reply)
+            if scenario_ans and not text:
+                text = tr("✓ 同意了情景模拟") if scenario_ans == "yes" else tr("✗ 拒绝了情景模拟")
         shift_ans = ""                                          # 对起点平移请求的回复 [Yes] / [No]
         if kind == "shift_ask" and not err and not refused and not queried:
             shift_ans = joint_answer(reply)
@@ -1617,6 +1630,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self._share_ask_end("{name} 现在不方便, share data 没有打开" if refused else "{name} 没有回复, share data 没有打开")
             elif kind in ("user", "retry") and self.share_asking():
                 self._share_ask_end("{name} 现在不方便, share data 没有打开" if refused else "{name} 没有回复, share data 没有打开")
+            if kind in ("user", "retry") and self.scenario_asking():
+                self._scenario_ask_end("{name} 现在不方便, 情景模拟未开启" if refused else "{name} 没有回复, 情景模拟未开启")
             if kind == "shift_ask":
                 self._shift_ask_end("{name} 现在不方便, 起点没有平移" if refused else "{name} 没有回复, 起点没有平移")
             if refused and (self.unanswered() or catchup):
@@ -1701,6 +1716,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             if share_invite:
                 m["share_invite"] = True
                 self._deliver_invites(m)
+            if scenario_invite:
+                m["scenario_invite"] = True
+                self._deliver_invites(m)
+            if scenario_end:
+                self.set_scenario(False)
             delivered = True
             if joint_ans and not drop:
                 self._joint_answer(joint_ans)
@@ -1710,6 +1730,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self._love_set(inv=self._ms())          # 告白发出去了: 聊天页上等用户点 接受 / 拒绝
             if kind == "share_ask" or (kind in ("user", "retry") and self.share_asking()):
                 self._share_answer(share_ans)
+            if kind in ("user", "retry") and self.scenario_asking():
+                self._scenario_answer(scenario_ans)
             if kind == "shift_ask":
                 self._shift_answer(shift_ans)
             if coread_wait:

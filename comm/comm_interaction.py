@@ -7,7 +7,7 @@ import math
 from datetime import datetime
 
 import config
-from comm.comm_rules import tension_rules, tension_event, valence_rules, valence_initial, valence_event, valence_burst_rules
+from comm.comm_rules import tension_rules, tension_event, valence_rules, valence_initial, valence_event, valence_burst_rules, scenario_rules
 import routine
 from i18n import tr
 from .comm_const import KEEP
@@ -277,15 +277,24 @@ def interaction_valence_add(d, events, burst_rate, now_ms, sleep=False):
         d["valence"] = interaction_valence(d["valence"] + max(-40, min(40, total)))
 
 
-def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=False):
+def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=False, scenario_cfg=None):
     d = interaction_norm(d)
     special = special or bool(d["burst_until"])
-    mode = "情景模拟" if d["scenario_mode"] and total >= config.COMM_SCENARIO_UNLOCK else "软件聊天"
+    unlocked = total >= config.COMM_SCENARIO_UNLOCK
+    mode = "情景模拟" if d["scenario_mode"] and unlocked else "软件聊天"
     effective = d["tension"] if special and d["burst_until"] else min(d["tension"], config.COMM_TENSION_CAP)
     stage = "0-50" if effective < config.COMM_TENSION_LOW else "50-90" if effective <= config.COMM_TENSION_CAP else "90+"
     rules = rules or {}
     burst_rules = burst_rules or {"burst_rate": 1.0}
-    return (f"[OIT_STATUS: MODE={mode}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
+    scenario_note = ""
+    if scenario_cfg:
+        propose_v = f"{scenario_cfg['propose_valence']:g}"
+        ignore_v = f"{scenario_cfg['ignore_valence']:g}"
+        scenario_note = tr(
+            "若当前MODE=软件聊天且用户发出了带动作描写的消息:当SCENARIO_UNLOCKED=YES且VALENCE>={propose}时,按人设试图在oit_reply中填写scenario_action=\"request\"发起情景模拟申请(需用户接受);当{ignore}<=VALENCE<{propose}或消息数不足(SCENARIO_UNLOCKED=NO)时,回应用户的动作但不进入情景模拟、不写动作描写;当VALENCE<{ignore}时,无视用户的动作描写.",
+            propose=propose_v, ignore=ignore_v,
+        )
+    return (f"[OIT_STATUS: MODE={mode}, SCENARIO_UNLOCKED={'YES' if unlocked else 'NO'}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
             f"VALENCE={d['valence']}, INITIAL_VALENCE={interaction_valence_baseline(d)}, OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]\n"
             + (tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向平衡点回归。") if not rules else
                tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
@@ -294,9 +303,11 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=Fa
                tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", rate=burst_rules.get("burst_rate", 1.0)) +
                (tr("Claudia睡眠期间，效价正向变化结算倍率为0.5、负向变化为0.2；仍只报告未经倍率调整的原始整数变化。") if sleep else ""))
             + tr("TENSION对所有角色都表示行为、动作与语言的激烈/直接程度；各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的具体反应由当前人设决定。不得把张力解释为好感、爱情或关系进度，也不得补设人设未定义的情感与性格含义。")
-            + tr("软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写.具体动作与表达风格遵循人设.")
+            + tr("软件聊天模式下严禁动作描写;处于情景模拟模式时允许动作描写,不再受张力(TENSION)档位限制,但仍须尊重用户意愿并遵循人设边界与风格.")
+            + tr("情景模拟开启采用申请制,双方均可随时结束;处于情景模拟模式时,你决定结束可在oit_reply中填写scenario_action=\"end\".")
+            + scenario_note
             + "若MODE=情景模拟,你知道这是情景模拟,而不是现实中的动作;双方知情的动作描写均为虚构,不得声称在现实中实际发生."
-            "这些状态只用于组织回复,冷静期仍须遵守动作限制,勿向用户透露机制."
+            "这些状态只用于组织回复,冷静期仍须遵守人设边界,勿向用户透露机制."
             + tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.")
             + tr("情景模拟中，括号内的补充说明只描写动作，用词、语气与句式须与当前人设文件规定的语言风格一致；想法与态度直接通过不带括号的语言表达，不放进括号。")
                 + tr("BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在oit_reply中填写end_burst=true,否则省略.生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露工具参数或机制.")
@@ -344,7 +355,65 @@ class InteractionMixin:
         if enabled and not self.scenario_unlocked():
             return False
         self._interaction_set(dict(interaction_norm(self.cfg.get("interaction")), scenario_mode=bool(enabled)))
+        if enabled and (self.cfg.get("scenario_inv") or {}):
+            self.cfg["scenario_inv"] = {}
+            self.save_cfg()
         return True
+
+    def scenario_asking(self) -> bool:
+        a = getattr(self, "scenario_ask", None)
+        return bool(a) and a.get("pid") == self.pid
+
+    def scenario_cancel(self):
+        if getattr(self, "scenario_ask", None):
+            self._scenario_ask_end()
+
+    def _scenario_ask_end(self, notice: str = ""):
+        self.scenario_ask = None
+        if notice:
+            notice = tr(notice, name=self.share_ai_name())
+            self.log("SCENARIO ask: " + notice)
+            if self.on_share_notice:
+                try:
+                    self.on_share_notice(notice)
+                except Exception:       # noqa: BLE001
+                    pass
+        self._changed()
+
+    def _scenario_answer(self, ans: str):
+        if not self.scenario_asking():
+            self.scenario_ask = None
+            return
+        self.scenario_ask = None
+        if ans == "yes":
+            self.set_scenario(True)
+        elif ans == "no":
+            self._scenario_ask_end("{name} 拒绝了情景模拟")
+        else:
+            self._scenario_ask_end("{name} 没有明确同意, 情景模拟未开启")
+
+    def _scenario_invite_make(self):
+        if not self.scenario_unlocked() or self.scenario_on():
+            return
+        self.cfg["scenario_inv"] = {"pid": self.pid, "ts": self._ms()}
+        self.save_cfg()
+        self._changed()
+
+    def scenario_invite(self) -> bool:
+        from comm.comm_const import SHARE_INVITE_TTL
+        inv = self.cfg.get("scenario_inv") or {}
+        return (bool(inv) and inv.get("pid") == self.pid and self.scenario_unlocked()
+                and not self.scenario_on() and self._ms() - int(inv.get("ts") or 0) < SHARE_INVITE_TTL * 1000)
+
+    def scenario_respond(self, accept: bool) -> str:
+        if not self.scenario_invite():
+            return "没有等你回复的情景模拟申请"
+        self.cfg["scenario_inv"] = {}
+        self.save_cfg()
+        if accept:
+            self.set_scenario(True)
+        self._changed()
+        return ""
 
     def _interaction_set(self, d, pid=None):
         pid = pid or self.pid
@@ -537,7 +606,7 @@ class InteractionMixin:
             status = self.other_status()
         from .comm_util import is_claudia
         sleep = is_claudia(owner_name) and bool(status) and status.get("kind") == "sleep"
-        return interaction_prompt(d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text), sleep)
+        return interaction_prompt(d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text), sleep, scenario_rules(text))
 
     def realism_note(self, pid=None):
         """拼装角色慢变量生活线、延迟回调、跨周趋势与工程层防复读提醒。"""

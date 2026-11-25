@@ -286,6 +286,17 @@ class ShareMixin:
             self.cfg["share_inv"] = {}                         # 发出的 share data 邀请 5 分钟没人接受: 自动清理 (1.0.428)
             self.save_cfg()
             self._changed()
+        sinv = self.cfg.get("scenario_inv") or {}
+        if sinv and self._ms() - int(sinv.get("ts") or 0) >= SHARE_INVITE_TTL * 1000:
+            self.cfg["scenario_inv"] = {}
+            self.save_cfg()
+            self._changed()
+        sa = getattr(self, "scenario_ask", None)
+        if sa:
+            if sa.get("pid") != self.pid:
+                self.scenario_ask = None
+            elif self._ms() - int(sa["ts"]) > SHARE_ASK_TTL * 1000:
+                self._scenario_ask_end("{name} 没有回复, 情景模拟未开启")
         a = self.share_ask
         if a:
             if a.get("pid") != self.pid:
@@ -337,6 +348,8 @@ class ShareMixin:
         self._coread_end_deliver(message)
         if not message.get("hold") and message.pop("share_invite", False):
             self._share_invite_make()
+        if not message.get("hold") and message.pop("scenario_invite", False):
+            self._scenario_invite_make()
 
     def share_invite(self) -> bool:
         """对方发了 [share data], 等用户点 接受 / 拒绝 (聊天页上显示两个按钮)."""

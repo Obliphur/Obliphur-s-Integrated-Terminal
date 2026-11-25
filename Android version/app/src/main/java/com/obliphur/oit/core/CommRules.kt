@@ -79,6 +79,28 @@ object CommRules {
         return ValenceBurst(rate, endShift)
     }
 
+    data class ScenarioRules(val proposeValence: Double, val ignoreValence: Double)
+
+    /** 读取情景模拟效价阈值；未声明或格式错误时返回 null。 */
+    fun scenario(text: String): ScenarioRules? {
+        val entries = lines(text, "scenario")
+        if (entries.isEmpty()) return null
+        var propose: Double? = null
+        var ignore: Double? = null
+        val seen = mutableSetOf<String>()
+        val pattern = Regex("""(propose_valence|ignore_valence)\s*[:：]\s*([+-]?\d+(?:\.\d+)?)""")
+        for (line in entries) {
+            val m = pattern.matchEntire(line) ?: return null
+            val key = m.groupValues[1]
+            val value = m.groupValues[2].toDoubleOrNull()?.takeIf { it.isFinite() && it in -100.0..100.0 } ?: return null
+            if (!seen.add(key)) return null
+            if (key == "propose_valence") propose = value else ignore = value
+        }
+        val p = propose ?: return null
+        val i = ignore ?: return null
+        return if (i <= p) ScenarioRules(p, i) else null
+    }
+
     data class TypingDelay(val char: Double? = null, val cjk: Double? = null)
 
     /** 读取可选打字延迟参数（秒/字符，限 0–5）；空缺或格式错误时回退默认。 */

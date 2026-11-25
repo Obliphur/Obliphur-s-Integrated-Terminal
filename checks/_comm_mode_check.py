@@ -175,12 +175,26 @@ try:
 
             c.cfg["msg_gone"] = 200
             page.refresh(force=True)
+            # 开启情景模拟采用申请制：未开启时点击挂载待发申请附件，再点取消；已开启时点击随时结束。
             page.btn_scenario.invoke()
-            assert c.scenario_on()
+            assert not c.scenario_on() and c.request_draft["scenario"]
+            assert i18n.tr("🎭 情景模拟") in c.request_draft_labels()
+            page.btn_scenario.invoke()
+            assert not c.request_draft["scenario"]
+            assert c.set_scenario(True) and c.scenario_on()
+            page.refresh(force=True)
             assert page.btn_scenario.cget("text") == "🎭"
             page.btn_scenario.invoke()
             assert not c.scenario_on()
             assert page.btn_scenario.cget("text") == "📱"
+            # 对方发起情景模拟申请时显示接受/拒绝横幅，接受后开启。
+            c._scenario_invite_make()
+            page.refresh(force=True)
+            assert c.scenario_invite() and page.scenario_btns.winfo_manager() == "pack"
+            page._scenario_respond(True)
+            assert c.scenario_on() and not c.scenario_invite() and page.scenario_btns.winfo_manager() != "pack"
+            c.set_scenario(False)
+            page.refresh(force=True)
 
             def inspect_help(dlg):
                 dlg.update_idletasks()

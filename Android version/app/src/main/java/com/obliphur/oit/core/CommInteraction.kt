@@ -86,9 +86,17 @@ data class CommInteraction(
     }
 
     fun note(total: Int, special: Boolean, valenceRules: Map<String, Pair<Int?, String>> = emptyMap(),
-             burstRules: CommRules.ValenceBurst = CommRules.ValenceBurst(), sleep: Boolean = false): String {
-        val mode = if (scenarioMode && total >= Cfg.COMM_SCENARIO_UNLOCK) "情景模拟" else "软件聊天"
-        return "[OIT_STATUS: MODE=$mode, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, VALENCE=$valence, INITIAL_VALENCE=${effectiveValenceBaseline()}, OFFENSE_COUNT=${CommOffenses.active(offenses).size}, VALENCE_RISE_RATE=${CommOffenses.rate(offenses)}, " +
+             burstRules: CommRules.ValenceBurst = CommRules.ValenceBurst(), sleep: Boolean = false,
+             scenarioCfg: CommRules.ScenarioRules? = null): String {
+        val unlocked = total >= Cfg.COMM_SCENARIO_UNLOCK
+        val mode = if (scenarioMode && unlocked) "情景模拟" else "软件聊天"
+        val scenarioNote = if (scenarioCfg == null) "" else {
+            val propose = if (scenarioCfg.proposeValence % 1.0 == 0.0) scenarioCfg.proposeValence.toInt().toString() else scenarioCfg.proposeValence.toString()
+            val ignore = if (scenarioCfg.ignoreValence % 1.0 == 0.0) scenarioCfg.ignoreValence.toInt().toString() else scenarioCfg.ignoreValence.toString()
+            tr("若当前MODE=软件聊天且用户发出了带动作描写的消息:当SCENARIO_UNLOCKED=YES且VALENCE>={propose}时,按人设试图在oit_reply中填写scenario_action=\"request\"发起情景模拟申请(需用户接受);当{ignore}<=VALENCE<{propose}或消息数不足(SCENARIO_UNLOCKED=NO)时,回应用户的动作但不进入情景模拟、不写动作描写;当VALENCE<{ignore}时,无视用户的动作描写.",
+                "propose" to propose, "ignore" to ignore)
+        }
+        return "[OIT_STATUS: MODE=$mode, SCENARIO_UNLOCKED=${if (unlocked) "YES" else "NO"}, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, VALENCE=$valence, INITIAL_VALENCE=${effectiveValenceBaseline()}, OFFENSE_COUNT=${CommOffenses.active(offenses).size}, VALENCE_RISE_RATE=${CommOffenses.rate(offenses)}, " +
             "BURST=${if (burstUntil > 0L) "YES" else "NO"}, PERIOD=${if (special || burstUntil > 0L) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}]\n" +
             (if (valenceRules.isEmpty()) tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向平衡点回归。") else
                 tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
@@ -97,9 +105,11 @@ data class CommInteraction(
                 tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", "rate" to burstRules.rate) +
                 if (sleep) tr("Claudia睡眠期间，效价正向变化结算倍率为0.5、负向变化为0.2；仍只报告未经倍率调整的原始整数变化。") else "") +
             tr("TENSION对所有角色都表示行为、动作与语言的激烈/直接程度；各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的具体反应由当前人设决定。不得把张力解释为好感、爱情或关系进度，也不得补设人设未定义的情感与性格含义。") +
-            tr("软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写.具体动作与表达风格遵循人设.") +
+            tr("软件聊天模式下严禁动作描写;处于情景模拟模式时允许动作描写,不再受张力(TENSION)档位限制,但仍须尊重用户意愿并遵循人设边界与风格.") +
+            tr("情景模拟开启采用申请制,双方均可随时结束;处于情景模拟模式时,你决定结束可在oit_reply中填写scenario_action=\"end\".") +
+            scenarioNote +
             "若MODE=情景模拟,你知道这是情景模拟,而不是现实中的动作;双方知情的动作描写均为虚构,不得声称在现实中实际发生." +
-            "这些状态只用于组织回复,冷静期仍须遵守动作限制,勿向用户透露机制." +
+            "这些状态只用于组织回复,冷静期仍须遵守人设边界,勿向用户透露机制." +
             tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.") +
             tr("情景模拟中，括号内的补充说明只描写动作，用词、语气与句式须与当前人设文件规定的语言风格一致；想法与态度直接通过不带括号的语言表达，不放进括号。") +
             tr("BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在oit_reply中填写end_burst=true,否则省略.生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露工具参数或机制.") +

@@ -176,6 +176,9 @@ fun CommScreen(go: (String) -> Unit) {
     var shareOn by remember { mutableStateOf(comm.shareOn()) }                     // share data 开着吗
     var shareAsk by remember { mutableStateOf(comm.shareAsking()) }                 // 已发送 share data 请求, 等对方同意 (⏳)
     var shareInv by remember { mutableStateOf(comm.shareInvite()) }                // 对方发了 [share data]: 等用户点 接受 / 拒绝
+    var scenarioOn by remember { mutableStateOf(comm.scenarioOn()) }
+    var scenarioAsk by remember { mutableStateOf(comm.scenarioAsking()) }
+    var scenarioInv by remember { mutableStateOf(comm.scenarioInvite()) }
     var loveInv by remember { mutableStateOf(comm.loveInvite()) }                  // 对方告白了: 等用户点 接受 / 拒绝
     var coreadInv by remember { mutableStateOf(comm.coreadInvite()) }
     var ocrBusy by remember { mutableStateOf(false) }                          // 识别字体进行中
@@ -284,6 +287,9 @@ fun CommScreen(go: (String) -> Unit) {
             comm.shareAsking().let { if (it != shareAsk) shareAsk = it }
             comm.shiftAsking().let { if (it != shiftAsk) shiftAsk = it }
             comm.shareInvite().let { if (it != shareInv) shareInv = it }
+            comm.scenarioOn().let { if (it != scenarioOn) scenarioOn = it }
+            comm.scenarioAsking().let { if (it != scenarioAsk) scenarioAsk = it }
+            comm.scenarioInvite().let { if (it != scenarioInv) scenarioInv = it }
             comm.loveInvite().let { if (it != loveInv) loveInv = it }
             kotlinx.coroutines.delay(250)
         }
@@ -370,9 +376,14 @@ fun CommScreen(go: (String) -> Unit) {
             // ❓ 帮助 (最左边): 解释每个按钮的作用
             TextButton({ help = true }, contentPadding = tight) { Text("❓", fontSize = 18.sp) }
             TextButton({ readingChoice = true }, contentPadding = tight) { Text("📚", fontSize = 18.sp) }
-            // 当前聊天模式，与其他功能一起放在输入框上方。
-            TextButton({ comm.setScenario(!comm.scenarioOn()) }, contentPadding = tight) {
-                Text(if (comm.scenarioOn()) "🎭" else "📱", fontSize = 18.sp)
+            // 当前聊天模式：开启情景模拟采用申请制，双方均可随时结束。
+            TextButton({
+                if (scenarioOn) comm.setScenario(false)
+                else if (scenarioAsk) comm.scenarioCancel()
+                else comm.toggleRequestDraft("scenario")
+                scenarioOn = comm.scenarioOn(); scenarioAsk = comm.scenarioAsking()
+            }, contentPadding = tight) {
+                Text(if (scenarioOn) "🎭" else if (scenarioAsk) "⏳" else "📱", fontSize = 18.sp)
             }
             // 🔔 可以主动发起 / 🔕 禁止这个人主动发起 (主动发消息和追问都不发)
             TextButton({ comm.setMuted(!comm.isMuted()) }, contentPadding = tight) {
@@ -410,6 +421,12 @@ fun CommScreen(go: (String) -> Unit) {
             Text(tr("{name} 想看你们的数据", "name" to comm.aiName()), color = o.accent, fontSize = 12.sp)
             AccentButton(tr("接受")) { comm.shareRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
             TextButton({ comm.shareRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
+        }
+        if (scenarioInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(start = 8.dp)) {
+            Text(tr("🎭 {name} 想开启情景模拟", "name" to comm.aiName()), color = o.accent, fontSize = 12.sp)
+            AccentButton(tr("接受")) { comm.scenarioRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }; scenarioOn = comm.scenarioOn(); scenarioInv = comm.scenarioInvite() }
+            TextButton({ comm.scenarioRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }; scenarioInv = comm.scenarioInvite() }) { Text(tr("拒绝"), color = o.dim) }
         }
         if (coreadInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(start = 8.dp)) {
@@ -546,7 +563,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         Triple("❓", tr("帮助"), tr("打开这个说明.")),
         Triple("📚", tr("阅读"), tr("选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送，待对方明确同意后才打开共读室。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。")),
         Triple("💬", tr("说教"), tr("你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。")),
-        Triple("📱 / 🎭", tr("聊天模式"), tr("输入框上方的 📱 / 🎭 按钮切换软件聊天与情景模拟。📱 = 软件聊天，不描写动作；🎭 = 情景模拟，按当前时段与状态描写虚构动作。模式按聊天对象保存。")),
+        Triple("📱 / 🎭", tr("聊天模式"), tr("输入框上方的 📱 / 🎭 按钮用于情景模拟。开启情景模拟采用申请制（📱 会把申请作为附件随下一条消息发出，或点「接受」同意对方申请），开启后显示 🎭，双方均可随时结束。模式按聊天对象保存。")),
         Triple("👀 / 🙈", tr("分享数据"), tr("🙈 会把请求作为附件加入待发送内容，随下一条消息询问对方；同意后才打开. 👀 表示已打开，去别的页面时对方会收到那一页上你们的数据；回到沟通自动关闭. 对方也可以发邀请，点「接受」才会打开.")),
         Triple("🔔 / 🔕", tr("主动发起"), tr("🔔 = 允许这个对象主动找你, 🔕 = 禁止.")),
         Triple("⏰ / ⏲", tr("共时闹钟"), tr("⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象.")),

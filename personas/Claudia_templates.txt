@@ -117,6 +117,14 @@ joint_completed:30
 initial:0
 [/valence:initial]
 
+【情景模拟效价阈值】
+# propose_valence:非情景模拟下用户发出带动作消息时，主动发起情景模拟申请的最低效价（范围 -100 至 100）
+# ignore_valence:非情景模拟下低于该效价时无视用户动作描写（范围 -100 至 100，须 <= propose_valence）
+[scenario]
+propose_valence:30
+ignore_valence:0
+[/scenario]
+
 【情绪效价爆发与结算联动】
 # burst_rate:爆发期间该角色的 E 变化倍率（Claudia 为 2.0x）
 # burst_end_shift:爆发结束瞬间该角色的 E 直接偏移增量（Claudia 为 +20）

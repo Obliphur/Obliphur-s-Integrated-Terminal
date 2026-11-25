@@ -122,9 +122,15 @@ class JointMixin:
             self._changed()
 
     def toggle_request_draft(self, kind: str) -> str:
-        """切换待随下一条用户消息发送的 share data / 共读请求附件。"""
-        if kind not in ("share", "coread"):
+        """切换待随下一条用户消息发送的 share data / 共读 / 情景模拟请求附件。"""
+        if kind not in ("share", "coread", "scenario"):
             return "未知的请求附件"
+        if kind == "scenario":
+            if not self.scenario_unlocked() or self.scenario_on():
+                return ""
+            self.request_draft[kind] = not self.request_draft[kind]
+            self._changed()
+            return ""
         why = self.problem()
         if why:
             return why
@@ -152,6 +158,8 @@ class JointMixin:
             labels.append(tr("🙈 share data"))
         if self.request_draft.get("coread"):
             labels.append(tr("📚 共读"))
+        if self.request_draft.get("scenario"):
+            labels.append(tr("🎭 情景模拟"))
         if self.request_draft.get("music"):
             labels.append(tr("🎼 演奏评判"))
         return labels

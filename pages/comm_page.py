@@ -101,7 +101,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         tools.pack(fill="x", padx=28, pady=(2, 0))
         ttk.Button(tools, text="❓", width=3, command=self._help).pack(side="left")                # 帮助: 每个按钮是干什么的
         self.btn_scenario = ttk.Button(tools, text="📱", width=3,
-                                       command=lambda: self._set_mode(not self.comm.scenario_on()))
+                                       command=self._toggle_scenario)
         self.btn_scenario.pack(side="left", padx=(4, 0))
         self.btn_mute = ttk.Button(tools, text="🔔", width=3, command=self._toggle_mute)        # 🔔 可以主动发起 / 🔕 禁止这个人主动发起
         self.btn_mute.pack(side="left", padx=(4, 0))
@@ -138,6 +138,12 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.lbl_share_inv.pack(side="left")
         ttk.Button(self.share_btns, text=tr("接受"), width=6, command=lambda: self._share_respond(True)).pack(side="left", padx=(6, 0))
         ttk.Button(self.share_btns, text=tr("拒绝"), width=6, command=lambda: self._share_respond(False)).pack(side="left", padx=(4, 0))
+        # 对方申请开启情景模拟: 等用户点 接受 / 拒绝
+        self.scenario_btns = tk.Frame(tools, bg=bg)
+        self.lbl_scenario_inv = tk.Label(self.scenario_btns, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
+        self.lbl_scenario_inv.pack(side="left")
+        ttk.Button(self.scenario_btns, text=tr("接受"), width=6, command=lambda: self._scenario_respond(True)).pack(side="left", padx=(6, 0))
+        ttk.Button(self.scenario_btns, text=tr("拒绝"), width=6, command=lambda: self._scenario_respond(False)).pack(side="left", padx=(4, 0))
         # 草稿附件和联合行动状态放在工具栏下方。
         draft_row = tk.Frame(self, bg=bg)
         draft_row.pack(fill="x", padx=28, pady=(2, 0))
@@ -241,8 +247,20 @@ class CommPage(CommVoiceMixin, tk.Frame):
         if 0 <= idx < len(self._cfg_ids):
             self.comm.set_config(self._cfg_ids[idx])
 
-    def _set_mode(self, enabled):
-        self.comm.set_scenario(enabled)
+    def _toggle_scenario(self):
+        c = self.comm
+        if c.scenario_on():
+            c.set_scenario(False)
+        elif c.scenario_asking():
+            c.scenario_cancel()
+        else:
+            c.toggle_request_draft("scenario")
+        self.refresh(force=True)
+
+    def _scenario_respond(self, accept: bool):
+        why = self.comm.scenario_respond(accept)
+        if why:
+            toast.warn(tr(why))
         self.refresh(force=True)
 
     def _sync_status(self):
@@ -261,7 +279,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         elif not tension and self.lbl_tension.winfo_manager():
             self.lbl_tension.pack_forget()
         scenario = c.scenario_on()
-        cfg(self.btn_scenario, text="🎭" if scenario else "📱")
+        cfg(self.btn_scenario, text="🎭" if scenario else ("⏳" if c.scenario_asking() else "📱"))
 
     def refresh(self, force: bool = False):
         c = self.comm
@@ -342,6 +360,12 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 self.share_btns.pack(side="left", padx=(8, 0))
         elif self.share_btns.winfo_manager() == "pack":
             self.share_btns.pack_forget()
+        if c.scenario_invite():
+            cfg(self.lbl_scenario_inv, text=tr("🎭 {name} 想开启情景模拟", name=c.share_ai_name()))
+            if self.scenario_btns.winfo_manager() != "pack":
+                self.scenario_btns.pack(side="left", padx=(8, 0))
+        elif self.scenario_btns.winfo_manager() == "pack":
+            self.scenario_btns.pack_forget()
         self.entry.config(state="disabled" if blocked else "normal")
         self._sync_rows()
 
@@ -1055,7 +1079,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         rows = (("❓", "帮助", "打开这个说明."),
                 ("📚", "阅读", "选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送，待对方明确同意后才打开共读室。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。"),
                 ("💬", "说教", "你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。"),
-                ("📱 / 🎭", "聊天模式", "输入框上方的 📱 / 🎭 按钮切换软件聊天与情景模拟。📱 = 软件聊天，不描写动作；🎭 = 情景模拟，按当前时段与状态描写虚构动作。模式按聊天对象保存。"),
+                ("📱 / 🎭", "聊天模式", "输入框上方的 📱 / 🎭 按钮用于情景模拟。开启情景模拟采用申请制（📱 会把申请作为附件随下一条消息发出，或点「接受」同意对方申请），开启后显示 🎭，双方均可随时结束。模式按聊天对象保存。"),
                 ("👀 / 🙈", "分享数据 (share data)", "🙈 会把请求作为附件加入待发送内容，随下一条消息询问对方；同意后才打开. 👀 表示已打开，去别的页面时对方会收到那一页上你们的数据；回到沟通自动关闭. 对方也可以发邀请，点「接受」才会打开."),
                 ("🔔 / 🔕", "主动发起", "🔔 = 允许这个对象主动找你, 🔕 = 禁止."),
                 ("⏰ / ⏲", "共时闹钟", "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象."),

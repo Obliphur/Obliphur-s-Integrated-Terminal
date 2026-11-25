@@ -276,6 +276,14 @@
         "share_data": {
           "type": "boolean"
         },
+        "scenario_action": {
+          "type": "string",
+          "enum": [
+            "request",
+            "end"
+          ],
+          "description": "情景模拟开启采用申请制，双方均可随时结束。主动申请开启情景模拟填request（需用户接受后才开启且须已解锁），随时结束当前情景模拟填end。"
+        },
         "answer": {
           "type": "string",
           "enum": [

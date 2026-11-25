@@ -96,6 +96,25 @@ def valence_burst_rules(text):
     return out
 
 
+def scenario_rules(text):
+    """读取情景模拟效价阈值；未声明或格式错误时返回 None。"""
+    entries = rule_lines(text, "scenario")
+    if not entries:
+        return None
+    out = {}
+    for line in entries:
+        pair = re.fullmatch(r"(propose_valence|ignore_valence)\s*[:：]\s*([+-]?\d+(?:\.\d+)?)", line)
+        if not pair or pair[1] in out:
+            return None
+        value = float(pair[2])
+        if not math.isfinite(value) or not -100.0 <= value <= 100.0:
+            return None
+        out[pair[1]] = value
+    if len(out) != 2 or out["ignore_valence"] > out["propose_valence"]:
+        return None
+    return out
+
+
 def typing_delay_rules(text):
     """读取可选打字延迟参数；空缺或格式错误时返回 (None, None)。"""
     lines = rule_lines(text, "typing")
