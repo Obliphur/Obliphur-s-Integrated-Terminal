@@ -36,7 +36,8 @@ MAX_IMAGES_PER_GROUP = 16
 
 AUTO_SCHEMA = (
     '只返回严格 JSON：{"knowledge":true,"cards":[{"kind":"conceptual 或 tactical 或 reminder",'
-    '"subject":"math/physics/chemistry","category":"所属大类板块（2-6字）","title":"简短标题（尽量8字以内）","topic":"细分主题","aliases":[],"triggers":[],'
+    '"subject":"math/physics/chemistry","category":"所属大类板块（2-6字）","title":"简短标题（尽量8字以内）","topic":"细分主题","aliases":[],'
+    '"triggers":["审题触发词1","审题触发词2","...（技巧/提醒卡必填6-12条2-10字短语）"],'
     '"target_card_id":"若为补充已有词条则填其ID，否则留空","parent_ids":[],"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
     '"generality":"universal/explain_first/non_universal","examples":[],"body":"Markdown 正文",'
     '"review_summary":"纯自然语言简短审核说明（不用Markdown和LaTeX）"}]}。'

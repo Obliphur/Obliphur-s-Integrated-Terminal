@@ -18,7 +18,11 @@ FIELD_GUIDE = (
     "title：若原笔记已为该知识点/技巧命名或带有专有名称，必须原样保留原名；只有原笔记未命名时才由你自动取简短标题（尽量8字以内，宁短勿长，浓缩核心词）；"
     "topic：细分小专题或考点；"
     "aliases：常见别名、简称或俗称列表（方便检索）；"
-    "triggers：审题触发特征列表（题目出现哪些条件、图形、式子或问法时应联想到本卡，用于解题检索）；"
+    "triggers：审题触发特征列表（解题检索的核心依据，技巧卡与提醒卡必须认真生成 6-12 条简短具体的触发短语，每条 2-10 字，禁止留空或只写 1-2 个笼统词、禁止写长句子；"
+    "必须兼顾四类题面线索：a.题干已知条件/模型对象词，如「光滑斜面」「两物块分离」「轻弹簧」「中点」「含参分母」；"
+    "b.图形/图像/式子结构词，如「F-x图像」「v-t图像」「向量点积」「分式最值」；"
+    "c.设问方式与目标词，如「分离时刻」「最小外力」「求比值」「恒成立」；"
+    "d.常见同义/等价表述，如「刚好脱离」「弹力为零」「临界分离」）；"
     "parent_ids：推导来源的已有父卡片 ID 列表（无则 []）；"
     "statement：核心结论或方法本身（说人话、讲清直觉思路和用法）；"
     "preconditions：适用前提、成立条件与常见坑/禁区（什么时候不能用）；"
@@ -31,7 +35,8 @@ FIELD_GUIDE = (
 )
 
 SCHEMA = ('返回严格 JSON 卡片：{"kind":"conceptual 或 tactical 或 reminder","subject":"math/physics/chemistry",'
-          '"category":"所属大类板块（2-6字）","title":"简短标题（尽量8字以内）","topic":"细分主题","aliases":[],"triggers":[],"parent_ids":[], '
+          '"category":"所属大类板块（2-6字）","title":"简短标题（尽量8字以内）","topic":"细分主题","aliases":[],'
+          '"triggers":["审题触发词1","审题触发词2","...（技巧/提醒卡6-12条2-10字短语）"],"parent_ids":[], '
           '"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
           '"generality":"universal/explain_first/non_universal",'
           '"examples":[],"body":"概念卡或提醒卡的 Markdown 正文","review_summary":"纯自然语言简短审核说明（不用Markdown和LaTeX）"}。' + FIELD_GUIDE +
@@ -214,11 +219,11 @@ def prepare_subject(kb, call, domain, question, image=None):
     categories = []
     avail_cats = kb.categories(domain)
     cat_hint = ("；并从以下大类中选出1-2个最相关的 categories（不相关可返回空数组）：" + "、".join(avail_cats)) if avail_cats else ""
-    if image and len(question.strip()) < 30:
+    if image:
         try:
-            features = call('只返回 JSON {"problem_mode":"answer_only 或 requires_working","categories":[],"features":"题型、关键对象、结构特征短语"}。'
-                            "判断题目是否通常要求写过程；不确定选 requires_working" + cat_hint + "。只提取特征，不解题。",
-                            image=image, timeout=15)
+            features = call('只返回 JSON {"problem_mode":"answer_only 或 requires_working","categories":[],"features":"8-15个简短具体的审题触发短语（空格分隔，涵盖已知条件、模型对象、图像/式子特征、设问词及常见同义词）"}。'
+                            "判断题目是否通常要求写过程；不确定选 requires_working" + cat_hint + "。只提取审题触发特征，不解题。\n附带文字：" + question[:1000],
+                            image=image, timeout=25)
             parsed = json_result(features)
             if isinstance(parsed, dict):
                 problem_mode = parsed.get("problem_mode")
@@ -235,7 +240,7 @@ def prepare_subject(kb, call, domain, question, image=None):
             problem_mode = mode_res
         if not categories:
             categories = cat_res
-    hits = kb.search_tactical(domain, query, 4, problem_mode=problem_mode, categories=categories)
+    hits = kb.search_tactical(domain, query, 6, problem_mode=problem_mode, categories=categories)
     reminders = kb.search_reminders(domain, query, 3, categories=categories)
     if reminders:
         kb.record_reminder_shown([r["card_id"] for r in reminders])
@@ -297,7 +302,7 @@ def finish_subject(kb, call, domain, question, answer, hits, valid=lambda: True)
                           "禁止写成完整句子、禁止带本题题号/具体数字/临时字母、禁止堆砌「的结论/技巧/方法」等冗余后缀（固定专名除外）、禁止含 Markdown/LaTeX 或多余标点；"
                           "内容表述尽量通俗直观、说人话，讲清怎么用；"
                           "summary 为审核提案时给人看的提交信息，必须单独编写，只用纯自然语言简单解释，严禁使用 Markdown 标记或 LaTeX 公式；"
-                          "proposed_card 含 category（2-6字所属大类板块）/triggers/statement/preconditions/proof_sketch/generality；缺少基础推导时不要造结论。"
+                          "proposed_card 含 category（2-6字所属大类板块）/triggers（必填6-12条2-10字简短具体的审题触发词，覆盖已知条件、模型对象、图像或式子结构、设问词及同义说法）/statement/preconditions/proof_sketch/generality；缺少基础推导时不要造结论。"
                           + mode_prompt(kb) + exclusion_prompt(kb) + generality_instruction(kb) + _existing_titles_hint(kb, domain) +
                           ("\n探索模式：若解答证明了有价值的库外快捷结论，先核对是否可补充到库内已有卡片（优先 UPDATE_CARD/MERGE_ALIAS），确认无重复后再按上述命名规范提交 ADD_CARD / ADD_DERIVED 提案。" if discovery else "") +
                           f"\n学科:{domain}\n原题:{question}\n解答:{clean}\n候选:{kb.reference(hits)}")

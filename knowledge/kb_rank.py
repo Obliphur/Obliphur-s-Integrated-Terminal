@@ -145,6 +145,28 @@ def overlap(query, text):
     return len(query & target) / max(1, min(len(query), len(target)))
 
 
+def _triggers_score(words, triggers):
+    """按单条 trigger 独立匹配，避免增加触发词数量反而稀释命中率；弱局部重合平方衰减防误报。"""
+    if not words or not triggers:
+        return 0.0
+    raw = (overlap(words, t) for t in triggers if str(t or "").strip())
+    scores = sorted((s if s >= 0.5 else s * s for s in raw), reverse=True)
+    if not scores or scores[0] <= 0:
+        return 0.0
+    s1 = scores[0]
+    s2 = scores[1] if len(scores) > 1 else 0.0
+    s3 = scores[2] if len(scores) > 2 else 0.0
+    return 0.65 * s1 + 0.25 * s2 + 0.10 * s3
+
+
+def _name_score(words, title, aliases):
+    """标题与每条别名独立匹配取最高分，避免多条别名互相稀释。"""
+    if not words:
+        return 0.0
+    parts = [title, *(aliases or ())]
+    return max((overlap(words, p) for p in parts if str(p or "").strip()), default=0.0)
+
+
 def ancestors(cards, card_id):
     seen, queue, out = {card_id}, list(cards.get(card_id, {}).get("parent_ids") or []), []
     while queue:
@@ -170,8 +192,8 @@ def rank(cards, stats, query, top_k, threshold=0.15):
     candidates = {}
     for key, card in cards.items():
         triggers = card.get("triggers") or []
-        match = (0.55 * overlap(words, " ".join(triggers)) +
-                 0.25 * overlap(words, card.get("title", "") + " " + " ".join(card.get("aliases") or [])) +
+        match = (0.55 * _triggers_score(words, triggers) +
+                 0.25 * _name_score(words, card.get("title", ""), card.get("aliases")) +
                  0.20 * overlap(words, card.get("topic", "") + " " + card.get("body", "")))
         if match >= threshold:
             candidates[key] = match
@@ -219,8 +241,8 @@ def rank_reminders(cards, stats, query, top_k=3, threshold=0.15):
     out = []
     for key, card in cards.items():
         triggers = card.get("triggers") or []
-        match = (0.55 * overlap(words, " ".join(triggers)) +
-                 0.25 * overlap(words, card.get("title", "") + " " + " ".join(card.get("aliases") or [])) +
+        match = (0.55 * _triggers_score(words, triggers) +
+                 0.25 * _name_score(words, card.get("title", ""), card.get("aliases")) +
                  0.20 * overlap(words, card.get("topic", "") + " " + card.get("body", "")))
         if match < threshold:
             continue
