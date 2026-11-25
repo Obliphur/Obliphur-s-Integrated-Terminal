@@ -34,6 +34,8 @@ try:
         QProgressBar,
         QScrollArea,
         QSpinBox,
+        QTableWidget,
+        QTableWidgetItem,
         QTabWidget,
         QMainWindow,
         QPushButton,
@@ -619,6 +621,159 @@ if QApplication is not None:
                 f"{tr(combo['name'])} · {tr(state)}\n{self.legacy._combo_desc(combo)}"
                 for combo, state in self.legacy._combos()))
 
+    class QtKnowledgePage(QWidget):
+        """Qt knowledge browser that delegates storage and editing to KnowledgePage."""
+
+        _LISTS = (("tactical", "技巧库"), ("conceptual", "概念库"),
+                  ("reminder", "提醒库"), ("proposals", "待审提案"))
+
+        def __init__(self, model, parent=None):
+            super().__init__(parent)
+            self.model = model
+            self.legacy = getattr(model, "pages", {}).get("knowledge")
+            self._syncing = False
+            root = QVBoxLayout(self)
+            root.setContentsMargins(config.scaled(18), config.scaled(12), config.scaled(18), config.scaled(12))
+            title = QLabel(tr("📚  知识库"), self)
+            title.setObjectName("pageTitle")
+            root.addWidget(title)
+            toolbar = QHBoxLayout()
+            self.tools = []
+            for label, method in (("在 Obsidian 中打开", "open_obsidian"), ("新建卡片", "new_card"),
+                                  ("导入笔记", "import_notes"), ("刷新索引", "show"),
+                                  ("知识库帮助", "help"), ("知识库设置", "settings")):
+                button = QPushButton(tr(label), self)
+                button.clicked.connect(lambda _checked=False, name=method: self._legacy_call(name))
+                toolbar.addWidget(button)
+                self.tools.append(button)
+            root.addLayout(toolbar)
+
+            filters = QHBoxLayout()
+            self.subject = QComboBox(self)
+            self.category = QComboBox(self)
+            self.query = QLineEdit(self)
+            self.query.setPlaceholderText(tr("搜索知识卡片"))
+            self.sort = QComboBox(self)
+            self.sort.addItems([tr(x) for x in ("综合权重", "频次", "最近使用", "层级视图")])
+            self.search = QPushButton(tr("搜索"), self)
+            self.clear_search = QPushButton(tr("清空"), self)
+            for widget in (self.subject, self.category, self.query, self.sort, self.search, self.clear_search):
+                filters.addWidget(widget, 1 if widget is self.query else 0)
+            root.addLayout(filters)
+            self.subject.currentTextChanged.connect(self._subject_changed)
+            self.category.currentTextChanged.connect(lambda _text: self.refresh())
+            self.query.returnPressed.connect(self.refresh)
+            self.search.clicked.connect(self.refresh)
+            self.clear_search.clicked.connect(lambda: (self.query.clear(), self.refresh()))
+            self.sort.currentTextChanged.connect(self.refresh)
+
+            self.tabs = QTabWidget(self)
+            self.tables = {}
+            for key, label in self._LISTS:
+                table = QTableWidget(0, 2, self.tabs)
+                table.setHorizontalHeaderLabels([tr("标题"), tr("学科 / 统计")])
+                table.horizontalHeader().setStretchLastSection(True)
+                table.setSelectionBehavior(QTableWidget.SelectRows)
+                table.setSelectionMode(QTableWidget.ExtendedSelection)
+                table.setEditTriggers(QTableWidget.NoEditTriggers)
+                table.cellDoubleClicked.connect(lambda _row, _col, k=key: self._action("open_selected", k))
+                self.tables[key] = table
+                self.tabs.addTab(table, tr(label))
+            root.addWidget(self.tabs, 1)
+
+            actions = QHBoxLayout()
+            for label, method in (("全选", "select_all"), ("全不选", "clear_selection"),
+                                  ("批量批准", "approve_selected"), ("批量删除", "delete_selected"),
+                                  ("查看所选卡片或提案", "open_selected"), ("管理所选卡片", "details")):
+                button = QPushButton(tr(label), self)
+                button.clicked.connect(lambda _checked=False, name=method: self._action(name))
+                actions.addWidget(button)
+            root.addLayout(actions)
+            self.refresh()
+
+        def _legacy_call(self, name):
+            if self.legacy is None:
+                return
+            if name == "open_obsidian":
+                from pages.knowledge_page import open_obsidian
+                open_obsidian(self.legacy.kb.root, self.legacy.data_dir)
+            else:
+                getattr(self.legacy, name)()
+            self.refresh()
+
+        def _subject_changed(self, value):
+            if self._syncing or self.legacy is None:
+                return
+            self.legacy.subject.set(value)
+            self.legacy.category.set(tr("全部分类"))
+            self.refresh()
+
+        def _sync_selection(self, key):
+            tree = self.legacy.lists[key]
+            chosen = []
+            table = self.tables[key]
+            for index in table.selectionModel().selectedRows():
+                item = table.item(index.row(), 0)
+                if item is not None:
+                    ident = item.data(Qt.UserRole)
+                    if ident:
+                        chosen.append(str(ident))
+            tree.selection_set(chosen) if chosen else tree.selection_remove(tree.selection())
+
+        def _action(self, name, key=None):
+            if self.legacy is None:
+                return
+            key = key or self._LISTS[self.tabs.currentIndex()][0]
+            self._sync_selection(key)
+            if name in ("select_all", "clear_selection", "delete_selected"):
+                self.legacy.tabs.select(self.tabs.currentIndex())
+                if name == "delete_selected":
+                    self.legacy.delete_selected(key)
+                else:
+                    getattr(self.legacy, name)(key)
+            elif name in ("open_selected", "details"):
+                getattr(self.legacy, name)(key)
+            else:
+                getattr(self.legacy, name)()
+            self.refresh()
+
+        def refresh(self):
+            if self.legacy is None or self._syncing:
+                return
+            self._syncing = True
+            try:
+                self.legacy.subject.set(self.subject.currentText() or self.legacy.subject.get())
+                self.legacy.category.set(self.category.currentText() or self.legacy.category.get())
+                self.legacy.query.set(self.query.text())
+                self.legacy.sort.set(self.sort.currentText() or self.legacy.sort.get())
+                self.legacy.show()
+                for widget, source in ((self.subject, self.legacy.subject_box),
+                                       (self.category, self.legacy.category_box)):
+                    values = [str(v) for v in source.cget("values")]
+                    current = self.legacy.subject.get() if widget is self.subject else self.legacy.category.get()
+                    widget.blockSignals(True)
+                    widget.clear()
+                    widget.addItems(values)
+                    widget.setCurrentText(current)
+                    widget.blockSignals(False)
+                self.query.setText(self.legacy.query.get())
+                self.sort.setCurrentText(self.legacy.sort.get())
+                for key, _label in self._LISTS:
+                    table = self.tables[key]
+                    tree = self.legacy.lists[key]
+                    table.setRowCount(0)
+                    for iid in tree.get_children():
+                        title = tree.item(iid, "text")
+                        values = tree.item(iid, "values") or ("",)
+                        row = table.rowCount()
+                        table.insertRow(row)
+                        title_item = QTableWidgetItem(str(title))
+                        title_item.setData(Qt.UserRole, iid)
+                        table.setItem(row, 0, title_item)
+                        table.setItem(row, 1, QTableWidgetItem(str(values[0])))
+            finally:
+                self._syncing = False
+
     class QtNetPage(QWidget):
         """Qt presentation for the network request workflow."""
 
@@ -908,7 +1063,8 @@ if QApplication is not None:
                             QtSettingsPage(self.model, self._stack) if key == "settings" else
                             QtNetPage(self.model, self._stack) if key == "net" else
                             QtHourLogPage(self.model, self._stack) if key == "log" else
-                            QtContractPage(self.model, self._stack) if key == "contract" else QLabel(
+                            QtContractPage(self.model, self._stack) if key == "contract" else
+                            QtKnowledgePage(self.model, self._stack) if key == "knowledge" else QLabel(
                         tr("正在迁移此页面到 Qt6"), self._stack))
                     if isinstance(page, QLabel):
                         page.setAlignment(Qt.AlignCenter)
@@ -1067,6 +1223,8 @@ if QApplication is not None:
             elif key in ("net", "log"):
                 self._pages[key].refresh()
             elif key == "contract":
+                self._pages[key].refresh()
+            elif key == "knowledge":
                 self._pages[key].refresh()
             for name, button in self._nav.items():
                 button.setProperty("active", name == key)
