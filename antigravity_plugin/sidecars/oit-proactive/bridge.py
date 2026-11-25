@@ -66,39 +66,40 @@ def _find_agentapi() -> str:
     return ""
 
 
-def _run_agentapi(args: list):
+_UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
+_TURN_CIDS = {}
+_TURN_LOCK = threading.Lock()
+
+
+def _run_agentapi(args: list) -> str:
     exe = _find_agentapi()
     if not exe:
         _log(f"agentapi not found in PATH={os.environ.get('PATH', '')[:500]}")
-        return
+        return ""
     is_batch = os.name == "nt" and exe.lower().endswith((".cmd", ".bat"))
     clean = [re.sub(r"[\r\n]+", " ", str(a)).strip() if is_batch else str(a) for a in args[1:]]
     cmd = (["cmd.exe", "/c", exe] if is_batch else [exe]) + clean
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        out = (proc.stdout or "").strip()
         if proc.returncode != 0:
-            _log(f"agentapi failed rc={proc.returncode} exe={exe} args={args[:3]} err={(proc.stderr or proc.stdout).strip()[:300]}")
-        else:
-            _log(f"agentapi ok exe={exe} args={args[:3]}")
+            _log(f"agentapi failed rc={proc.returncode} exe={exe} args={args[:3]} err={(proc.stderr or out).strip()[:300]}")
+            return ""
+        _log(f"agentapi ok exe={exe} args={args[:3]}")
+        return out
     except Exception as exc:
         _log(f"agentapi exception exe={exe}: {exc}")
+        return ""
 
 
-def _archive_conversation(cid: str) -> bool:
-    """通过 Antigravity ConversationService 将已轮换的旧对话归档（静默降级，不阻塞正常消息）。"""
-    cid = str(cid or "").strip()
-    if not cid:
-        return False
+def _conversation_rpc(method: str, payload: dict) -> bool:
     addr = str(os.environ.get("ANTIGRAVITY_LS_ADDRESS") or "").strip()
     csrf = str(os.environ.get("ANTIGRAVITY_CSRF_TOKEN") or "").strip()
     if not addr or not csrf:
-        _log(f"skip archive cid={cid}: ANTIGRAVITY_LS_ADDRESS/CSRF unavailable")
+        _log(f"skip {method}: ANTIGRAVITY_LS_ADDRESS/CSRF unavailable")
         return False
-    url = f"http://{addr}/product.v1.ConversationService/UpdateConversation"
-    body = json.dumps({
-        "conversationId": cid,
-        "annotations": {"archived": True},
-    }).encode("utf-8")
+    url = f"http://{addr}/product.v1.ConversationService/{method}"
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
@@ -112,11 +113,41 @@ def _archive_conversation(cid: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             resp.read()
-        _log(f"archived old conversation cid={cid}")
         return True
     except Exception as exc:
-        _log(f"archive failed cid={cid}: {exc}")
+        _log(f"{method} failed: {exc}")
         return False
+
+
+def _archive_conversation(cid: str) -> bool:
+    """通过 Antigravity ConversationService 将旧对话归档（静默降级，不阻塞正常消息）。"""
+    cid = str(cid or "").strip()
+    if not cid:
+        return False
+    ok = _conversation_rpc("UpdateConversation", {
+        "conversationId": cid,
+        "annotations": {"archived": True},
+    })
+    if ok:
+        _log(f"archived conversation cid={cid}")
+    return ok
+
+
+def _cleanup_ephemeral_conversation(cid: str, delay_s: float = 6.0):
+    """单轮回复完成后延迟删除临时对话；若删除失败则退回归档，保持会话列表干净。"""
+    cid = str(cid or "").strip()
+    if not cid:
+        return
+
+    def work():
+        if delay_s > 0:
+            time.sleep(delay_s)
+        if _conversation_rpc("DeleteConversation", {"conversationId": cid}):
+            _log(f"deleted ephemeral conversation cid={cid}")
+        else:
+            _archive_conversation(cid)
+
+    threading.Thread(target=work, daemon=True).start()
 
 
 def _archive_conversation_async(cid: str):
@@ -125,14 +156,57 @@ def _archive_conversation_async(cid: str):
     threading.Thread(target=_archive_conversation, args=(cid,), daemon=True).start()
 
 
+def _spawn_stateless_turn(turn_id: str, persona_name: str, kind: str, model: str = ""):
+    who = persona_name or "OIT"
+    if kind == "memory_compact":
+        prompt = (
+            f"[OIT单轮请求 turn_id={turn_id}] "
+            f"请先调用 oit_get_turn_context(turn_id={turn_id!r}) 获取记忆整理任务与近期完整对话，"
+            f"按指示调用 oit-memory-compact 子代理并通过 oit_memory_save_auto(text=..., turn_id={turn_id!r}) 保存；"
+            "不要调用 oit_reply，完成后仅输出 ✓。"
+        )
+    else:
+        prompt = (
+            f"[OIT单轮请求 turn_id={turn_id}] "
+            f"请先调用 oit_get_turn_context(turn_id={turn_id!r}) 获取本轮完整人设、记忆卡、近期完整对话记录与动态状态，"
+            f"严格按人设与规则处理，最后调用 oit_reply(turn_id={turn_id!r}, ...) 提交回复，完成后仅输出 ✓ 结束。"
+        )
+    cmd = ["agentapi", "new-conversation", f"--title=OIT · {who}"]
+    if model:
+        cmd.append(f"--model={model}")
+    cmd += ["--", prompt]
+    out = _run_agentapi(cmd)
+    m = _UUID_RE.search(out or "")
+    if m:
+        created_cid = m.group(0)
+        with _TURN_LOCK:
+            _TURN_CIDS[turn_id] = created_cid
+        _log(f"stateless turn {turn_id} -> cid={created_cid}")
+
+
 def dispatch_event(event: dict):
+    ev_type = str(event.get("event") or "").strip()
     cid = str(event.get("conversation_id") or "").strip()
-    kind = str(event.get("kind") or event.get("event") or "proactive")
+    turn_id = str(event.get("turn_id") or "").strip()
+    kind = str(event.get("kind") or ev_type or "proactive")
     persona_name = str(event.get("persona_name") or "").strip()
+    model = str(event.get("model") or "").strip()
     archive_cid = str(event.get("archive_conversation_id") or "").strip()
     if archive_cid:
         _archive_conversation_async(archive_cid)
-    _log(f"dispatch kind={kind} cid={cid or '(new)'} persona={persona_name or '?'}")
+    if ev_type == "turn_done" or kind == "turn_done":
+        tracked = ""
+        if turn_id:
+            with _TURN_LOCK:
+                tracked = _TURN_CIDS.pop(turn_id, "")
+        target_cid = cid or tracked
+        if target_cid:
+            _cleanup_ephemeral_conversation(target_cid)
+        return
+    _log(f"dispatch kind={kind} turn={turn_id or '-'} cid={cid or '(new)'} persona={persona_name or '?'}")
+    if turn_id and event.get("stateless"):
+        _spawn_stateless_turn(turn_id, persona_name, kind, model=model)
+        return
     if kind == "rollover":
         who = persona_name or "当前 OIT 人设"
         if event.get("compact_memory"):
@@ -214,7 +288,7 @@ def consume_sse(cfg: dict, boot_mtime: float):
                 if data_lines:
                     try:
                         payload = json.loads("\n".join(data_lines))
-                        if event_name in ("proactive", "user_message", "rollover") or payload.get("event") in ("proactive", "user_message", "rollover"):
+                        if event_name in ("proactive", "user_message", "rollover", "memory_compact", "turn_done") or payload.get("event") in ("proactive", "user_message", "rollover", "memory_compact", "turn_done"):
                             dispatch_event(payload)
                     except Exception as exc:
                         _log(f"event error: {exc}")

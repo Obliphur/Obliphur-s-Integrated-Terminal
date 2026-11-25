@@ -422,8 +422,8 @@ class FormMixin:
                 tr("自动部署已完成：") + "\n" + done_lines + "\n• "
                 + tr("已开启 Antigravity 桌面版接管并启动本地 Bridge") + "\n\n"
                 + tr("接下来只需在 Antigravity 桌面端完成两步：") + "\n"
-                + tr("1. 新建对话，点右侧辅面板「+」打开 OIT Chat；") + "\n"
-                + tr("2. 若需主动对话，请在 Automations / Sidecars 手动开启 OIT Proactive Bridge 并选择目标项目。")
+                + tr("1. 在 Customizations → Installed → OIT Companion 启用插件并确认权限；") + "\n"
+                + tr("2. 直接回到 OIT 沟通页正常聊天即可（无需聊天侧边栏，每轮自动携带完整上下文）。")
             )
             set_status(summary)
             toast.success(tr("Antigravity 自动部署完成."))

@@ -140,6 +140,29 @@ class ToolsMixin:
                         result = {"ok": True, "ready": True,
                                   "instruction": "解答图片已登记；请随即调用 oit_reply，图片将作为独立气泡发送（可在 text 中用 <oit_message> 分条并用独占一行的 <oit_answer_image> 指定发图位置，发图前后均可各加一句话作为独立气泡；气泡正文不要输出 Markdown/LaTeX 源码）。"}
 
+            elif name == "oit_reading_memory":
+                fn = getattr(self, "coread_memory_fn", None)
+                if not fn:
+                    result = {"ok": False, "error": "共读书库服务不可用"}
+                else:
+                    try:
+                        action = str(args.get("action") or "lookup")
+                        if action == "save":
+                            if not getattr(self, "reading_mode", False):
+                                # 允许在普通聊天中修订已有书籍记忆，但只能由已存在的书籍编号定位。
+                                if not args.get("book_id"):
+                                    raise ValueError("非共读状态保存记忆必须提供book_id")
+                            if not args.get("book_id") or not args.get("chapter"):
+                                raise ValueError("保存章节记忆需要book_id和chapter")
+                        result = fn(action=action, book_id=args.get("book_id"), book_title=args.get("book_title", ""),
+                                    chapter=args.get("chapter", ""), chapter_title=args.get("chapter_title", ""),
+                                    summary=args.get("summary", ""), annotations=args.get("annotations", ""),
+                                    mode=args.get("mode", "replace"))
+                        result = {"ok": True, **(result if isinstance(result, dict) else {"data": result}),
+                                  "instruction": ("共读记忆已更新；继续围绕当前章节自然回复。" if action == "save"
+                                                   else "若书名与当前讨论相关，请只使用返回的章节记忆和批注作为依据。")}
+                    except Exception as e:
+                        result = {"ok": False, "error": str(e)[:500]}
             elif name == "oit_reading_acquire" and getattr(self, "reading_mode", False):
                 try:
                     result = self.coread_acquire_fn(args["source_url"],

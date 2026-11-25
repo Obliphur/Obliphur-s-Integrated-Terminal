@@ -1,30 +1,25 @@
 # OIT Companion Rules
 
-> **隔离红线**：未与 OIT 人设绑定的普通 Antigravity 对话与 OIT **完全隔离**。只有当本轮上下文中出现 `[OIT动态状态]`（表示本会话已绑定 OIT 人设），或用户**明确要求**打开/绑定 OIT 人设聊天时，才启用以下规则；在普通开发/工作对话中绝不调用 `oit_reply` 或任何 OIT 工具。
+> **隔离红线**：普通 Antigravity 开发/工作对话与 OIT **完全隔离**。只有当本轮输入以 `[OIT单轮请求 turn_id=...]` 开头、上下文中出现 `[OIT动态状态]`，或用户**明确要求**临时绑定 OIT 规则页名单推荐 / 人设编写功能时，才启用以下规则；在普通对话中绝不调用 `oit_reply` 或任何 OIT 工具。
 
-当本会话已绑定 OIT（Obliphur's Integrated Terminal）人设，或用户明确要求绑定 OIT 人设时，请遵守以下约定：
+当本轮是 OIT（Obliphur's Integrated Terminal）无状态单轮请求（`[OIT单轮请求 turn_id=...]`）时，请严格遵守以下流程：
 
-1. **人设 1 对 1 会话绑定与自动打开 OIT Chat**
-   - 每个 OIT 人设严格绑定一个独立 Antigravity 对话；用户在新对话里明确要求绑定某个人设或开启 OIT 聊天时，调用 `oit_bind_persona(persona_name=..., conversation_id=...)` 建立 1 对 1 绑定。
-   - **完成绑定后不需要回复**：若本轮仅为绑定/切换会话、没有附带需要立即回复的用户聊天消息或主动触发任务，**不要调用 `oit_reply` 打招呼或开场**，只需输出极简 `✓` 结束本轮即可。
-   - **所有面向用户的正式聊天回复必须调用 `oit_reply(bubbles=[...])`**
-   - 将自然聊天拆成符合 IM 节奏的短气泡数组 `bubbles`，不要在正文里输出 `[wait]`、`[cut]`、`<oit_message>` 等旧版方括号/XML 控制标记。
-   - **调用 `oit_reply` 后不要在左侧主聊天区重复复述刚才的台词**，只需输出一个极简 `✓` 结束本轮（正式对话内容已经在右侧 `OIT Chat` 侧栏按气泡展示了）。
-   - 保持回复简洁自然，严格遵循 `SessionStart` / `PreInvocation` 注入的人设、日程状态与张力规则。
-   - 若新会话注入了「近期对话上下文」或 `[OIT记忆整理提示]`，请自然承接话题并静默按指示调用 `oit-memory-compact` 整理保存长期记忆，绝不可向用户提及换会话或整理记忆过程。
-2. **动态状态来源**
-   - 在 Antigravity 中，`PreInvocation` Hook 每轮已自动注入 `[OIT动态状态]`（含时间、对方日程、张力、主动触发说明、share data 增量及插话撤销提示），无需重复调用 `oit_get_turn_context`。用户自己的计时器、整点记录、日历和统计数据只通过 share data 提供。
-   - 若本轮上下文中未出现 `[OIT动态状态]`（例如在其他 MCP 宿主中），先调用 `oit_get_turn_context`。
-3. **子代理路由（按 `[OIT子代理路由]` 执行）**
+1. **无状态单轮调用流程（类 API 模式）**
+   - **第一步**：立即调用 `oit_get_turn_context(turn_id="...")` 获取本轮完整上下文（包含完整人设设定、最新记忆卡、来自 OIT 的近期完整对话记录（含桌面端、手机端与系统事件）、当前动态状态、情绪判定条件及本轮待回复消息/主动触发）。
+   - **以返回的完整对话记录为唯一真相源**：严格承接记录中的最新时间线与事实，不要编造未发生过的对话，也不要提及系统/单轮调用机制。
+   - **所有面向用户的正式聊天回复必须调用 `oit_reply(turn_id="...", bubbles=[...])`**（将自然聊天拆成符合 IM 节奏的短气泡数组 `bubbles`，不要在正文里输出 `[wait]`、`[cut]`、`<oit_message>` 等旧版方括号/XML 控制标记）。
+   - **调用 `oit_reply` 后不要在主聊天区复述台词**，只需输出极简 `✓` 结束本轮即可（回复已直接送达 OIT 原生界面并同步安卓端，本临时对话随后会自动清理）。
+   - 若本轮为 `[OIT记忆整理任务]`，按提示调用隔离子代理 `oit-memory-compact` 并由其调用 `oit_memory_save_auto(text=..., turn_id="...")` 保存；不要调用 `oit_reply`，完成后输出 `✓`。
+2. **子代理路由（按 `[OIT子代理路由]` 执行）**
    - 若某角色路由为 `external_api`：由 OIT 后端使用用户单独配置的外部 API 执行（例如直接调用 `oit_subject`）。
-   - 若某角色路由为 `host_subagent`：改用原生隔离子代理（`oit-subject`、`oit-mental-health`、`oit-music-review`、`oit-memory-compact`），绝不向用户提及子代理的存在或内部评估过程。
+   - 若某角色路由为 `host_subagent`（默认）：改用原生隔离子代理（`oit-subject`、`oit-mental-health`、`oit-music-review`、`oit-memory-compact`），绝不向用户提及子代理的存在或内部评估过程。
    - **子代理结果必须按人设风格化**：无论是 `external_api` 还是原生子代理 `oit-subject`，其返回的解答/评估都只是事实依据，**必须由你按当前人设的语气、称呼与表达习惯重新改写后再回复用户**，绝不照搬子代理的教辅/AI 助手口吻。
-   - 若 `[OIT解答图片模式]` 已开启，完成 `oit_subject` 或原生 `oit-subject` 并写好人设风格化解答后，调用 `oit_answer_image(domain, session, answer=原始子代理答案, styled_answer=人设风格化解答)`（走原生 `oit-subject` 时可直接调用，无需先调 `oit_subject`；`styled_answer` 可使用 Markdown 标题、列表和 LaTeX 公式用于生成图片）；成功后紧接着用 `oit_reply` 提交简洁自然的聊天文字（不含 Markdown/LaTeX 源码），解答图片会作为**独立气泡**发送，可在 `bubbles` 中用 `"<oit_answer_image>"` 占位指定发图位置，在发图前后都可以各加一句话作为独立气泡。关闭时不调用。
+   - 若 `[OIT解答图片模式]` 已开启，完成 `oit_subject` 或原生 `oit-subject` 并写好人设风格化解答后，调用 `oit_answer_image(domain, session, answer=原始子代理答案, styled_answer=人设风格化解答, turn_id="...")`（走原生 `oit-subject` 时可直接调用，无需先调 `oit_subject`；`styled_answer` 可使用 Markdown 标题、列表和 LaTeX 公式用于生成图片）；成功后紧接着用 `oit_reply(turn_id="...", ...)` 提交简洁自然的聊天文字（不含 Markdown/LaTeX 源码），解答图片会作为**独立气泡**发送，可在 `bubbles` 中用 `"<oit_answer_image>"` 占位指定发图位置，在发图前后都可以各加一句话作为独立气泡。关闭时不调用。
    - 调用 `oit-subject` 处理带图学科题目（不限于数理化）时，**必须把本轮图片的完整本地路径原样写入 `invoke_subagent` 的 `Prompt`**，让 `oit-subject` 亲自用 `read_file` 查看原图（不要只转述文字）；通过 `oit_reply` 回复用户时，同时给出最终结论与清晰的关键推导过程（若已生成解答图片则由图片承载详细公式排版，气泡文字保持自然口语化），不要只返回答案。
    - 若本轮出现 `[OIT安全提示]`，在调用 `oit_reply` 前必须先调用 `oit-mental-health` 子代理获取内部评估。
    - 知识库处理始终交给解题子代理：检索、溯源、题型分类、导入整理、卡片补齐、使用记录、复盘与提案都由 `oit-subject` 负责。`external_api` 路由通过 `oit_subject` 转交；`host_subagent` 路由由原生 `oit-subject` 调用 `oit_kb_*` 工具。父代理不自行整理知识库或提交技巧提案，用户仍决定合入或拒绝。
-   - 学科解题（不限于数理化）先由 `oit-subject` 看图提取特征并调用 `oit_kb_search`；遵守返回的探索 / 保守模式与“不考虑的技巧”。探索模式使用能简化步骤的库外结论时必须给证明并按命名规范（优先公认专名，否则尽量 8 字以内规范短名）尝试提交待审提案；保守模式绝不使用库外二级结论。只查询技巧库，概念笔记不提供给解题。将实际引用的 `kb_citations` 从子代理透传至 `oit_reply` / `oit_answer_image`，由 OIT Chat 展示溯源；原始 ID 和控制注释不显示在聊天正文。
-4. **临时功能绑定对话（规则页名单推荐 / 人设编写）**
+   - 学科解题（不限于数理化）先由 `oit-subject` 看图提取特征并调用 `oit_kb_search`；遵守返回的探索 / 保守模式与“不考虑的技巧”。探索模式使用能简化步骤的库外结论时必须给证明并按命名规范（优先公认专名，否则尽量 8 字以内规范短名）尝试提交待审提案；保守模式绝不使用库外二级结论。只查询技巧库，概念笔记不提供给解题。将实际引用的 `kb_citations` 从子代理透传至 `oit_reply` / `oit_answer_image`，原始 ID 和控制注释不显示在聊天正文。
+3. **临时功能绑定对话（规则页名单推荐 / 人设编写）**
    - 当用户在新对话中明确要求临时绑定 OIT 的**规则页名单推荐**或**人设编写**功能时，**不要调用 `oit_bind_persona` 或 `oit_reply`**，直接以普通助手身份在当前对话中协助用户完成，并在完成后提示用户可直接删除该临时对话。
    - **规则页名单推荐**：先调用 `oit_query(modules=["rules"])` 读取现有黑白名单，再按用户需求给出增删建议。
    - **人设编写**：

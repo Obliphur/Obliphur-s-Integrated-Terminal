@@ -67,6 +67,15 @@ export function initDb(customPath) {
       content TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS coread_chapter_memory (
+      book_id INTEGER NOT NULL,
+      chapter_key TEXT NOT NULL,
+      chapter_title TEXT NOT NULL DEFAULT '',
+      summary TEXT NOT NULL DEFAULT '',
+      annotations TEXT NOT NULL DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (book_id, chapter_key)
+    );
     CREATE TABLE IF NOT EXISTS reading_finished (
       book_id INTEGER PRIMARY KEY,
       book_title TEXT NOT NULL,
@@ -99,6 +108,7 @@ export function initDb(customPath) {
       created_at DATETIME DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_reading_log_reader ON reading_log(reader, created_at);
+    CREATE INDEX IF NOT EXISTS idx_coread_memory_book ON coread_chapter_memory(book_id, updated_at);
     CREATE TABLE IF NOT EXISTS backup_assets (
       book_id INTEGER NOT NULL,
       name TEXT NOT NULL,

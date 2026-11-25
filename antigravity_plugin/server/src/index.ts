@@ -85,11 +85,12 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_get_turn_context",
       description:
-        "获取当前 OIT 动态状态（时间、人设日程、情绪张力、子代理路由表、share data 增量及待处理主动触发事件）。用户自己的计时器、整点记录、日历和统计数据只通过 share data 提供。不支持 PreInvocation Hook 的宿主（Claude Desktop / ChatGPT）应在每轮回复前调用。",
+        "获取当前 OIT 完整单轮上下文（完整人设、记忆卡、近期完整对话记录、动态状态、情绪判定、子代理路由与本轮待回复消息/主动触发）。无状态单轮模式请传入 turn_id。",
       annotations: READONLY_ANNOTATIONS,
       inputSchema: {
         type: "object",
         properties: {
+          turn_id: { type: "string", maxLength: 120, description: "无状态单轮请求 ID（来自 [OIT单轮请求 turn_id=...]）。" },
           conversation_id: { type: "string" },
           host: { type: "string" },
           consume_trigger: { type: "boolean" },
@@ -100,11 +101,11 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_reply",
       description:
-        "提交本轮正式回复及可选控制字段（分条气泡 bubbles 优先于 text）。调用后在 Antigravity 侧栏 aux_pane 渲染分条延时气泡并同步到 OIT / 安卓端。",
-      _meta: AUX_PANE_META,
+        "提交本轮正式回复及可选控制字段（分条气泡 bubbles 优先于 text），直接同步到 OIT 原生聊天界面与安卓端。",
       inputSchema: {
         type: "object",
         properties: {
+          turn_id: { type: "string", maxLength: 120, description: "无状态单轮请求 ID（来自 [OIT单轮请求 turn_id=...]）。" },
           bubbles: {
             type: "array",
             items: { type: "string", maxLength: 8000 },
@@ -233,6 +234,7 @@ function buildTools(): ToolSpec[] {
         type: "object",
         properties: {
           text: { type: "string", maxLength: 4000 },
+          turn_id: { type: "string", maxLength: 120 },
         },
         required: ["text"],
         additionalProperties: false,
@@ -255,6 +257,7 @@ function buildTools(): ToolSpec[] {
           domain: { type: "string", maxLength: 60, description: "学科领域标识，如 math、physics、chemistry、biology、cs、english、history、general 等。" },
           session: { type: "string", maxLength: 80 },
           question: { type: "string", maxLength: 8000 },
+          turn_id: { type: "string", maxLength: 120 },
           conversation_id: { type: "string", maxLength: 120 },
         },
         required: ["domain", "session", "question"],
@@ -273,6 +276,7 @@ function buildTools(): ToolSpec[] {
           answer: { type: "string", maxLength: 8000, description: "学科子代理返回的原始答案。" },
           styled_answer: { type: "string", maxLength: 8000, description: "聊天 AI 按人设风格化改写后的完整解答版本。" },
           kb_citations: { type: "array", items: { type: "string" }, maxItems: 20 },
+          turn_id: { type: "string", maxLength: 120 },
           conversation_id: { type: "string", maxLength: 120 },
         },
         required: ["domain", "session", "answer", "styled_answer"],
@@ -314,6 +318,26 @@ function buildTools(): ToolSpec[] {
         type: "object",
         properties: { query: { type: "string", maxLength: 1000 } },
         required: ["query"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "oit_reading_memory",
+      description:
+        "读取或更新共读书库中的章节讨论记忆。共读中按章节实时保存讨论摘要和批注；非共读聊天提到书籍时先按书名检索，再依据新观点修订。只记录实际讨论内容。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["lookup", "save"] },
+          book_id: { type: "integer", minimum: 1 },
+          book_title: { type: "string", maxLength: 200 },
+          chapter: { type: "string", maxLength: 120 },
+          chapter_title: { type: "string", maxLength: 200 },
+          summary: { type: "string", maxLength: 6000 },
+          annotations: { type: "string", maxLength: 6000 },
+          mode: { type: "string", enum: ["replace", "append"] },
+        },
+        required: ["action"],
         additionalProperties: false,
       },
     },
@@ -491,6 +515,7 @@ function createOitServer(): Server {
 
       if (name === "oit_get_turn_context") {
         const res = await bridgeGet("/turn/context", {
+          turn_id: args.turn_id as string | undefined,
           conversation_id: args.conversation_id as string | undefined,
           host: args.host as string | undefined,
           consume_trigger: args.consume_trigger === false ? "0" : "1",
@@ -508,8 +533,8 @@ function createOitServer(): Server {
         const items = Array.isArray(res.items) ? res.items : [];
         const summary = items.length
           ? (res.held
-              ? `已提交 ${items.length} 条气泡（延后送达），请回复 ✓ 结束本轮。`
-              : `已提交 ${items.length} 条气泡，请回复 ✓ 结束本轮。`)
+              ? `已提交 ${items.length} 条气泡到 OIT（延后送达），请回复 ✓ 结束本轮。`
+              : `已提交 ${items.length} 条气泡到 OIT，请回复 ✓ 结束本轮。`)
           : res.silent
             ? "静默。"
             : res.refuse

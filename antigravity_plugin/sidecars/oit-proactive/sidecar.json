@@ -10,6 +10,7 @@
       "mcp(oit_oit/oit_query)",
       "mcp(oit_oit/oit_memory_edit)",
       "mcp(oit_oit/oit_memory_save_auto)",
+      "mcp(oit_oit/oit_reading_memory)",
       "mcp(oit_oit/oit_joint_offer)",
       "mcp(oit_oit/oit_music_catalog)",
       "mcp(oit_oit/oit_music_select)",

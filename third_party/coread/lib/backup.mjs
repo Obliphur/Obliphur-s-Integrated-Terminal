@@ -13,6 +13,7 @@ const TABLES = {
   book_progress: 'book_id page paragraph_offset updated_at last_opened_at finished_at',
   reading_daily: 'book_id book_title reading_date seconds updated_at',
   reading_record_notes: 'id book_id book_title reading_date from_who content created_at',
+  coread_chapter_memory: 'book_id chapter_key chapter_title summary annotations updated_at',
   reading_finished: 'book_id book_title finished_at created_at',
   reading_checkpoints: 'session_id book_id reading_date elapsed_ms',
 };
@@ -86,6 +87,11 @@ export function exportBackup(settings = {}) {
 // Explicit migration boundary: never guess how a future/unknown version should map.
 export function migrateBackup(input) {
   if (input?.schemaVersion !== 1) invalid('Unsupported schemaVersion; a version migration is required');
+  // Schema version 1 predates chapter discussion memory. Older backups remain
+  // restorable; the new table starts empty and is included in the next export.
+  if (input?.data && !Object.prototype.hasOwnProperty.call(input.data, 'coread_chapter_memory')) {
+    return { ...input, data: { ...input.data, coread_chapter_memory: [] } };
+  }
   return input;
 }
 export function validateBackup(input) {
@@ -121,7 +127,7 @@ export function validateBackup(input) {
     if (paragraphs.has(key)) invalid('Duplicate paragraph index');
     paragraphs.add(key);
   }
-  for (const row of [...b.data.book_comments, ...b.data.book_progress]) if (!books.has(row.book_id)) invalid('Orphan book data');
+  for (const row of [...b.data.book_comments, ...b.data.book_progress, ...b.data.coread_chapter_memory]) if (!books.has(row.book_id)) invalid('Orphan book data');
   if (!Array.isArray(b.assets) || b.assets.length > 10000) invalid('Invalid assets');
   const assets = new Set();
   for (const asset of b.assets) {
@@ -155,14 +161,15 @@ export function validateBackup(input) {
 }
 
 export function previewBackup(backup) {
-  const summary = validateBackup(backup);
+  const migrated = migrateBackup(backup);
+  const summary = validateBackup(migrated);
   const now = Date.now();
   for (const [key, value] of previews) if (value.expires < now) previews.delete(key);
   if (previews.size >= 2) invalid('Close an existing preview or wait five minutes');
   const token = crypto.randomUUID();
   // Store exactly the validated bytes, detached from callers. Confirmation carries no new data.
   const db = getDb(true);
-  try { previews.set(token, { backup: JSON.stringify(backup), revision: revision(db), expires: now + 5 * 60000 }); }
+  try { previews.set(token, { backup: JSON.stringify(migrated), revision: revision(db), expires: now + 5 * 60000 }); }
   finally { db.close(); }
   return { token, ...summary };
 }

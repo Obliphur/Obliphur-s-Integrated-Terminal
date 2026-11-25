@@ -294,6 +294,7 @@ def main():
         kb_proposal_fields = tools["oit_kb_propose"]["inputSchema"]["properties"]["proposed_card"]["properties"]
         assert kb_proposal_fields["generality"]["enum"] == ["universal", "explain_first", "non_universal"]
         assert "Standard Ebooks" in tools["oit_reading_acquire"]["description"]
+        assert "章节讨论记忆" in tools["oit_reading_memory"]["description"]
         backup_url = "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice"
         acquired_urls = []
         def acquire_backup(url, valid):
@@ -301,16 +302,22 @@ def main():
             acquired_urls.append(url)
             return {"ok": True, "source_url": url, "integrity": "source_edition_structure_checked"}
         c.coread_acquire_fn = acquire_backup
+        memory_calls = []
+        c.coread_memory_fn = lambda **kwargs: memory_calls.append(kwargs) or {"memory": {"chapter_key": kwargs.get("chapter")}}
+        memory_result = bridge.handle_tool_execute({"name": "oit_reading_memory", "arguments": {
+            "action": "save", "book_id": 7, "chapter": "chapter-1", "summary": "用户认为叙述者不可靠"
+        }})
+        assert memory_result["ok"] and memory_calls[-1]["book_id"] == 7
         c.reading_mode = True
         backup_result = bridge.handle_tool_execute({"name": "oit_reading_acquire", "arguments": {"source_url": backup_url}})
         assert backup_result["ok"] and acquired_urls == [backup_url]
         c.reading_mode = False
         assert not bridge.handle_tool_execute({"name": "oit_reading_acquire", "arguments": {"source_url": backup_url}})["ok"]
         assert acquired_urls == [backup_url]
-        assert "oit_reply" in tools and tools["oit_reply"]["_meta"]["ui"]["resourceUri"] == "ui://oit/chat.html"
-        assert tools["oit_reply"]["_meta"]["com.google.antigravity/ui"]["entrypoints"][0]["type"] == "aux_pane"
-        aux_entries = [t for t in tools.values() if (t.get("_meta") or {}).get("com.google.antigravity/ui")]
-        assert len(aux_entries) == 1, f"只能有 1 个 aux_pane 入口，避免菜单出现两个 OIT Chat: {[t['name'] for t in aux_entries]}"
+        assert "oit_reply" in tools and not (tools["oit_reply"].get("_meta") or {}).get("com.google.antigravity/ui"), \
+            "A模式不再注册 OIT Chat aux_pane 侧栏入口"
+        assert "turn_id" in tools["oit_reply"]["inputSchema"]["properties"]
+        assert "turn_id" in tools["oit_get_turn_context"]["inputSchema"]["properties"]
         assert tools["oit_ui_state"]["_meta"]["ui"]["visibility"] == ["app"]
         assert "oit_get_turn_context" in tools and "oit_memory_save_auto" in tools and "oit_claudia_reference" in tools
         assert tools["oit_claudia_reference"]["annotations"]["readOnlyHint"] is True
@@ -365,8 +372,8 @@ def main():
         assert any("validate" in a for a in cmds) and any("install" in a for a in cmds)
         with open(os.path.join(mock_plugin, ".oit_data_dir"), "r", encoding="utf-8") as fh:
             assert os.path.abspath(fh.read().strip()) == os.path.abspath(tmp)
-        assert "自动部署" in antigravity_help_text(en=False) and "以 OIT 为主聊天界面" in antigravity_help_text(en=False)
-        assert "Auto-Deploy" in antigravity_help_text(en=True) and "Chatting Directly in OIT" in antigravity_help_text(en=True)
+        assert "自动部署" in antigravity_help_text(en=False) and "无状态单轮" in antigravity_help_text(en=False)
+        assert "Auto-Deploy" in antigravity_help_text(en=True) and "Stateless API-like Mode" in antigravity_help_text(en=True)
 
         # 9. 请求类事件（coread / share data）接受与拒绝回归验证
         coread_opened = []
@@ -872,42 +879,25 @@ def main():
             ss_out = json.loads(p_ss_roll.stdout)
             assert "微积分作业" in ss_out["injectSteps"][0]["systemMessage"]["systemMessage"]
 
-            # 累计 2 轮回复后，下一条 push_user_message 自动触发轮换：解绑旧会话 + 携带 archive_conversation_id
-            for idx_turn in range(2):
-                r_sub = _http_json(port, bridge.token, "/reply/submit", {
-                    "conversation_id": "conv-roll-1", "bubbles": [f"第 {idx_turn + 1} 轮回复"],
-                })
-                assert r_sub["ok"]
-                for it in r_sub["items"]:
-                    _http_json(port, bridge.token, "/ui/delivered", {"msg_id": it["id"]})
-
+            # 无状态单轮模式下 push_user_message 每次生成独立 turn_id（不再依赖旧会话轮换）
             sse_q = bridge._register_sse()
             try:
                 assert bridge.push_user_message(c.pid, "继续聊刚才的作业") is True
                 ev_name, ev_payload = sse_q.get(timeout=2)
-                assert ev_name == "user_message"
-                assert ev_payload["conversation_id"] == "", "达到轮换阈值后应让 Sidecar 新建会话"
-                assert ev_payload.get("archive_conversation_id") == "conv-roll-1", "应通知 Sidecar 归档旧会话"
-                assert not bridge.is_bound_conversation("conv-roll-1"), "旧会话应已解绑"
+                assert ev_name == "user_message" and ev_payload.get("stateless") is True and ev_payload.get("turn_id")
+                assert bridge.push_memory_compact(c.pid) is True
+                ev_mc_name, ev_mc_payload = sse_q.get(timeout=2)
+                assert ev_mc_name == "memory_compact" and ev_mc_payload.get("stateless") is True and ev_mc_payload.get("turn_id")
             finally:
                 bridge._unregister_sse(sse_q)
 
-            # 新会话绑定后首轮应收到 [OIT记忆整理提示] 与近期历史
-            _http_json(port, bridge.token, "/tool/execute", {
-                "name": "oit_bind_persona",
-                "arguments": {"conversation_id": "conv-roll-2", "force": True},
-            })
-            ctx_new = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-roll-2&consume_trigger=1&bootstrap=1")
-            assert "[OIT记忆整理提示]" in ctx_new["system_message"]
-            assert "近期对话上下文" in ctx_new["system_message"]
-
-            # 手动点击 OIT Chat 换新会话按钮 -> 发射 rollover SSE
+            # 手动调用 rollover_session -> 发射 rollover SSE（兼容旧接口）
             sse_q2 = bridge._register_sse()
             try:
                 act_roll = _http_json(port, bridge.token, "/ui/action", {"action": "rollover_session"})
-                assert act_roll["ok"] and act_roll["rolled_over"] is True and act_roll["old_cid"] == "conv-roll-2"
+                assert act_roll["ok"] and act_roll["rolled_over"] is True and act_roll["old_cid"] == "conv-roll-1"
                 ev_name2, ev_payload2 = sse_q2.get(timeout=2)
-                assert ev_name2 == "rollover" and ev_payload2["archive_conversation_id"] == "conv-roll-2"
+                assert ev_name2 == "rollover" and ev_payload2["archive_conversation_id"] == "conv-roll-1"
             finally:
                 bridge._unregister_sse(sse_q2)
 
@@ -963,6 +953,83 @@ def main():
         finally:
             bridge.rollover_max_turns = old_rmax
             bridge.rollover_compact_min_turns = old_rcomp
+
+        # 9g. 无状态单轮类 API 模式端到端验证：完整人设/记忆/系统事件历史 + turn_done 自动删除临时对话
+        c._add("sys", "[系统·联合行动] 用户放了你的鸽子。")
+        c._add("me", "我好累，先睡了凌晨再学。")
+        c._add("ai", "晚安，睡足再学。")
+        for m in c.messages[-3:]:
+            m.pop("hold", None)
+            m.pop("pending_reply", None)
+        c._add("me", "辛苦了。")
+        stateless_events = []
+        done_events = []
+        q_sl = bridge._register_sse()
+        try:
+            assert bridge.push_user_message(c.pid, "辛苦了。") is True
+            ev_name, ev_payload = q_sl.get(timeout=2)
+            stateless_events.append((ev_name, ev_payload))
+            assert ev_name == "user_message" and ev_payload.get("stateless") is True and ev_payload.get("turn_id")
+            tid = ev_payload["turn_id"]
+            sl_ctx = _http_json(port, bridge.token, f"/turn/context?turn_id={tid}&host=antigravity")
+            assert sl_ctx["ok"] and sl_ctx.get("stateless") is True and sl_ctx.get("turn_id") == tid
+            sm = sl_ctx["system_message"]
+            assert "系统事件" in sm and "放了你的鸽子" in sm, "无状态上下文必须包含关键系统事件"
+            assert "我好累，先睡了凌晨再学" in sm and "晚安，睡足再学" in sm, "无状态上下文必须包含完整近期对话"
+            assert "[OIT本轮待回复的用户消息]" in sm and "辛苦了。" in sm
+            sl_rep = _http_json(port, bridge.token, "/reply/submit", {
+                "turn_id": tid,
+                "bubbles": ["早安，睡醒了？"],
+            })
+            assert sl_rep["ok"] and len(sl_rep["items"]) == 1
+            ev2_name, ev2_payload = q_sl.get(timeout=2)
+            done_events.append((ev2_name, ev2_payload))
+            assert ev2_name == "turn_done" and ev2_payload.get("turn_id") == tid
+        finally:
+            bridge._unregister_sse(q_sl)
+
+        # 验证 Sidecar 无状态派发与 turn_done 自动删除临时对话
+        deleted_reqs = []
+        class _DelHandler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                return
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
+                deleted_reqs.append((self.path, body))
+                raw = b'{}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+        del_srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _DelHandler)
+        threading.Thread(target=del_srv.serve_forever, daemon=True).start()
+        try:
+            spawned = []
+            fake_uuid = "11111111-2222-3333-4444-555555555555"
+            with patch.dict(os.environ, {
+                "ANTIGRAVITY_LS_ADDRESS": f"127.0.0.1:{del_srv.server_address[1]}",
+                "ANTIGRAVITY_CSRF_TOKEN": "csrf-del",
+            }), patch.object(sc_mod, "_run_agentapi", side_effect=lambda a: spawned.append(a) or fake_uuid):
+                sc_mod.dispatch_event({
+                    "event": "user_message",
+                    "stateless": True,
+                    "turn_id": "t_test_1",
+                    "persona_name": "Claudia",
+                    "kind": "user_message",
+                })
+                assert spawned and spawned[0][:2] == ["agentapi", "new-conversation"]
+                assert "turn_id='t_test_1'" in spawned[0][-1]
+                # 立即以 delay_s=0 测试清理逻辑
+                with patch.object(sc_mod, "_cleanup_ephemeral_conversation",
+                                  side_effect=lambda cid, delay_s=6.0: sc_mod._conversation_rpc("DeleteConversation", {"conversationId": cid})):
+                    sc_mod.dispatch_event({"event": "turn_done", "turn_id": "t_test_1"})
+            assert deleted_reqs and deleted_reqs[0][0] == "/product.v1.ConversationService/DeleteConversation"
+            assert deleted_reqs[0][1] == {"conversationId": fake_uuid}
+        finally:
+            del_srv.shutdown()
+            del_srv.server_close()
 
         # 9f. 重启竞态回归验证：旧 Bridge stop() 不得误删新 Bridge 的 mcp_bridge.json，且误删后 ensure_discovery() 自愈
         bridge2 = OitMcpBridge(c, tmp)

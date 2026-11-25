@@ -324,6 +324,70 @@ export async function handleRequest(req, res, opts = {}) {
     return true;
   }
 
+  // GET /v1/reading-memory — chapter-scoped discussion memory, usable outside a live coread.
+  if (req.method === 'GET' && (req.url === '/v1/reading-memory' || req.url.startsWith('/v1/reading-memory?'))) {
+    if (roomGate(req, res)) return true;
+    try {
+      const url = new URL(req.url, `http://localhost:${port}`);
+      const bookId = url.searchParams.get('book_id');
+      const title = String(url.searchParams.get('book_title') || '').trim();
+      const chapter = String(url.searchParams.get('chapter') || '').trim();
+      const db = getDb(true);
+      let books = [];
+      if (bookId && /^\d+$/.test(bookId)) {
+        books = db.prepare('SELECT id, title FROM books WHERE id = ?').all(Number(bookId));
+      } else if (title) {
+        books = db.prepare('SELECT id, title FROM books WHERE title LIKE ? ORDER BY id DESC LIMIT 20').all(`%${title}%`);
+      } else {
+        books = db.prepare('SELECT id, title FROM books ORDER BY id DESC LIMIT 50').all();
+      }
+      const ids = books.map(book => book.id);
+      let memories = [];
+      let comments = [];
+      if (ids.length) {
+        const placeholders = ids.map(() => '?').join(',');
+        const params = chapter ? [...ids, chapter] : ids;
+        memories = db.prepare(`SELECT m.*, b.title AS book_title FROM coread_chapter_memory m JOIN books b ON b.id = m.book_id WHERE m.book_id IN (${placeholders})${chapter ? ' AND m.chapter_key = ?' : ''} ORDER BY m.updated_at DESC LIMIT 40`).all(...params);
+        comments = db.prepare(`SELECT c.id, c.book_id, b.title AS book_title, c.paragraph_idx, c.selected_text, c.from_who, c.content, c.created_at FROM book_comments c JOIN books b ON b.id = c.book_id WHERE c.book_id IN (${placeholders}) ORDER BY c.created_at DESC, c.id DESC LIMIT 40`).all(...ids);
+      }
+      db.close();
+      json(res, 200, { ok: true, books, memories, comments });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // POST /v1/reading-memory — upsert one chapter's live discussion summary.
+  if (req.method === 'POST' && req.url === '/v1/reading-memory') {
+    if (roomGate(req, res)) return true;
+    try {
+      const body = await readBody(req);
+      const bookId = Number(body.book_id);
+      const chapterKey = String(body.chapter || '').trim().slice(0, 120);
+      const chapterTitle = String(body.chapter_title || chapterKey).trim().slice(0, 200);
+      const summary = String(body.summary || '').trim().slice(0, 6000);
+      const annotations = String(body.annotations || '').trim().slice(0, 6000);
+      const mode = body.mode === 'append' ? 'append' : 'replace';
+      if (!Number.isInteger(bookId) || bookId < 1 || !chapterKey || (!summary && !annotations)) {
+        json(res, 400, { error: 'book_id, chapter and summary or annotations required' }); return true;
+      }
+      const db = getDb();
+      const book = db.prepare('SELECT id, title FROM books WHERE id = ?').get(bookId);
+      if (!book) { db.close(); json(res, 404, { error: 'book not found' }); return true; }
+      const previous = db.prepare('SELECT summary, annotations FROM coread_chapter_memory WHERE book_id = ? AND chapter_key = ?').get(bookId, chapterKey);
+      const join = (oldValue, nextValue) => mode === 'append' && oldValue && nextValue ? `${oldValue}\n${nextValue}`.slice(-6000) : (nextValue || (mode === 'append' ? oldValue : ''));
+      const nextSummary = join(previous?.summary || '', summary);
+      const nextAnnotations = join(previous?.annotations || '', annotations);
+      db.prepare(`INSERT INTO coread_chapter_memory (book_id, chapter_key, chapter_title, summary, annotations, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(book_id, chapter_key) DO UPDATE SET chapter_title=excluded.chapter_title, summary=excluded.summary, annotations=excluded.annotations, updated_at=excluded.updated_at`).run(
+        bookId, chapterKey, chapterTitle, nextSummary, nextAnnotations);
+      const memory = db.prepare('SELECT m.*, b.title AS book_title FROM coread_chapter_memory m JOIN books b ON b.id = m.book_id WHERE m.book_id = ? AND m.chapter_key = ?').get(bookId, chapterKey);
+      db.close();
+      json(res, 200, { ok: true, memory });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
   // GET /v1/books
   if (req.method === 'GET' && req.url === '/v1/books') {
     try {
@@ -754,6 +818,7 @@ export async function handleRequest(req, res, opts = {}) {
       const book = db.prepare('SELECT id FROM books WHERE id = ?').get(id);
       if (!book) { db.close(); json(res, 404, { error: 'book not found' }); return true; }
       db.prepare('DELETE FROM book_comments WHERE book_id = ?').run(id);
+      db.prepare('DELETE FROM coread_chapter_memory WHERE book_id = ?').run(id);
       db.prepare('DELETE FROM book_paragraphs WHERE book_id = ?').run(id);
       db.prepare('DELETE FROM book_progress WHERE book_id = ?').run(id);
       clearBrowserPagination(db, id);

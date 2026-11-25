@@ -29,8 +29,9 @@ SESSIONS_FILE = "mcp_sessions.json"
 BRIDGE_PROTOCOL = 1
 BODY_MAX = 4 * 1024 * 1024
 SSE_HEARTBEAT_S = 15.0
-BRIDGE_HANDOFF_MSGS = 24
-BRIDGE_HANDOFF_CHARS = 8000
+BRIDGE_HANDOFF_MSGS = 48
+BRIDGE_HANDOFF_CHARS = 16000
+STATELESS_TURN_TTL_MS = 2 * 3600 * 1000
 ROLLOVER_MAX_TURNS = 40
 ROLLOVER_NEW_DAY_TURNS = 12
 ROLLOVER_COMPACT_MIN_TURNS = 10
@@ -196,7 +197,7 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
 
 def _recent_history_block(comm_obj, max_msgs: int = BRIDGE_HANDOFF_MSGS,
                           max_chars: int = BRIDGE_HANDOFF_CHARS) -> str:
-    """提取最近 N 条已送达的对话记录，用于新 Antigravity 会话无缝续接上下文。"""
+    """提取最近 N 条完整对话记录（含桌面端、手机端与关键系统事件），作为 OIT 单一真相源注入无状态单轮上下文。"""
     msgs = getattr(comm_obj, "messages", None)
     if not isinstance(msgs, list) or not msgs:
         return ""
@@ -206,18 +207,29 @@ def _recent_history_block(comm_obj, max_msgs: int = BRIDGE_HANDOFF_MSGS,
         if not isinstance(m, dict):
             continue
         role = m.get("role")
-        if role not in ("me", "ai"):
+        if role not in ("me", "ai", "sys"):
             continue
         if m.get("hold") or "pending_reply" in m:
             continue
         text = str(m.get("text") or "").strip()
-        if not text:
-            continue
-        if len(text) > 600:
-            text = text[:420] + "…" + text[-150:]
+        if role == "sys":
+            # 跳过纯日程主动触发/重试模板提示，保留联合行动、网络、共读、切断、共享数据等真实事件记录
+            if not text:
+                continue
+            if text.startswith("[系统] 按你的日程") or "你刚从专注 / 睡眠里出来" in text:
+                continue
+            if len(text) > 400:
+                text = text[:300] + "…" + text[-80:]
+        else:
+            img_tag = " [附带图片]" if m.get("img") else ""
+            if not text and not img_tag:
+                continue
+            if len(text) > 800:
+                text = text[:580] + "…" + text[-180:]
+            text = (text + img_tag).strip()
         at = str(m.get("at") or "")
         stamp = at[5:16].replace("T", " ") if len(at) >= 16 else ""
-        who = "用户" if role == "me" else pname
+        who = "用户" if role == "me" else (pname if role == "ai" else "系统事件")
         line = f"[{stamp}] {who}: {text}" if stamp else f"{who}: {text}"
         selected.append(line)
     if not selected:
@@ -265,6 +277,7 @@ class OitMcpBridge:
         self._lock = threading.RLock()
         self._sse_clients = []          # list[queue.Queue]
         self._pending_triggers = {}     # key (conversation_id or persona_id) -> dict
+        self._turns = {}                # turn_id -> dict (无状态单轮请求上下文，类 API 调用模式)
         self._interrupted = {}          # persona_id -> {"count": int, "ts": int}
         self._uploads = {}              # upload_id -> {"path": str, "mime": str, "name": str}
         self._recent_user_ms = {}       # conversation_id -> int
@@ -664,23 +677,72 @@ class OitMcpBridge:
                 lines.append(f"[{at_s}] {line_txt}" if at_s else line_txt)
         return "\n".join(lines), images
 
+    def _prune_turns(self):
+        cutoff = _now_ms() - STATELESS_TURN_TTL_MS
+        with self._lock:
+            stale = [k for k, v in self._turns.items() if int(v.get("created_ms") or 0) < cutoff]
+            for k in stale:
+                self._turns.pop(k, None)
+
+    def _active_model_hint(self) -> str:
+        try:
+            ai = getattr(self.comm, "ai", None)
+            prof = (getattr(ai, "profiles", None) or {}).get("antigravity") or {}
+            model = str(prof.get("model") or "").strip()
+            if model and model not in ("订阅模型", "subscription", "auto"):
+                return model
+        except Exception:
+            pass
+        return ""
+
+    def _ensure_persona_by_pid(self, pid: str) -> str:
+        pid = str(pid or "").strip()
+        if pid and pid != getattr(self.comm, "pid", "") and hasattr(self.comm, "set_persona"):
+            name = self._persona_name_by_pid(pid)
+            if name:
+                self.comm.set_persona(name)
+        return str(getattr(self.comm, "pid", "") or pid)
+
+    def _make_turn(self, persona_id: str, kind: str, user_text: str = "",
+                   api_context: str = "", held_messages: str = "",
+                   image_path: str = "", trigger_body: str = "",
+                   extra: dict = None) -> dict:
+        self._prune_turns()
+        now_ms = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
+        turn_id = f"t_{now_ms}_{secrets.token_hex(4)}"
+        pid = str(persona_id or getattr(self.comm, "pid", "") or "").strip()
+        pname = self._persona_name_by_pid(pid) or _display_persona_name(self.comm)
+        if pname:
+            try:
+                from comm.comm_persona import persona_title
+                pname = str(persona_title(pname) or pname)
+            except Exception:
+                pname = os.path.splitext(pname)[0]
+        turn = {
+            "turn_id": turn_id,
+            "persona_id": pid,
+            "persona_name": pname,
+            "kind": str(kind or "user_message"),
+            "user_text": str(user_text or "").strip(),
+            "api_context": str(api_context or "").strip(),
+            "held_messages": str(held_messages or "").strip(),
+            "image_path": str(image_path or "").strip(),
+            "trigger_body": str(trigger_body or "").strip(),
+            "extra": dict(extra or {}),
+            "created_ms": now_ms,
+            "conversation_id": "",
+        }
+        with self._lock:
+            self._turns[turn_id] = turn
+        return turn
+
     # ── 主动触发与事件推送 ──
     def push_proactive(self, persona_id: str, body: str, kind: str = "proactive",
                        extra: dict = None) -> dict:
-        """OIT 状态机命中主动对话/后台事件时调用：暂存完整系统指令并推送极简 SSE 信号给 Sidecar。"""
+        """OIT 状态机命中主动对话/后台事件时调用：创建无状态单轮请求并推送 SSE 信号给 Sidecar。"""
         now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
         display_time = f"{now:%H:%M}"
         cid = self._conversation_for_persona(persona_id)
-        if (extra or {}).get("bg") and not cid:
-            return {"event": "proactive", "skipped": "unbound_background_persona", "persona_id": persona_id}
-        archive_cid = ""
-        with self._lock:
-            has_client = bool(self._sse_clients)
-        if cid and has_client and self._should_rollover(cid, now):
-            r_info = self._prepare_rollover(persona_id, now)
-            if r_info["rolled_over"]:
-                archive_cid = r_info["old_cid"]
-                cid = ""
         key = cid or persona_id or "*"
         entry_ts = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
         held_txt, held_imgs = self._unreplied_user_messages(persona_id)
@@ -691,9 +753,18 @@ class OitMcpBridge:
                 + "\n请先使用 read_file 工具查看图片内容。"
             )
             body_txt = f"{body_txt}\n\n{img_note}".strip() if body_txt else img_note
+        turn = self._make_turn(
+            persona_id=persona_id,
+            kind=kind,
+            held_messages=held_txt,
+            image_path=held_imgs[-1] if held_imgs else "",
+            trigger_body=body_txt,
+            extra=extra,
+        )
         entry = {
             "persona_id": persona_id,
             "conversation_id": cid,
+            "turn_id": turn["turn_id"],
             "kind": kind,
             "body": body_txt,
             "held_messages": held_txt,
@@ -706,20 +777,42 @@ class OitMcpBridge:
             self._pending_triggers[key] = entry
         event = {
             "event": "proactive",
+            "stateless": True,
+            "turn_id": turn["turn_id"],
             "persona_id": persona_id,
-            "persona_name": self._persona_name_by_pid(persona_id) or _display_persona_name(self.comm),
+            "persona_name": turn["persona_name"] or _display_persona_name(self.comm),
             "conversation_id": cid,
             "kind": kind,
             "display_time": display_time,
+            "model": self._active_model_hint(),
             "ts": entry["ts"],
         }
-        if archive_cid:
-            event["archive_conversation_id"] = archive_cid
         self._emit_sse("proactive", event)
         return event
 
+    def push_memory_compact(self, persona_id: str = "") -> bool:
+        """在 Antigravity 无状态模式下发起一次独立的记忆卡整理单轮请求。"""
+        with self._lock:
+            has_client = bool(self._sse_clients)
+        if not has_client:
+            return False
+        pid = str(persona_id or getattr(self.comm, "pid", "") or "").strip()
+        turn = self._make_turn(persona_id=pid, kind="memory_compact")
+        payload = {
+            "event": "memory_compact",
+            "stateless": True,
+            "turn_id": turn["turn_id"],
+            "persona_id": pid,
+            "persona_name": turn["persona_name"] or _display_persona_name(self.comm),
+            "kind": "memory_compact",
+            "model": self._active_model_hint(),
+            "ts": turn["created_ms"],
+        }
+        self._emit_sse("memory_compact", payload)
+        return True
+
     def unbind_persona(self, persona_id: str) -> list:
-        """清空对话时解绑该人设的旧 Antigravity 会话并清理暂存状态，下次发言由 Sidecar 懒创建全新会话。"""
+        """清空对话时解绑该人设的旧 Antigravity 会话并清理暂存状态。"""
         pid = str(persona_id or getattr(self.comm, "pid", "") or "").strip()
         if not pid:
             return []
@@ -737,6 +830,8 @@ class OitMcpBridge:
                 self._delta_state.pop(key, None)
                 self._last_bind_ms.pop(key, None)
                 self._rollover_hinted.discard(key)
+            for tid in [k for k, v in self._turns.items() if v.get("persona_id") == pid]:
+                self._turns.pop(tid, None)
             self._pending_compact.discard(pid)
             self._interrupted.pop(pid, None)
             self._last_batch.pop(pid, None)
@@ -750,27 +845,18 @@ class OitMcpBridge:
     def push_user_message(self, persona_id: str, text: str, api_context: str = "",
                           trigger_kind: str = "user_attachment", held_messages: str = "",
                           image_path: str = "") -> bool:
-        """用户在 OIT 桌面端或同步手机端直接发消息时，转发给 Sidecar 唤醒对应 Antigravity 对话（未绑定或需轮换时由 Sidecar 自动新建会话并绑定）；返回是否有活跃 Sidecar 接收。"""
+        """用户在 OIT 桌面端或同步手机端发消息时，创建无状态单轮请求并推送给 Sidecar；返回是否有活跃 Sidecar 接收。"""
         if not str(text or "").strip():
             return False
-        now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
         cid = self._conversation_for_persona(persona_id)
-        pname = _display_persona_name(self.comm) or self._persona_name_by_pid(persona_id)
         now_ms = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
         img_path = str(image_path or "").strip()
-        archive_cid = ""
         with self._lock:
             has_client = bool(self._sse_clients)
-        if cid and has_client and self._should_rollover(cid, now):
-            r_info = self._prepare_rollover(persona_id, now)
-            if r_info["rolled_over"]:
-                archive_cid = r_info["old_cid"]
-                cid = ""
-        with self._lock:
-            self._pending_answer_images.pop(cid, None)
-            for key in [key for key in self._answer_image_context if key[0] == cid]:
-                self._answer_image_context.pop(key, None)
-            has_client = bool(self._sse_clients)
+            if cid:
+                self._pending_answer_images.pop(cid, None)
+                for key in [key for key in self._answer_image_context if key[0] == cid]:
+                    self._answer_image_context.pop(key, None)
             body_txt = str(api_context or "").strip()
             if img_path and img_path not in body_txt:
                 img_note = (
@@ -781,11 +867,20 @@ class OitMcpBridge:
                 )
                 body_txt = f"{body_txt}\n\n{img_note}".strip() if body_txt else img_note
             held_txt = str(held_messages or "").strip()
+            turn = self._make_turn(
+                persona_id=persona_id,
+                kind=str(trigger_kind or "user_message"),
+                user_text=str(text).strip(),
+                api_context=body_txt,
+                held_messages=held_txt,
+                image_path=img_path,
+            )
             if body_txt or held_txt:
                 key = cid or persona_id or "*"
                 self._pending_triggers[key] = {
                     "persona_id": persona_id,
                     "conversation_id": cid,
+                    "turn_id": turn["turn_id"],
                     "kind": str(trigger_kind or "user_attachment"),
                     "body": body_txt,
                     "held_messages": held_txt,
@@ -798,15 +893,17 @@ class OitMcpBridge:
             return False
         payload = {
             "event": "user_message",
+            "stateless": True,
+            "turn_id": turn["turn_id"],
             "persona_id": persona_id,
-            "persona_name": pname,
+            "persona_name": turn["persona_name"] or _display_persona_name(self.comm),
             "conversation_id": cid,
+            "kind": str(trigger_kind or "user_message"),
             "text": str(text).strip(),
             "image_path": img_path,
+            "model": self._active_model_hint(),
             "ts": now_ms,
         }
-        if archive_cid:
-            payload["archive_conversation_id"] = archive_cid
         self._emit_sse("user_message", payload)
         return True
 
@@ -1080,6 +1177,7 @@ class OitMcpBridge:
 
     def handle_turn_context(self, qs: dict) -> dict:
         cid = str(qs.get("conversation_id") or "").strip()
+        turn_id = str(qs.get("turn_id") or "").strip()
         consume = str(qs.get("consume_trigger") or "1") not in ("0", "false", "False")
         only_bound = str(qs.get("only_bound") or "0") in ("1", "true", "True")
         delta = str(qs.get("delta") or "0") in ("1", "true", "True")
@@ -1088,14 +1186,23 @@ class OitMcpBridge:
         last_input = str(qs.get("last_user_input") or "")
 
         def work():
-            if only_bound and not self.is_bound_conversation(cid):
+            turn = None
+            if turn_id:
+                with self._lock:
+                    turn = self._turns.get(turn_id)
+                    if turn and cid and not turn.get("conversation_id"):
+                        turn["conversation_id"] = cid
+            if only_bound and not turn and not self.is_bound_conversation(cid):
                 return {
                     "ok": True,
                     "bound": False,
                     "conversation_id": cid,
                     "system_message": "",
                 }
-            pid = self._ensure_persona_for_conversation(cid)
+            if turn and turn.get("persona_id"):
+                pid = self._ensure_persona_by_pid(turn["persona_id"])
+            else:
+                pid = self._ensure_persona_for_conversation(cid)
             sess_meta = self._sessions_map().get(cid) if cid else None
             eff_host = host or (sess_meta.get("host") if isinstance(sess_meta, dict) else "") or "antigravity"
             now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
@@ -1105,29 +1212,57 @@ class OitMcpBridge:
             with self._lock:
                 for key in (cid, pid, "*"):
                     if key and key in self._pending_triggers:
-                        trigger = self._pending_triggers.pop(key) if consume else dict(self._pending_triggers[key])
+                        if turn and self._pending_triggers[key].get("turn_id") == turn_id:
+                            trigger = self._pending_triggers.pop(key) if consume else dict(self._pending_triggers[key])
+                        elif not turn:
+                            trigger = self._pending_triggers.pop(key) if consume else dict(self._pending_triggers[key])
                         break
                 interrupted = self._interrupted.pop(pid, None) if consume else self._interrupted.get(pid)
-                if cid and not trigger:
+                if cid and not trigger and not turn:
                     self._recent_user_ms[cid] = _now_ms()
 
             routes = self._subagent_routes(eff_host)
-            head = f"[OIT动态状态] {now:%Y-%m-%d %H:%M} | {_display_persona_name(self.comm)}"
+            try:
+                from comm.comm_util import WEEKDAY
+                wd = WEEKDAY[now.weekday()]
+            except Exception:
+                wd = ""
+            head = f"[OIT动态状态] {now:%Y-%m-%d} {wd} {now:%H:%M} | {_display_persona_name(self.comm)}".replace("  ", " ")
             lines = []
-            # 新绑定会话尚未经过 SessionStart 注入时，在首轮动态上下文（delta/bootstrap）中一次性补齐人设、记忆卡与近期历史
-            need_bootstrap = bool(
-                (delta or bootstrap) and cid and self.is_bound_conversation(cid)
-                and cid not in self._bootstrapped_cids
-            )
-            if need_bootstrap:
-                boot_txt = self._persona_bootstrap_text()
-                if boot_txt:
-                    lines.append(boot_txt)
-                if consume:
-                    with self._lock:
-                        self._bootstrapped_cids.add(cid)
+            # 无状态单轮模式（turn_id）：每轮始终下发完整人设、记忆卡、用户背景、联合行动说明与 OIT 完整近期历史（单一真相源）
+            if turn:
+                info = self._persona_bootstrap_payload()
+                if info.get("system_prompt"):
+                    lines.append(str(info["system_prompt"]))
+                if info.get("memory_block"):
+                    lines.append("记忆卡:\n" + str(info["memory_block"]))
+                who = str(self.comm.cfg.get("user_profile") or "").strip()[:2000]
+                if who:
+                    lines.append("以下是用户的身份背景(用户自己填写):\n" + who)
+                if hasattr(self.comm, "joint_system_note"):
+                    jnote = str(self.comm.joint_system_note() or "").strip()
+                    if jnote:
+                        lines.append(jnote)
+                if info.get("recent_history"):
+                    lines.append(
+                        "近期完整对话记录（来自 OIT，包含桌面端、手机端与系统事件，按时间顺序；请以此作为唯一对话上下文，绝不编造未发生的对话）:\n"
+                        + str(info["recent_history"])
+                    )
+            else:
+                # 兼容旧版绑定会话：尚未注入人设时在 delta/bootstrap 中一次性补齐
+                need_bootstrap = bool(
+                    (delta or bootstrap) and cid and self.is_bound_conversation(cid)
+                    and cid not in self._bootstrapped_cids
+                )
+                if need_bootstrap:
+                    boot_txt = self._persona_bootstrap_text()
+                    if boot_txt:
+                        lines.append(boot_txt)
+                    if consume:
+                        with self._lock:
+                            self._bootstrapped_cids.add(cid)
 
-            use_delta = bool(delta and consume and cid)
+            use_delta = bool(delta and consume and cid and not turn)
             prev_delta = dict(self._delta_state.get(cid) or {}) if use_delta else {}
             cur_delta = {}
 
@@ -1144,9 +1279,10 @@ class OitMcpBridge:
                         "burst_until": int(d_inter.get("burst_until") or 0),
                         "shame": bool(d_inter.get("shame_turns")),
                     }
+                tk = (turn.get("kind") if turn else (trigger.get("kind") if trigger else "user"))
                 judge_kind = (
                     "user"
-                    if (not trigger or trigger.get("kind") in ("user_attachment", "user", "retry"))
+                    if tk in ("user", "user_message", "user_attachment", "retry", "chat")
                     else "proactive"
                 )
                 inter_lines = _compact_interaction_lines(self.comm, pid, status, judge_kind)
@@ -1160,7 +1296,7 @@ class OitMcpBridge:
                     if r_note and (not use_delta or prev_delta.get("realism") != r_note):
                         lines.append(r_note)
 
-            # 增量下发尚未送达 Antigravity 的 share data 页面数据（role="sys"），供悬浮窗聊天与结束总结使用
+            # 增量下发尚未送达的 share data 页面数据（role="sys"）
             from comm.comm_const import SHARE_TAG
             with self._lock:
                 last_share_ts = int(self._share_sent_ts.get(pid) or 0)
@@ -1190,7 +1326,43 @@ class OitMcpBridge:
                 lines.append(
                     f"[OIT插话撤销] 上一轮回复有 {interrupted['count']} 条待发气泡尚未弹出即被用户新消息打断并作废，请勿假设用户看到了未发出的内容。"
                 )
-            if trigger:
+
+            if turn:
+                tkind = turn.get("kind") or "user_message"
+                if tkind == "memory_compact":
+                    lines.append(
+                        "[OIT记忆整理任务] 请调用隔离子代理 oit-memory-compact，结合上方现有记忆卡与近期完整对话记录，"
+                        "整理压缩为简洁准确的长期记忆，并通过 oit_memory_save_auto(text=..., turn_id="
+                        f"{turn_id!r}) 保存。整理过程对用户完全静默，不要调用 oit_reply，完成后输出 ✓。"
+                    )
+                else:
+                    if turn.get("held_messages"):
+                        if tkind in ("retry", "user", "user_message", "user_attachment"):
+                            lines.append(f"[OIT忙碌期间用户消息]\n{turn['held_messages']}")
+                        else:
+                            lines.append(
+                                "[OIT未回复的用户消息]（对方此前忙碌/延迟未送达的消息，本轮主动谈话时请一并知悉并自然回应）\n"
+                                f"{turn['held_messages']}"
+                            )
+                    elif turn.get("user_text"):
+                        lines.append(f"[OIT本轮待回复的用户消息]\n{turn['user_text']}")
+                    if turn.get("api_context"):
+                        if tkind == "retry":
+                            lines.append(f"[OIT延迟回复说明] {turn['api_context']}")
+                        else:
+                            lines.append(f"[OIT本轮附加请求]\n{turn['api_context']}")
+                    if turn.get("trigger_body"):
+                        if tkind == "retry":
+                            lines.append(f"[OIT延迟回复说明] {turn['trigger_body']}")
+                        else:
+                            lines.append(f"[OIT主动触发] {turn['trigger_body']}")
+                    if turn.get("image_path") and turn["image_path"] not in "\n".join(lines):
+                        lines.append(
+                            f"用户随本轮消息发送了图片文件：{turn['image_path']}\n"
+                            "请先使用 read_file 工具查看图片内容；若涉及学科题目并调用 oit-subject 子代理，"
+                            "必须将该图片完整路径一并写入子代理 Prompt。"
+                        )
+            elif trigger:
                 if trigger.get("held_messages") and not trigger.get("delivered_via_sse"):
                     if trigger.get("kind") in ("retry", "user", "user_attachment"):
                         lines.append(f"[OIT忙碌期间用户消息]\n{trigger['held_messages']}")
@@ -1226,21 +1398,20 @@ class OitMcpBridge:
                 )
 
             # 心理风险信号检测与子代理路由指示
-            mental_hint = ""
-            if last_input and hasattr(self.comm, "_mental_trigger"):
+            mental_check_txt = last_input or (turn.get("user_text") or turn.get("held_messages") if turn else "")
+            if mental_check_txt and hasattr(self.comm, "_mental_trigger"):
                 try:
-                    m_reason = self.comm._mental_trigger(last_input)
+                    m_reason = self.comm._mental_trigger(mental_check_txt)
                 except Exception:
                     m_reason = ""
                 if m_reason:
                     m_route = routes.get("mental_health", {})
                     if m_route.get("mode") == "host_subagent":
-                        mental_hint = (
+                        lines.append(
                             "[OIT安全提示] 检测到心理困扰/风险信号。在调用 oit_reply 回复用户之前，"
                             "必须先调用子代理 oit-mental-health（传入本次用户原话），拿到内部评估后再按人设组织回复，"
                             "且绝不可向用户提及子代理。"
                         )
-                        lines.append(mental_hint)
 
             non_default_routes = [
                 f"{r}={v['mode']}" for r, v in routes.items() if v.get("mode") != "host_subagent"
@@ -1256,43 +1427,20 @@ class OitMcpBridge:
             if not use_delta or prev_delta.get("answer_images") != ans_img_line:
                 lines.append(ans_img_line)
 
-            # 会话自动轮换后，触发一次隔离的长期记忆整理子代理
-            need_compact = False
-            with self._lock:
-                if pid in self._pending_compact:
-                    need_compact = True
-                    if consume:
-                        self._pending_compact.discard(pid)
-            if need_compact:
-                mc_mode = (routes.get("memory_compact") or {}).get("mode", "host_subagent")
-                if mc_mode == "host_subagent":
-                    lines.append(
-                        "[OIT记忆整理提示] 本人设刚刚完成会话轮换以释放上下文。"
-                        "请调用隔离子代理 oit-memory-compact，将旧记忆卡与近期对话上下文压缩为简洁长期记忆并由其调用 oit_memory_save_auto 保存；"
-                        "整理过程对用户完全静默，绝不可向用户提及记忆整理或换会话。"
-                    )
+            if turn_id:
+                lines.append(f"[OIT单轮提交] 回复时请调用 oit_reply(turn_id={turn_id!r}, bubbles=[...])，完成后仅输出 ✓ 结束。")
 
-            # 若用户直接在 Antigravity 内长期聊天超过阈值（未经过 OIT 转发），提醒一次可整理换新
-            if cid and self._should_rollover(cid, now):
-                with self._lock:
-                    hinted = cid in self._rollover_hinted
-                    if not hinted and consume:
-                        self._rollover_hinted.add(cid)
-                if not hinted:
-                    turns = int((sess_meta or {}).get("turns") or 0)
-                    lines.append(
-                        f"[OIT会话轮换提示] 当前对话已累计 {turns} 轮，上下文较长。"
-                        "你可在不打扰聊天节奏的前提下提示用户点击 OIT Chat 顶部的换新会话按钮（🔄）以自动整理记忆并切换到轻量新对话。"
-                    )
-
-            if consume and cid:
+            if consume and cid and not turn:
                 with self._lock:
                     self._delta_state[cid] = cur_delta
 
             return {
                 "ok": True,
+                "stateless": bool(turn),
+                "turn_id": turn_id,
                 "conversation_id": cid,
                 "persona_id": pid,
+                "persona_name": _display_persona_name(self.comm),
                 "now": now.isoformat(timespec="seconds"),
                 "status": {k: (v.isoformat(timespec="seconds") if isinstance(v, datetime) else v) for k, v in (status or {}).items()},
                 "trigger": trigger,
@@ -1305,8 +1453,10 @@ class OitMcpBridge:
     def handle_tool_execute(self, body: dict) -> dict:
         name = str(body.get("name") or "").strip()
         args = body.get("arguments") if isinstance(body.get("arguments"), dict) else {}
+        turn_id = str(body.get("turn_id") or args.get("turn_id") or "").strip()
         cid = str(body.get("conversation_id") or args.get("conversation_id") or
                   self._conversation_for_persona(getattr(self.comm, "pid", "")) or "").strip()
+        scope_key = turn_id or cid
         host = str(body.get("host") or "antigravity").strip()
 
         def _latest_user_image():
@@ -1335,7 +1485,7 @@ class OitMcpBridge:
                 image = _latest_user_image()
                 ctx = {"domain": domain, "session": session, "question": question,
                        "answer": "", "image": image, "ts": _now_ms()}
-                self._answer_image_context[(cid, session)] = ctx
+                self._answer_image_context[(scope_key, session)] = ctx
                 if route.get("mode") != "external_api":
                     from knowledge import get_knowledge
                     from knowledge.kb_ai import mode_prompt, exclusions, generality_instruction
@@ -1383,7 +1533,7 @@ class OitMcpBridge:
                 styled = str(args.get("styled_answer") or "").strip()[:8000]
                 if not original or not styled:
                     return {"done": {"ok": False, "error": "answer 和 styled_answer 均不能为空"}}
-                context = self._answer_image_context.get((cid, session), {})
+                context = self._answer_image_context.get((scope_key, session)) or self._answer_image_context.get((cid, session), {})
                 if context and context.get("domain") != domain:
                     return {"done": {"ok": False, "error": "domain 与本轮 oit_subject 不匹配"}}
                 if use_external and not context:
@@ -1437,11 +1587,12 @@ class OitMcpBridge:
                     self.comm.log(f"MCP ANSWER_IMAGE renderer unavailable: {detail}" if detail else "MCP ANSWER_IMAGE renderer unavailable")
                     return {"ok": False, "error": "本机无法生成解答图片；请正常提交文字回复。"}
                 def commit_answer_image():
-                    self._pending_answer_images[cid] = {
+                    self._pending_answer_images[scope_key] = {
                         "data": data, "ts": _now_ms(), "session": prep["session"],
                         "text": styled or original,
                         "kb_citations": citations,
                     }
+                    self._answer_image_context.pop((scope_key, prep["session"]), None)
                     self._answer_image_context.pop((cid, prep["session"]), None)
                     return {"ok": True, "ready": True,
                             "instruction": "解答图片已准备好；请随即调用 oit_reply，图片会作为独立气泡发送（可在 bubbles 中用 \"<oit_answer_image>\" 指定发图位置，前后均可加一句话作为独立气泡）。"}
@@ -1608,8 +1759,22 @@ class OitMcpBridge:
                     return {"ok": False, "error": "text required"}
                 self.comm.cfg["mem_auto"] = text[:4000]
                 self.comm.cfg["mem_ts"] = _now_ms()
+                latest_ts = max([int(m.get("ts") or 0) for m in self.comm.messages if m.get("role") in ("me", "ai")] or [0])
+                if latest_ts > int(self.comm.cfg.get("mem_upto") or 0):
+                    self.comm.cfg["mem_upto"] = latest_ts
                 self.comm.save_cfg()
                 self.comm._changed()
+                if turn_id:
+                    with self._lock:
+                        t_info = self._turns.pop(turn_id, None)
+                    done_cid = cid or (t_info.get("conversation_id") if t_info else "")
+                    self._emit_sse("turn_done", {
+                        "event": "turn_done",
+                        "turn_id": turn_id,
+                        "conversation_id": done_cid,
+                        "persona_id": getattr(self.comm, "pid", ""),
+                        "ts": _now_ms(),
+                    })
                 return {"ok": True}
 
             if name == "oit_music_catalog":
@@ -1634,6 +1799,24 @@ class OitMcpBridge:
                 if hasattr(self.comm, "_joint_offer_payload"):
                     return {"ok": True, "data": self.comm._joint_offer_payload()}
                 return {"ok": True, "data": self.comm.info_fn("contract")}
+
+            if name == "oit_reading_memory":
+                fn = getattr(self.comm, "coread_memory_fn", None)
+                if not fn:
+                    return {"ok": False, "error": "共读书库服务不可用"}
+                action = str(args.get("action") or "lookup")
+                if action == "save" and (not args.get("book_id") or not args.get("chapter")):
+                    return {"ok": False, "error": "保存章节记忆需要book_id和chapter"}
+                try:
+                    result = fn(action=action, book_id=args.get("book_id"), book_title=args.get("book_title", ""),
+                                chapter=args.get("chapter", ""), chapter_title=args.get("chapter_title", ""),
+                                summary=args.get("summary", ""), annotations=args.get("annotations", ""),
+                                mode=args.get("mode", "replace"))
+                    return {"ok": True, **(result if isinstance(result, dict) else {"data": result}),
+                            "instruction": ("共读记忆已更新；继续围绕当前章节自然回复。" if action == "save"
+                                             else "若书名与当前讨论相关，请只使用返回的章节记忆和批注作为依据。")}
+                except Exception as error:
+                    return {"ok": False, "error": str(error)[:500]}
 
             if name == "oit_reading_books":
                 if not getattr(self.comm, "reading_mode", False):
@@ -1663,18 +1846,42 @@ class OitMcpBridge:
         return self._call_main(work)
 
     def handle_reply_submit(self, body: dict) -> dict:
-        """oit_reply 提交：切分气泡进入 OIT 待发队列，返回给 aux_pane 按延时逐条弹出。"""
+        """oit_reply 提交：切分气泡进入 OIT 待发队列并同步到 OIT / 安卓端；无状态单轮完成后通知 Sidecar 清理临时对话。"""
         def work():
             if self.comm.hard_block():
                 return {"ok": False, "error": "当前处于禁止沟通状态"}
-            cid = str(body.get("conversation_id") or
+            turn_id = str(body.get("turn_id") or "").strip()
+            turn = None
+            if turn_id:
+                with self._lock:
+                    turn = self._turns.pop(turn_id, None)
+            cid = str(body.get("conversation_id") or (turn.get("conversation_id") if turn else "") or
                       self._conversation_for_persona(getattr(self.comm, "pid", "")) or "").strip()
-            pid = self._ensure_persona_for_conversation(cid) if cid else self._persona_for_conversation(cid)
+            scope_key = turn_id or cid
+            if turn and turn.get("persona_id"):
+                pid = self._ensure_persona_by_pid(turn["persona_id"])
+            else:
+                pid = self._ensure_persona_for_conversation(cid) if cid else self._persona_for_conversation(cid)
+
+            def _emit_turn_done():
+                if turn_id:
+                    self._emit_sse("turn_done", {
+                        "event": "turn_done",
+                        "turn_id": turn_id,
+                        "conversation_id": cid,
+                        "persona_id": pid,
+                        "ts": _now_ms(),
+                    })
+
             if body.get("silent"):
+                self._pending_answer_images.pop(scope_key, None)
                 self._pending_answer_images.pop(cid, None)
+                _emit_turn_done()
                 return {"ok": True, "silent": True, "batch_id": "", "items": []}
             if body.get("refuse"):
+                self._pending_answer_images.pop(scope_key, None)
                 self._pending_answer_images.pop(cid, None)
+                _emit_turn_done()
                 return {"ok": True, "refuse": True, "batch_id": "", "items": []}
 
             raw_bubbles = body.get("bubbles")
@@ -1707,11 +1914,11 @@ class OitMcpBridge:
             req_ts = max([int(x.get("ts") or 0) for x in self.comm.messages if x.get("role") == "me"] or [0])
             self.comm._req_ts = max(int(getattr(self.comm, "_req_ts", 0) or 0), req_ts, now_ts)
             blocked_now = bool(callable(getattr(self.comm, "blocked", None)) and self.comm.blocked())
-            answer_image = self._pending_answer_images.pop(cid, None)
+            answer_image = self._pending_answer_images.pop(scope_key, None) or self._pending_answer_images.pop(cid, None)
             if answer_image:
                 citation_ids.extend(c["card_id"] for c in answer_image.get("kb_citations", []))
-            for (context_cid, _), context in self._answer_image_context.items():
-                if context_cid == cid and _now_ms() - context.get("ts", 0) <= 600000:
+            for (context_key, _), context in self._answer_image_context.items():
+                if context_key in (scope_key, cid) and _now_ms() - context.get("ts", 0) <= 600000:
                     citation_ids.extend(c["card_id"] for c in context.get("kb_citations", []))
             citations = kb.resolve_citations(citation_ids)
             attach_answer_image = bool(
@@ -1873,6 +2080,7 @@ class OitMcpBridge:
             self.comm._changed()
             if hasattr(self.comm, "_push"):
                 self.comm._push()
+            _emit_turn_done()
             return {
                 "ok": True,
                 "batch_id": batch_id,
@@ -2216,36 +2424,34 @@ def deploy_antigravity_plugin(data_dir: str, on_progress=None, plugin_dir: str =
     node_exe = _find_tool("node")
 
     server_dir = os.path.join(pdir, "server")
-    ui_dir = os.path.join(pdir, "ui")
-    need_server = not os.path.isfile(os.path.join(server_dir, "dist", "index.js"))
-    need_ui = not os.path.isfile(os.path.join(ui_dir, "dist", "index.html"))
+    server_dist = os.path.join(server_dir, "dist", "index.js")
+    need_server = not os.path.isfile(server_dist)
+    if not need_server:
+        try:
+            dist_mtime = os.path.getmtime(server_dist)
+            for src_name in ("index.ts", "bridge.ts"):
+                src_p = os.path.join(server_dir, "src", src_name)
+                if os.path.isfile(src_p) and os.path.getmtime(src_p) > dist_mtime:
+                    need_server = True
+                    break
+        except OSError:
+            pass
     steps_done = ["已绑定 OIT 数据目录"]
 
-    if need_server or need_ui:
+    if need_server:
         if not node_exe or not npm_exe:
             return {"ok": False, "error": "未检测到 Node.js / npm，请先安装 Node.js 20+ 后重试自动部署。"}
-        if need_server:
-            report("正在安装并构建 MCP Server（TypeScript）…")
-            if not os.path.isdir(os.path.join(server_dir, "node_modules")):
-                ok, out = run([npm_exe, "install", "--no-audit", "--no-fund"], server_dir, 300)
-                if not ok:
-                    return {"ok": False, "error": f"MCP Server 依赖安装失败：\n{out[-600:]}"}
-            ok, out = run([npm_exe, "run", "build"], server_dir, 180)
+        report("正在安装并构建 MCP Server（TypeScript）…")
+        if not os.path.isdir(os.path.join(server_dir, "node_modules")):
+            ok, out = run([npm_exe, "install", "--no-audit", "--no-fund"], server_dir, 300)
             if not ok:
-                return {"ok": False, "error": f"MCP Server 构建失败：\n{out[-600:]}"}
-            steps_done.append("已构建 MCP Server")
-        if need_ui:
-            report("正在安装并构建 OIT Chat 侧栏 UI…")
-            if not os.path.isdir(os.path.join(ui_dir, "node_modules")):
-                ok, out = run([npm_exe, "install", "--no-audit", "--no-fund"], ui_dir, 300)
-                if not ok:
-                    return {"ok": False, "error": f"OIT Chat UI 依赖安装失败：\n{out[-600:]}"}
-            ok, out = run([npm_exe, "run", "build"], ui_dir, 180)
-            if not ok:
-                return {"ok": False, "error": f"OIT Chat UI 构建失败：\n{out[-600:]}"}
-            steps_done.append("已构建 OIT Chat 侧栏 UI")
+                return {"ok": False, "error": f"MCP Server 依赖安装失败：\n{out[-600:]}"}
+        ok, out = run([npm_exe, "run", "build"], server_dir, 180)
+        if not ok:
+            return {"ok": False, "error": f"MCP Server 构建失败：\n{out[-600:]}"}
+        steps_done.append("已构建 MCP Server")
     else:
-        steps_done.append("MCP Server 与侧栏 UI 已就绪")
+        steps_done.append("MCP Server 已就绪")
 
     # 3. 打包精简插件目录（排除 node_modules 与源码，避免 Windows Defender 锁文件导致 rename Access is denied）
     if not agy_exe:
@@ -2316,10 +2522,10 @@ def deploy_antigravity_plugin(data_dir: str, on_progress=None, plugin_dir: str =
 
 
 def antigravity_help_text(en: bool = False) -> str:
-    """精简版 Antigravity 桌面版接管帮助（以 OIT 为主聊天界面）。"""
+    """精简版 Antigravity 桌面版接管帮助（无状态单轮类 API 调用，以 OIT 为主聊天界面）。"""
     if en:
         return (
-            "Antigravity Desktop Takeover Guide (Chatting Directly in OIT)\n\n"
+            "Antigravity Desktop Takeover Guide (Stateless API-like Mode)\n\n"
             "1. Auto-Deploy in OIT\n"
             "   Click [Auto-Deploy] below. OIT automatically binds your data directory, builds & installs\n"
             "   the 'oit' plugin via `agy`, enables takeover, and starts the local Bridge.\n\n"
@@ -2329,21 +2535,17 @@ def antigravity_help_text(en: bool = False) -> str:
             "   • Tip: Open Settings → Application and turn on [Keep In Menu Bar] so Antigravity keeps\n"
             "     running in the background even after you close its window.\n"
             "   • Recommended: Turn off system alerts in Settings → Notifications to avoid duplicate pings.\n\n"
-            "3. Bind Persona 1-to-1 (Once per Persona)\n"
-            "   • Start a new conversation in Antigravity and send: 'Bind <persona name>'.\n"
-            "   • Unbound conversations stay completely isolated for normal work. Clearing chat in OIT\n"
-            "     unbinds the old conversation and opens a fresh one on your next message.\n\n"
-            "4. Chat Directly in OIT\n"
+            "3. Chat Directly in OIT (No Persona Binding or Chat Sidebar Needed)\n"
+            "   • Every turn is dispatched as a clean, stateless request carrying the full persona, memory,\n"
+            "     and complete OIT history (including Android & system events), then auto-cleaned up.\n"
             "   • Stay in OIT's native Chat window for all features (staged bubbles, interrupt-to-cancel,\n"
             "     voice, Joint / Share Data / CoRead / Shift / MIDI Review, proactive messages, Android sync).\n"
-            "   • Switching model & thinking effort: Change them directly inside that persona's bound\n"
-            "     conversation in Antigravity.\n"
             "   • Optional: Assign an external HTTP API to any subagent role in Settings → Models; otherwise\n"
             "     native Antigravity subagents are used.\n"
             "   • After updating OIT, click [Auto-Deploy] again and Restart 'oit' under MCP Servers."
         )
     return (
-        "Antigravity 桌面版接管指南（以 OIT 为主聊天界面）\n\n"
+        "Antigravity 桌面版接管指南（无状态单轮类 API 模式）\n\n"
         "1. 一键自动部署\n"
         "   点击下方「自动部署」，OIT 会自动绑定数据目录、构建并安装 oit 插件、开启接管与本地 Bridge。\n\n"
         "2. 在 Antigravity 开启插件与后台常驻\n"
@@ -2352,13 +2554,11 @@ def antigravity_help_text(en: bool = False) -> str:
         "   • 提示：可在 Antigravity 的「Settings → Application」页面打开「Keep In Menu Bar」，\n"
         "     这样关闭 Antigravity 窗口后也会在后台持续运行。\n"
         "   • 建议在「Settings → Notifications」关闭系统通知，避免与 OIT 重复提醒。\n\n"
-        "3. 人设 1 对 1 绑定（每人设只需一次）\n"
-        "   • 在 Antigravity 新建对话并发送「绑定 <人设名>」即可建立 1 对 1 绑定。\n"
-        "   • 未绑定的普通对话与 OIT 完全隔离；在 OIT 点「清空」会自动解绑旧会话，下次发消息自动建新会话。\n\n"
-        "4. 回到 OIT 原生界面正常聊天\n"
+        "3. 直接回到 OIT 原生界面聊天（无需绑定会话，无需聊天侧边栏）\n"
+        "   • 每轮请求都会像 API 调用一样，由 OIT 打包完整人设、记忆卡与近期完整对话（含手机端与系统事件）\n"
+        "     发起一次干净的临时单轮调用，回复完成后自动清理临时对话，彻底避免上下文割裂与膨胀。\n"
         "   • 日常收发消息、分条延时、插话撤销、语音、联合行动 / Share Data / 共读 / 起点平移 / 演奏评判\n"
         "     与手机同步全部留在 OIT 沟通页操作即可。\n"
-        "   • 切换模型与思考强度：需要在 Antigravity 中进入该人设已绑定的对话进行操作。\n"
         "   • 可选：在「设置 → 模型」给单个子代理指定外部 HTTP API，未指定则默认走 Antigravity 原生子代理。\n"
         "   • 更新 OIT 后如插件未生效，重点「自动部署」并在 MCP Servers 中 Restart oit。"
     )

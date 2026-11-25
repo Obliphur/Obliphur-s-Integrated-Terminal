@@ -196,6 +196,13 @@ class FlowMixin:
         """到点了就在后台整理一次记忆卡 (不挡聊天); 只把上次整理之后的新消息 + 现有记忆卡交给模型."""
         if not self._mem_due():
             return False
+        if self._antigravity_active():
+            bridge = getattr(self, "mcp_bridge", None)
+            if bridge is not None and hasattr(bridge, "push_memory_compact") and bridge.push_memory_compact(self.pid):
+                self._mem_next = self._ms() + MEM_GAP * 1000
+                self.log("MEM dispatched via Antigravity stateless turn")
+                return True
+            return False
         batch = self._mem_delta()[:MEM_EVERY]
         memory = self.memory_block_of(self._active_state(), include_live=False).strip() or "(空)"
         lines = []
@@ -372,7 +379,7 @@ class FlowMixin:
                 if bridge.push_user_message(self.pid, last_me, api_context="\n\n".join(api_parts), image_path=img_path):
                     self.error = ""
                 else:
-                    self.error = tr("已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 Customizations 中启用 OIT Companion 插件，或手动新建对话并绑定此人设。")
+                    self.error = tr("已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 Customizations 中启用 OIT Companion 插件。")
                 self._reply_rewrite = False
                 self._changed()
             return

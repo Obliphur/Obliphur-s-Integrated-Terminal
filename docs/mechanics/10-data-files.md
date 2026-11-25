@@ -8,7 +8,7 @@ Claudia 的休息结算沿用沟通配置的 `joint`：`scheduled_reward` 标记
 
 `ui_prefs.json` 保存桌面侧边栏顺序、分隔线位置和本机知识库 Vault 路径。Vault 下的 `.oit_kb/config.json` 保存学科、探索 / 保守模式、思路参考、排除技巧等设置；`index.json` 是可由 Markdown 重建的技巧索引，`stats.json` 与 `audit.jsonl` 保存技巧使用频次和权重，`proposals/` 保存等待用户审核的正文提案。技巧 Markdown 的 `generality` 为 `universal`、`explain_first` 或 `non_universal`；旧卡片缺失时按 `explain_first` 兼容。概念笔记只保存在 `概念性/`，不会建立检索或统计条目。Vault 可位于默认数据目录之外；这些 UI 与知识库数据仅在本机，不随设备同步。
 
-共同阅读在 `comm_config.json` 的 `coread_link` 保存本地 Windows 服务地址和访问密钥，`coread_offer` 保存邀请编号、人设、状态、修改时刻和关联消息编号。`coread/` 保存 Node 运行时、组件源码与依赖；`coread/data/` 保存共读数据库和阅读室状态，`coread/service.json` 保存服务访问密钥与端口，`coread/server.log` 为服务日志。通过官方来源获取的书籍在书籍正文中附来源 URL、SHA-256 与校验范围，随本地书库备份保留。运行中的共读会话及活动重叠累计仅在内存中保存，重启不恢复旧会话。书库由配对设备通过局域网共用，不复制到安卓聊天存档（24.22）。
+共同阅读在 `comm_config.json` 的 `coread_link` 保存本地 Windows 服务地址和访问密钥，`coread_offer` 保存邀请编号、人设、状态、修改时刻和关联消息编号。`coread/` 保存 Node 运行时、组件源码与依赖；`coread/data/` 保存共读数据库和阅读室状态，`coread/service.json` 保存服务访问密钥与端口，`coread/server.log` 为服务日志。通过官方来源获取的书籍在书籍正文中附来源 URL、SHA-256 与校验范围，随本地书库备份保留。章节讨论摘要和注释保存在共读数据库的 `coread_chapter_memory`，由书籍编号和章节键唯一定位并纳入书库备份；运行中的共读会话及活动重叠累计仅在内存中保存，重启不恢复旧会话。书库由配对设备通过局域网共用，不复制到安卓聊天存档（24.22）。
 
 | 文件 | 内容 | 保留范围 |
 | --- | --- | --- |

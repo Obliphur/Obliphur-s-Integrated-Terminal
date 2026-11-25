@@ -232,6 +232,17 @@ class CommMixin:
         return self._coread_manager(start=True).add_comment(
             book_id, paragraph_idx, content, selected_text, self.comm.share_ai_name())
 
+    def _coread_memory(self, **kwargs):
+        service = self._coread_manager()
+        if service.refresh() != "ready":
+            service.start()
+            deadline = time.monotonic() + 25
+            while service.refresh() in ("installing", "starting") and time.monotonic() < deadline:
+                time.sleep(.1)
+            if service.refresh() != "ready":
+                raise RuntimeError(service.error or tr("本机共读服务没有运行."))
+        return service.reading_memory(**kwargs)
+
     def _coread_offer_respond(self, accept):
         why = self.comm.coread_offer_respond(bool(accept))
         if why:

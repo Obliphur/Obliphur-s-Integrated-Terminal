@@ -420,6 +420,25 @@
     }
   },
   {
+    "name": "oit_reading_memory",
+    "description": "读取或更新共读书库中的章节讨论记忆。共读中讨论有实质进展时按章节实时保存summary或annotations；非共读聊天提到书籍时先用lookup按书名检索，再根据新讨论用save修订。只能记录实际讨论、用户明确观点和书籍批注，不要编造未讨论内容。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["lookup", "save"] },
+        "book_id": { "type": "integer", "minimum": 1 },
+        "book_title": { "type": "string", "maxLength": 200 },
+        "chapter": { "type": "string", "maxLength": 120, "description": "稳定的章节编号或章节名；同一章节后续保存时保持一致。" },
+        "chapter_title": { "type": "string", "maxLength": 200 },
+        "summary": { "type": "string", "maxLength": 6000, "description": "当前章节讨论的可更新摘要。" },
+        "annotations": { "type": "string", "maxLength": 6000, "description": "当前章节的重要批注、用户观点或待核对问题。" },
+        "mode": { "type": "string", "enum": ["replace", "append"] }
+      },
+      "required": ["action"],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "oit_reading_acquire",
     "description": "仅在共读模式且网络已开通时，从 Project Gutenberg 或备用 Standard Ebooks（https://standardebooks.org/ebooks）获取公版书并导入本机书架；古登堡不可用时改搜 Standard Ebooks。",
     "parameters": {

@@ -2350,6 +2350,27 @@ class Comm(
         } finally { conn.disconnect() }
     }
 
+    private fun coreadMemoryApi(path: String, method: String = "GET", body: JSONObject? = null): JSONObject {
+        if (coreadUrl.isBlank() || coreadAccessKey.isBlank()) throw IllegalStateException("共读书库尚未连接")
+        val conn = java.net.URL("${coreadUrl.trimEnd('/')}$path").openConnection() as java.net.HttpURLConnection
+        return try {
+            conn.connectTimeout = 3500; conn.readTimeout = 6000
+            conn.requestMethod = method
+            conn.setRequestProperty("x-coread-key", coreadAccessKey)
+            conn.setRequestProperty("x-owner-key", coreadAccessKey)
+            if (body != null) {
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            }
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+            val result = JSONObject(stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty())
+            if (conn.responseCode !in 200..299 || result.has("error"))
+                throw IllegalStateException(result.optString("message").ifEmpty { result.optString("error") }.ifEmpty { "共读服务请求失败" })
+            result
+        } finally { conn.disconnect() }
+    }
+
     internal fun coreadEndApply(session: String, message: ChatMsg): Boolean {
         if (!readingMode || session.isEmpty() || session != coreadSessionId) return false
         coreadEndMessage = message.uid
@@ -5870,6 +5891,29 @@ class Comm(
                         memoryEdit = MemoryEdit(action, target, text)
                         result = JSONObject().put("ok", true).put("status", "queued_until_message_visible").put("next", "正式回复显示时保存这条实时记忆事件")
                     } else result = JSONObject().put("ok", false).put("error", "记忆事件不匹配或已达到数量上限")
+                }
+                "oit_reading_memory" -> {
+                    result = runCatching {
+                        val action = args.optString("action", "lookup")
+                        if (action == "save" && (args.optInt("book_id", 0) < 1 || args.optString("chapter").trim().isEmpty()))
+                            throw IllegalArgumentException("保存章节记忆需要book_id和chapter")
+                        val data = if (action == "lookup") {
+                            val query = mutableListOf<String>()
+                            args.optInt("book_id", 0).takeIf { it > 0 }?.let { query += "book_id=$it" }
+                            args.optString("book_title").trim().takeIf { it.isNotEmpty() }?.let { query += "book_title=" + java.net.URLEncoder.encode(it.take(200), "UTF-8") }
+                            args.optString("chapter").trim().takeIf { it.isNotEmpty() }?.let { query += "chapter=" + java.net.URLEncoder.encode(it.take(120), "UTF-8") }
+                            coreadMemoryApi("/v1/reading-memory" + if (query.isEmpty()) "" else "?" + query.joinToString("&"))
+                        } else if (action == "save") {
+                            coreadMemoryApi("/v1/reading-memory", "POST", JSONObject()
+                                .put("book_id", args.getInt("book_id"))
+                                .put("chapter", args.getString("chapter").take(120))
+                                .put("chapter_title", args.optString("chapter_title").take(200))
+                                .put("summary", args.optString("summary").take(6000))
+                                .put("annotations", args.optString("annotations").take(6000))
+                                .put("mode", if (args.optString("mode") == "append") "append" else "replace"))
+                        } else throw IllegalArgumentException("共读记忆操作无效")
+                        JSONObject(data.toString()).put("ok", true).put("instruction", if (action == "save") "共读记忆已更新；继续围绕当前章节自然回复。" else "若书名与当前讨论相关，请只使用返回的章节记忆和批注作为依据。")
+                    }.getOrElse { JSONObject().put("ok", false).put("error", it.message.orEmpty()) }
                 }
                 "oit_music_catalog" -> runCatching {
                     val all = musicLibrary.catalog(personaName(), related(), interactionPrepare().valence)

@@ -523,6 +523,22 @@ def memory_tool_checks():
         context._memory_event_apply(op)
         assert context.cfg["mem_live"] == expected
 
+    saved = []
+    class ReadingContext(Context):
+        reading_mode = True
+        coread_memory_fn = lambda self, **kwargs: saved.append(kwargs) or {"memory": {"chapter_key": kwargs["chapter"]}}
+    reading = ReadingContext()
+    calls = [tools.pack(name="oit_reading_memory", arguments={"action": "lookup", "book_title": "局外人"}),
+             tools.pack(name="oit_reply", arguments={"text": "我查到了这本书的共读记录。"})]
+    op, _ = reading._tool_rounds(lambda _: calls.pop(0), [], calls.pop(0), "user", 9)
+    assert op is None and saved[0]["action"] == "lookup" and saved[0]["book_title"] == "局外人"
+    calls = [tools.pack(name="oit_reading_memory", arguments={"action": "save", "book_id": 3,
+             "chapter": "chapter-1", "chapter_title": "第一章", "summary": "用户认为叙述者不可靠",
+             "annotations": "待回看开头伏笔", "mode": "replace"}),
+             tools.pack(name="oit_reply", arguments={"text": "我记下这一章的讨论了。"})]
+    op, _ = reading._tool_rounds(lambda _: calls.pop(0), [], calls.pop(0), "user", 9)
+    assert op is None and saved[-1]["action"] == "save" and saved[-1]["book_id"] == 3
+
 
 def offense_checks():
     from copy import deepcopy
@@ -736,7 +752,7 @@ if __name__ == "__main__":
         assert (root / "defaults" / name).read_text(encoding="utf-8") == (root / "Android version/app/src/main/resources" / name).read_text(encoding="utf-8")
     protocol = (root / "defaults/comm_protocol.txt").read_text(encoding="utf-8")
     specs = json.loads((root / "defaults/comm_tools.json").read_text(encoding="utf-8"))
-    assert {s["name"] for s in specs} >= {"oit_music_catalog", "oit_music_select", "oit_music_perform", "oit_memory_edit"}
+    assert {s["name"] for s in specs} >= {"oit_music_catalog", "oit_music_select", "oit_music_perform", "oit_memory_edit", "oit_reading_memory"}
     tool = next(s for s in specs if s["name"] == "oit_reply")
     assert "聊天只显示text" in protocol and "wait_minutes" in tool["description"] and "不会显示给用户" in tool["description"]
     assert "network_now" in tool["parameters"]["properties"] and "最多3分钟" in protocol

@@ -279,6 +279,7 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         self.comm.on_coread_open = self._open_coread
         self.comm.coread_read_fn = self._coread_read
         self.comm.coread_comment_fn = self._coread_comment
+        self.comm.coread_memory_fn = self._coread_memory
         # 闹钟 (1.0.359, MECHANICS 25): 本机的闹钟配置 / 响铃线程; 共时闹钟的设置在 comm 里 (随设备同步)
         self.alarm = alarm_mod.Alarm(self.dm.data_dir)
         self.ringer = alarm_mod.Ringer(self.dm.data_dir)

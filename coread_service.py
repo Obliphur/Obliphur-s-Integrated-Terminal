@@ -362,6 +362,31 @@ class CoReadService:
             raise ValueError(str(result.get("error") or "添加批注失败"))
         return {"ok": True, "id": result.get("id")}
 
+    def reading_memory(self, action="lookup", book_id=None, book_title="", chapter="", chapter_title="",
+                       summary="", annotations="", mode="replace"):
+        """读取或更新书籍的章节讨论记忆；书库服务本身负责跨桌面/安卓共享。"""
+        action = str(action or "lookup").lower()
+        if action == "lookup":
+            query = {"chapter": str(chapter or "")[:120]}
+            if book_id is not None:
+                query["book_id"] = int(book_id)
+            elif book_title:
+                query["book_title"] = str(book_title)[:200]
+            path = "/v1/reading-memory?" + urllib.parse.urlencode(query)
+            return self._request(path)
+        if action != "save":
+            raise ValueError("共读记忆操作无效")
+        book_id = int(book_id)
+        payload = {"book_id": book_id, "chapter": str(chapter or "")[:120],
+                   "chapter_title": str(chapter_title or "")[:200],
+                   "summary": str(summary or "")[:6000],
+                   "annotations": str(annotations or "")[:6000],
+                   "mode": "append" if mode == "append" else "replace"}
+        result = self._request("/v1/reading-memory", "POST", payload)
+        if result.get("error") or result.get("ok") is False:
+            raise ValueError(str(result.get("error") or "保存共读记忆失败"))
+        return result
+
 
 def manager(data_dir):
     return CoReadService(data_dir)

@@ -158,8 +158,17 @@ def main():
     saved = []
     def request_book(path, method="GET", data=None):
         saved.append((path, method, data))
-        return {"ok": True, "book_id": 7, "title": data["title"]}
+        return {"ok": True, "book_id": 7, "title": (data or {}).get("title", "测试书")}
     service._request = request_book
+    memory_result = service.reading_memory(action="save", book_id=7, chapter="chapter-1",
+                                           chapter_title="第一章", summary="用户认为叙述者不可靠",
+                                           annotations="待回看伏笔")
+    assert memory_result["ok"] and saved[-1][0] == "/v1/reading-memory" and saved[-1][2]["chapter"] == "chapter-1"
+    saved.clear()
+    service._request = lambda path, method="GET", data=None: saved.append((path, method, data)) or {"ok": True, "memories": []}
+    assert service.reading_memory(action="lookup", book_title="测试书", chapter="chapter-1")["ok"]
+    assert "book_title=%E6%B5%8B%E8%AF%95%E4%B9%A6" in saved[-1][0]
+    saved.clear()
     def download_book(_spec, destination, **_kwargs):
         with open(destination, "wb") as stream:
             stream.write(source.encode("utf-8"))

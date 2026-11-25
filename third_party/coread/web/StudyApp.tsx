@@ -1975,8 +1975,12 @@ const StudyApp: React.FC = () => {
         const text = oitChatInput.trim();
         if (!text || oitChatBusy) return;
         const visible = [...pageFragments, ...pageFragmentsRight];
+        const firstVisibleIdx = visible[0]?.idx ?? null;
+        const currentChapter = firstVisibleIdx == null ? null
+            : [...tocChapters].reverse().find(chapter => chapter.idx <= firstVisibleIdx) || null;
         const context = [
-            activeBook ? `书名: ${activeBook.title}` : '当前位于选书页面，协助讨论候选书目。',
+            activeBook ? `书名: ${activeBook.title}\n书籍编号: ${activeBook.id}` : '当前位于选书页面，协助讨论候选书目。',
+            ...(activeBook && currentChapter ? [`当前章节: ${currentChapter.title}\n章节编号: ${currentChapter.idx}`] : []),
             ...(activeBook ? [`当前页: ${page}${spread && page < totalPages ? `-${page + 1}` : ''} / ${totalPages}`] : []),
             ...visible.map(fragment => {
                 const comments = commentsForPara(fragment.idx);
