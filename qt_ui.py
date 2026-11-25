@@ -14,6 +14,7 @@ import calendar as _calendar
 from datetime import datetime
 
 import config
+import contract as contract_rules
 from config import COLORS, IDLE, ON_BREAK, READY_BREAK, RUNNING
 from i18n import is_en, tr
 from settings_manager import SETTINGS_PAGES, page_specs
@@ -30,7 +31,9 @@ try:
         QFrame,
         QLineEdit,
         QListWidget,
+        QProgressBar,
         QScrollArea,
+        QSpinBox,
         QTabWidget,
         QMainWindow,
         QPushButton,
@@ -412,6 +415,8 @@ if QApplication is not None:
                 host = self.window()
                 if hasattr(host, "_apply_palette"):
                     host._apply_palette()
+                if hasattr(host, "_pages") and "contract" in host._pages:
+                    host._pages["contract"].refresh()
                 self._apply_retranslated_text()
             self.notice.setText(str(message or tr("已保存.")))
             self.refresh()
@@ -457,6 +462,380 @@ if QApplication is not None:
             finally:
                 self._loading = False
 
+    class QtContractPage(QWidget):
+        """Qt contract board backed by the existing ContractPage rule model."""
+
+        def __init__(self, model, parent=None):
+            super().__init__(parent)
+            self.model = model
+            self.legacy = getattr(model, "pages", {}).get("contract")
+            self.page = 0
+            root = QVBoxLayout(self)
+            root.setContentsMargins(config.scaled(24), config.scaled(18), config.scaled(24), config.scaled(14))
+            header = QHBoxLayout()
+            self.title = QLabel(tr("⚔  合约"), self)
+            self.title.setObjectName("pageTitle")
+            self.state = QLabel(self)
+            header.addWidget(self.title)
+            header.addStretch(1)
+            header.addWidget(self.state)
+            root.addLayout(header)
+            self.rules = QLabel(self)
+            self.rules.setWordWrap(True)
+            self.rules.setObjectName("contractRules")
+            root.addWidget(self.rules)
+
+            self.live = QLabel(self)
+            self.live.setWordWrap(True)
+            self.live.setObjectName("contractLive")
+            root.addWidget(self.live)
+
+            self.pages = QTabWidget(self)
+            self.pages.currentChanged.connect(self._set_page)
+            root.addWidget(self.pages, 1)
+            for start, end in contract_rules.PAGES:
+                body = QWidget(self.pages)
+                grid = QGridLayout(body)
+                grid.setContentsMargins(config.scaled(8), config.scaled(8), config.scaled(8), config.scaled(8))
+                grid.setSpacing(config.scaled(6))
+                for tid, group, level, _name, desc, _conflicts in contract_rules.TERMS:
+                    col, _ = contract_rules.LAYOUT[tid]
+                    if not start <= col < end:
+                        continue
+                    button = QPushButton(f"{level}  {tr(_name)}", body)
+                    button.setMinimumHeight(config.scaled(46))
+                    button.setToolTip(tr(desc))
+                    button.clicked.connect(lambda _checked=False, term=tid: self._click(term))
+                    grid.addWidget(button, level - 1, col - start)
+                    setattr(button, "_term_id", tid)
+                grid.setRowStretch(3, 1)
+                self.pages.addTab(body, tr("词条 {n}").format(n=self.pages.count() + 1))
+
+            combo_body = QWidget(self.pages)
+            combo_layout = QVBoxLayout(combo_body)
+            self.combos = QLabel(combo_body)
+            self.combos.setWordWrap(True)
+            combo_layout.addWidget(self.combos)
+            combo_layout.addStretch(1)
+            self.pages.addTab(combo_body, tr("词条组合"))
+            self.info = QLabel(self)
+            self.info.setWordWrap(True)
+            root.addWidget(self.info)
+            self.selected = QLabel(self)
+            self.selected.setWordWrap(True)
+            root.addWidget(self.selected)
+
+            footer = QHBoxLayout()
+            self.level = QLabel(self)
+            self.clear = QPushButton(tr("清空"), self)
+            self.clear.clicked.connect(self._clear)
+            footer.addWidget(self.clear)
+            footer.addWidget(self.level)
+            footer.addStretch(1)
+            self.reject = QPushButton(tr("拒绝"), self)
+            self.accept = QPushButton(tr("接受"), self)
+            self.start = QPushButton(tr("开始行动"), self)
+            self.end = QPushButton(tr("提前结束"), self)
+            self.reject.clicked.connect(lambda: self._respond(False))
+            self.accept.clicked.connect(lambda: self._respond(True))
+            self.start.clicked.connect(self._start)
+            self.end.clicked.connect(self._end)
+            for button in (self.reject, self.accept, self.start, self.end):
+                footer.addWidget(button)
+            root.addLayout(footer)
+            self.refresh()
+
+        def _set_page(self, page):
+            self.page = page
+
+        def _click(self, tid):
+            if self.legacy is not None:
+                self.legacy._click(tid)
+            self.refresh()
+
+        def _clear(self):
+            if self.legacy is not None:
+                self.legacy._clear()
+            self.refresh()
+
+        def _start(self):
+            if self.legacy is not None:
+                self.legacy._start()
+            self.refresh()
+
+        def _end(self):
+            if self.legacy is not None and self.legacy.on_abandon:
+                self.legacy.on_abandon()
+            self.refresh()
+
+        def _respond(self, accept):
+            if self.legacy is not None:
+                self.legacy._respond(accept)
+            self.refresh()
+
+        def refresh(self):
+            if self.legacy is None:
+                return
+            self.legacy.refresh()
+            c = self.legacy.c
+            active = bool(c.active)
+            chosen = set(c.terms if active else c.draft)
+            blocked = self.legacy._terms_locked()
+            self.state.setText(_tk_text(self.legacy.lbl_state))
+            self.rules.setText("\n".join(self.legacy._rules_text()))
+            for tab_index in range(2):
+                body = self.pages.widget(tab_index)
+                for i in range(body.layout().count()):
+                    item = body.layout().itemAt(i)
+                    button = item.widget()
+                    if button is None or not hasattr(button, "_term_id"):
+                        continue
+                    tid = button._term_id
+                    selected = tid in chosen
+                    disabled = active or (blocked and not selected)
+                    button.setEnabled(not disabled or (active and (tid in c.rand or c.can_lift(tid))))
+                    if selected:
+                        button.setStyleSheet("font-weight: 700; border-width: 2px;")
+                    else:
+                        button.setStyleSheet("")
+            terms = c.terms if active else c.draft
+            self.selected.setText(tr("已选词条: ") + (" · ".join(tr(contract_rules.BY_ID[t][3]) for t in terms) or tr("无")))
+            self.level.setText(tr("危机等级: {n}").format(n=self.legacy.level()))
+            self.info.setText("\n".join(_tk_text(w) for w in (self.legacy.lbl_info,) if _tk_text(w)))
+            self.live.setVisible(active)
+            if active:
+                self.live.setText("\n".join(_tk_text(w) for w in (
+                    self.legacy.lbl_left, self.legacy.lbl_viol, self.legacy.lbl_live,
+                    self.legacy.lbl_idle, self.legacy.lbl_rec) if _tk_text(w)))
+            inv = self.legacy._inv_on()
+            self.clear.setVisible(not active and not blocked)
+            self.start.setVisible(not active and not inv)
+            self.reject.setVisible(inv)
+            self.accept.setVisible(inv)
+            self.end.setVisible(active)
+            self.start.setText(tr("确定选择") if self.legacy._joint_pick else tr("开始行动"))
+            self.start.setEnabled(not self.legacy.blocked() or self.legacy._joint_pick)
+            self.combos.setText("\n\n".join(
+                f"{tr(combo['name'])} · {tr(state)}\n{self.legacy._combo_desc(combo)}"
+                for combo, state in self.legacy._combos()))
+
+    class QtNetPage(QWidget):
+        """Qt presentation for the network request workflow."""
+
+        def __init__(self, model, parent=None):
+            super().__init__(parent)
+            self.model = model
+            root = QVBoxLayout(self)
+            root.setContentsMargins(0, 0, 0, 0)
+            header = QHBoxLayout()
+            header.setContentsMargins(config.scaled(28), config.scaled(22), config.scaled(28), config.scaled(8))
+            title = QLabel(tr("🌐  联网申请"), self)
+            title.setObjectName("pageTitle")
+            header.addWidget(title)
+            header.addStretch(1)
+            file_button = QPushButton(tr("📁  文件通道"), self)
+            file_button.clicked.connect(lambda: getattr(getattr(model, "file_channel", None), "open", lambda: None)())
+            header.addWidget(file_button)
+            root.addLayout(header)
+            sep = QFrame(self)
+            sep.setFrameShape(QFrame.HLine)
+            sep.setFixedHeight(1)
+            sep_layout = QHBoxLayout()
+            sep_layout.setContentsMargins(config.scaled(26), 0, config.scaled(26), 0)
+            sep_layout.addWidget(sep)
+            root.addLayout(sep_layout)
+
+            card = QWidget(self)
+            card.setObjectName("netCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(config.scaled(22), config.scaled(18), config.scaled(22), config.scaled(18))
+            self.status = QLabel(card)
+            self.time = QLabel(card)
+            self.time.setObjectName("time")
+            self.sub = QLabel(card)
+            self.sub.setWordWrap(True)
+            self.progress = QProgressBar(card)
+            self.progress.setTextVisible(False)
+            self.quota = QLabel(card)
+            self.quota.setObjectName("today")
+            self.debt = QLabel(card)
+            self.debt.setWordWrap(True)
+            for widget in (self.status, self.time, self.sub, self.progress, self.quota, self.debt):
+                card_layout.addWidget(widget)
+            card_wrap = QHBoxLayout()
+            card_wrap.setContentsMargins(config.scaled(26), config.scaled(20), config.scaled(26), 0)
+            card_wrap.addWidget(card)
+            root.addLayout(card_wrap)
+
+            area = QWidget(self)
+            area_layout = QVBoxLayout(area)
+            area_layout.setContentsMargins(config.scaled(26), 0, config.scaled(26), config.scaled(22))
+            form = QHBoxLayout()
+            form.addWidget(QLabel(tr("分钟"), area))
+            self.minutes = QSpinBox(area)
+            self.minutes.setRange(1, 24 * 60)
+            form.addWidget(self.minutes)
+            form.addWidget(QLabel(tr("理由"), area))
+            self.reason = QLineEdit(area)
+            self.reason.setMinimumWidth(config.scaled(260))
+            form.addWidget(self.reason, 1)
+            area_layout.addLayout(form)
+            buttons = QHBoxLayout()
+            self.request = QPushButton(tr("📨  提交申请(需冷静期)"), area)
+            self.quick = QPushButton(area)
+            self.loan = QPushButton(tr("💳  紧急借贷"), area)
+            self.request.clicked.connect(lambda: self._call("on_net_request"))
+            self.quick.clicked.connect(lambda: self._call("on_net_quick"))
+            self.loan.clicked.connect(lambda: self._call("on_net_loan"))
+            buttons.addWidget(self.request)
+            buttons.addWidget(self.quick)
+            buttons.addWidget(self.loan)
+            buttons.addStretch(1)
+            area_layout.addLayout(buttons)
+            self.form_area = area
+            root.addWidget(area)
+
+            self.controls = QWidget(self)
+            control_layout = QHBoxLayout(self.controls)
+            control_layout.setContentsMargins(config.scaled(26), 0, config.scaled(26), config.scaled(22))
+            self.control = QPushButton(self.controls)
+            self.upgrade = QPushButton(self.controls)
+            self.control.clicked.connect(lambda: self._call("on_net_ctrl"))
+            self.upgrade.clicked.connect(lambda: self._call("on_net_upgrade"))
+            control_layout.addWidget(self.control)
+            control_layout.addWidget(self.upgrade)
+            control_layout.addStretch(1)
+            root.addWidget(self.controls)
+            root.addStretch(1)
+
+        def _call(self, method):
+            try:
+                self.model.var_min.set(str(self.minutes.value()))
+                self.model.var_reason.set(self.reason.text())
+                getattr(self.model, method)()
+            finally:
+                self.refresh()
+
+        def refresh(self):
+            try:
+                self.model.refresh_net(force=False)
+            except Exception:
+                pass
+            self.status.setText(_tk_text(getattr(self.model, "net_lbl_status", None)))
+            self.time.setText(_tk_text(getattr(self.model, "net_lbl_time", None), tr("离线")))
+            self.sub.setText(_tk_text(getattr(self.model, "net_lbl_sub", None)))
+            self.quota.setText(_tk_text(getattr(self.model, "net_lbl_quota", None)))
+            self.debt.setText(_tk_text(getattr(self.model, "net_lbl_debt", None)))
+            try:
+                bar = self.model.net_bar
+                self.progress.setMaximum(max(1, int(float(bar["maximum"]))))
+                self.progress.setValue(int(float(bar["value"])))
+            except Exception:
+                pass
+            mode = getattr(self.model, "_net_view", "offline")
+            offline = mode == "offline"
+            self.form_area.setVisible(offline)
+            self.controls.setVisible(not offline)
+            quick_mult = float(getattr(config, "QUICK_MULTIPLIER", 1.0))
+            self.quick.setText(tr("⚡  快速访问(×{a:g})").format(a=quick_mult))
+            if not offline:
+                self.control.setText(tr("✕  取消申请") if mode == "pending" else tr("■  结束本次会话"))
+                self.upgrade.setText(tr("⚡  改为快速访问(×{a:g})").format(a=quick_mult))
+                self.upgrade.setVisible(mode == "pending")
+            for target, source in ((self.request, "btn_net_req"), (self.quick, "btn_net_quick"), (self.loan, "btn_net_loan")):
+                widget = getattr(self.model, source, None)
+                try:
+                    target.setEnabled(str(widget.cget("state")) != "disabled")
+                except Exception:
+                    target.setEnabled(True)
+
+    class QtHourLogPage(QWidget):
+        """Qt editor for the 24 hourly records, backed by HourLogPage rules."""
+
+        def __init__(self, model, parent=None):
+            super().__init__(parent)
+            self.model = model
+            self.legacy = getattr(model, "pages", {}).get("log")
+            self._loading = False
+            root = QVBoxLayout(self)
+            root.setContentsMargins(0, 0, 0, 0)
+            header = QHBoxLayout()
+            header.setContentsMargins(config.scaled(28), config.scaled(18), config.scaled(28), config.scaled(4))
+            title = QLabel(tr("📝  整点记录"), self)
+            title.setObjectName("pageTitle")
+            header.addWidget(title)
+            header.addStretch(1)
+            self.state = QLabel(self)
+            self.date = QLabel(self)
+            self.date.setObjectName("today")
+            header.addWidget(self.date)
+            header.addWidget(self.state)
+            settings = QPushButton(tr("⚙  设置"), self)
+            settings.clicked.connect(lambda: self.model.show_page("settings"))
+            header.addWidget(settings)
+            root.addLayout(header)
+            self.date_line = QLabel(self)
+            self.date_line.setObjectName("today")
+            date_layout = QHBoxLayout()
+            date_layout.setContentsMargins(config.scaled(28), config.scaled(8), config.scaled(28), config.scaled(6))
+            date_layout.addWidget(self.date_line)
+            root.addLayout(date_layout)
+            scroll = QScrollArea(self)
+            scroll.setWidgetResizable(True)
+            body = QWidget(scroll)
+            self.body_layout = QVBoxLayout(body)
+            self.body_layout.setContentsMargins(config.scaled(10), config.scaled(6), config.scaled(10), config.scaled(12))
+            self.edits = []
+            for h in range(24):
+                row = QHBoxLayout()
+                label = QLabel(body)
+                label.setMinimumWidth(config.scaled(150))
+                first = QLineEdit(body)
+                second = QLineEdit(body)
+                first.editingFinished.connect(lambda hh=h: self._commit(hh, 0))
+                second.editingFinished.connect(lambda hh=h: self._commit(hh, 1))
+                row.addWidget(label)
+                row.addWidget(first, 1)
+                row.addWidget(second, 1)
+                self.body_layout.addLayout(row)
+                self.edits.append((label, first, second))
+            self.body_layout.addStretch(1)
+            scroll.setWidget(body)
+            root.addWidget(scroll, 1)
+
+        def _commit(self, row, half):
+            if self._loading or self.legacy is None:
+                return
+            try:
+                if half == 0:
+                    self.legacy.rows[row][2].set(self.edits[row][1].text())
+                else:
+                    self.legacy.halves[row][1].set(self.edits[row][2].text())
+                self.legacy._commit(row, half)
+            except Exception:
+                pass
+            self.refresh()
+
+        def refresh(self):
+            if self.legacy is None:
+                return
+            self._loading = True
+            try:
+                self.legacy.refresh()
+                self.state.setText(_tk_text(getattr(self.legacy, "lbl_state", None)))
+                self.date_line.setText(_tk_text(getattr(self.legacy, "lbl_date", None)))
+                for h, (label, first, second) in enumerate(self.edits):
+                    legacy_row = self.legacy.rows[h]
+                    label.setText(_tk_text(legacy_row[0]))
+                    first.setText(str(legacy_row[2].get()))
+                    second.setText(str(self.legacy.halves[h][1].get()))
+                    split = bool(self.legacy._split.get(h))
+                    second.setVisible(split)
+                    first.setEnabled(str(legacy_row[1].cget("state")) != "disabled")
+                    second.setEnabled(split and str(self.legacy.halves[h][0].cget("state")) != "disabled")
+            finally:
+                self._loading = False
+
     class QtOitWindow(QMainWindow):
         """Visible Qt shell backed by the existing OIT application model."""
 
@@ -469,6 +848,8 @@ if QApplication is not None:
             self._qt_font_family = ""
             self._nav = {}
             self._pages = {}
+            self._current_key = "timer"
+            self._qt_tick = 0
             self.setWindowTitle(self._title())
             self.setMinimumSize(config.scaled(config.MIN_WINDOW_W), config.scaled(config.MIN_WINDOW_H))
             self.resize(config.scaled(config.WINDOW_W), config.scaled(config.WINDOW_H))
@@ -524,7 +905,10 @@ if QApplication is not None:
                 if key != "timer":
                     page = (QtCalendarPage(self.model, self._stack) if key == "cal" else
                             QtStatsPage(self.model, self._stack) if key == "stats" else
-                            QtSettingsPage(self.model, self._stack) if key == "settings" else QLabel(
+                            QtSettingsPage(self.model, self._stack) if key == "settings" else
+                            QtNetPage(self.model, self._stack) if key == "net" else
+                            QtHourLogPage(self.model, self._stack) if key == "log" else
+                            QtContractPage(self.model, self._stack) if key == "contract" else QLabel(
                         tr("正在迁移此页面到 Qt6"), self._stack))
                     if isinstance(page, QLabel):
                         page.setAlignment(Qt.AlignCenter)
@@ -668,6 +1052,7 @@ if QApplication is not None:
         def show_page(self, key: str):
             if key not in self._pages:
                 key = "timer"
+            self._current_key = key
             try:
                 self.model.show_page(key)
             except Exception:
@@ -678,6 +1063,10 @@ if QApplication is not None:
             elif key == "stats":
                 self._pages[key].refresh()
             elif key == "settings":
+                self._pages[key].refresh()
+            elif key in ("net", "log"):
+                self._pages[key].refresh()
+            elif key == "contract":
                 self._pages[key].refresh()
             for name, button in self._nav.items():
                 button.setProperty("active", name == key)
@@ -692,6 +1081,9 @@ if QApplication is not None:
             except tk.TclError:
                 return
             self._refresh()
+            self._qt_tick += 1
+            if self._qt_tick % 15 == 0 and self._current_key in ("net", "log", "contract"):
+                self._pages[self._current_key].refresh()
 
         def _refresh(self):
             self.setWindowTitle(self._title())
