@@ -39,9 +39,14 @@ def _loads_relaxed(text):
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # AI 在 JSON 字符串里写 LaTeX（如 \frac、\cdot、\bar）常漏双反斜杠，补转义后再解析。
-        fixed = re.sub(r'\\(?!(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))', r'\\\\', text)
-        return json.loads(fixed)
+        # AI 在 JSON 字符串里写 LaTeX（如 \cdot、\sin、\cos）常漏双反斜杠，
+        # 同时可能混有已正确转义的 \\cdot；先整对跳过合法转义，再把孤立非法反斜杠补成双反斜杠。
+        fixed = re.sub(
+            r'\\(?:\\|["/bfnrt]|u[0-9a-fA-F]{4})|(\\)(?!["\\/bfnrt]|u[0-9a-fA-F]{4})',
+            lambda m: r"\\" if m.group(1) else m.group(0),
+            text,
+        )
+        return json.loads(fixed, strict=False)
 
 
 def json_result(text):
