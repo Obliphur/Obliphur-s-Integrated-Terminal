@@ -8,11 +8,29 @@ import config
 from .kb_stats import now
 from .kb_trace import strip_citations
 
+FIELD_GUIDE = (
+    "字段说明："
+    "kind：conceptual（概念库，只放十分基础的定义/公理/课本基础定理，仅限 generality=universal）或 tactical（技巧库，解题方法/二级结论/套路，非 universal 必须放技巧库）；"
+    "subject：math / physics / chemistry；"
+    "title：简短标题，尽量8字以内（宁短勿长，浓缩核心词，不必一眼看懂全意）；"
+    "topic：所属章节或知识模块；"
+    "aliases：常见别名、简称或俗称列表（方便检索）；"
+    "triggers：审题触发特征列表（题目出现哪些条件、图形、式子或问法时应联想到本卡，用于解题检索）；"
+    "parent_ids：推导来源的已有父卡片 ID 列表（无则 []）；"
+    "statement：核心结论或方法本身（说人话、讲清直觉思路和用法）；"
+    "preconditions：适用前提、成立条件与常见坑/禁区（什么时候不能用）；"
+    "proof_sketch：大题需要写过程时的简短补证或推导思路（explain_first 必须写清）；"
+    "generality：universal（课本基础定理/通法，大题可直接用，无需额外证明）、explain_first（常见二级结论/技巧，选填可直接用，大题须先简证或解释来源）、non_universal（特殊模型/超纲/竞赛捷径，大题不可直接作为依据，仅限选填或思路参考），证据不足选 explain_first；"
+    "examples：简短典型例题或用法示例列表（无则 []）；"
+    "body：概念卡的 Markdown 正文（技巧卡正文由上述各栏拼装，概念卡须把通俗讲解写在 body）。"
+)
+
 SCHEMA = ('返回严格 JSON 卡片：{"kind":"conceptual 或 tactical","subject":"math/physics/chemistry",'
-          '"title":"简短标题（尽量8字以内，浓缩核心词，不必一眼看懂全意）","topic":"主题","aliases":[],"triggers":[],"parent_ids":[], '
+          '"title":"简短标题（尽量8字以内）","topic":"主题","aliases":[],"triggers":[],"parent_ids":[], '
           '"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
           '"generality":"universal/explain_first/non_universal",'
-          '"examples":[],"body":"概念卡的 Markdown 正文"}。概念库是十分基础的知识，只有 generality=universal（通用）的卡片才应该放入概念库（kind=conceptual），其余归入技巧库（kind=tactical）。标题尽量控制在8字以内（宁短勿长）；表述尽量通俗直观、说人话，少用晦涩学术腔，优先讲清直观思路和用法；公式用 LaTeX。不得臆造缺失事实。')
+          '"examples":[],"body":"概念卡的 Markdown 正文"}。' + FIELD_GUIDE +
+          '表述尽量通俗直观、说人话，少用晦涩学术腔；公式用 LaTeX。不得臆造缺失事实。')
 
 
 def _loads_relaxed(text):

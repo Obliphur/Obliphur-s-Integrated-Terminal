@@ -13,6 +13,7 @@ import zipfile
 
 import config
 import tempstore
+from .kb_ai import FIELD_GUIDE
 from .kb_rank import tokens
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
@@ -31,15 +32,11 @@ MAX_IMAGES_PER_GROUP = 16
 
 AUTO_SCHEMA = (
     '只返回严格 JSON：{"knowledge":true,"cards":[{"kind":"conceptual 或 tactical",'
-    '"subject":"math/physics/chemistry","title":"简短标题（尽量8字以内，浓缩核心词，不必一眼看懂全意）","topic":"主题","aliases":[],"triggers":[],'
+    '"subject":"math/physics/chemistry","title":"简短标题（尽量8字以内）","topic":"主题","aliases":[],"triggers":[],'
     '"parent_ids":[],"statement":"结论","preconditions":"前提与禁区","proof_sketch":"补证",'
     '"generality":"universal/explain_first/non_universal","examples":[],"body":"Markdown 正文"}]}。'
-    '若材料不是可复用知识内容则返回 {"knowledge":false,"cards":[]}。不要臆造事实；概念和技巧分类准确：'
-    '概念库只放十分基础的定义、公理、基础性质等知识，只有通用性为 universal（通用）的卡片才应该放入概念库（kind=conceptual），'
-    'explain_first 或 non_universal 的内容不要放进概念库，应归入技巧库（kind=tactical）；'
-    '卡片标题尽量控制在8字以内（宁短勿长，具体含义写在正文中）；'
-    '卡片正文与各栏表述尽量通俗直观、说人话，少用晦涩学术腔，优先讲清直觉思路与实际怎么用；'
-    '技巧的通用性按题型严格判定，证据不足时选择 explain_first。公式使用 LaTeX。'
+    '若材料不是可复用知识内容则返回 {"knowledge":false,"cards":[]}。不要臆造事实；' + FIELD_GUIDE +
+    '卡片正文与各栏表述尽量通俗直观、说人话，少用晦涩学术腔，优先讲清直觉思路与实际怎么用；公式使用 LaTeX。'
 )
 
 
