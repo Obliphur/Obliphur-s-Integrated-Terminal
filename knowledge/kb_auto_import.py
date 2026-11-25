@@ -560,8 +560,16 @@ def auto_generate(kb, call, root, file_types, on_progress=None, resume=True, can
                     done_files.add(fpath)
         else:
             pending_groups.append((gkey, group))
-    if callable(on_progress):
-        on_progress(min(len(done_files), file_count), file_count)
+    use_group_progress = len(groups) > file_count
+    def _emit_progress():
+        if not callable(on_progress):
+            return
+        if use_group_progress:
+            on_progress(min(len(done_groups), len(groups)), len(groups))
+        else:
+            on_progress(min(len(done_files), file_count), file_count)
+
+    _emit_progress()
     _save_auto_progress(kb, root_str, norm_types, file_count, len(groups), done_groups, len(done_files), report)
     reset_ctx = getattr(getattr(call, "__self__", None), "reset_ai_context", None)
     completed = True
@@ -626,19 +634,19 @@ def auto_generate(kb, call, root, file_types, on_progress=None, resume=True, can
             finally:
                 if succeeded:
                     done_groups.add(gkey)
-                for fpath in group.get("file_paths") or ():
-                    remaining[fpath] = remaining.get(fpath, 1) - 1
-                    if remaining[fpath] <= 0:
-                        done_files.add(fpath)
+                    for fpath in group.get("file_paths") or ():
+                        remaining[fpath] = remaining.get(fpath, 1) - 1
+                        if remaining[fpath] <= 0:
+                            done_files.add(fpath)
                 _save_auto_progress(kb, root_str, norm_types, file_count, len(groups), done_groups, len(done_files), report)
-                if callable(on_progress):
-                    on_progress(min(len(done_files), file_count), file_count)
+                _emit_progress()
     finally:
         if callable(reset_ctx):
             reset_ctx()
     if completed:
         clear_auto_progress(kb)
         if callable(on_progress):
-            on_progress(file_count, file_count)
+            total_final = len(groups) if use_group_progress else file_count
+            on_progress(total_final, total_final)
         kb.audit("auto_import", **report)
     return report

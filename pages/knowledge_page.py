@@ -80,6 +80,7 @@ class KnowledgePage(tk.Frame):
         self._kb_ctx_started = 0.0
         self._jobs = queue.Queue()
         self._poll_job = None
+        self._active_bg = 0
         self.bind("<Destroy>", self._destroy, add="+")
         self.subject, self.category, self.query, self.sort = tk.StringVar(value=tr("全部")), tk.StringVar(value=tr("全部分类")), tk.StringVar(), tk.StringVar(value=tr("综合权重"))
         tk.Label(self, text=tr("📚  知识库"), bg=COLORS["bg"], fg=COLORS["text"], font=config.font("h1", bold=True)).pack(anchor="w", padx=18, pady=12)
@@ -208,12 +209,17 @@ class KnowledgePage(tk.Frame):
             fn, value, error = self._jobs.get_nowait()
             if error:
                 toast.warn(str(error))
+                if callable(fn):
+                    try:
+                        fn(None)
+                    except (ValueError, OSError, tk.TclError):
+                        pass
             else:
                 try:
                     fn(value)
-                except (ValueError, OSError, tk.TclError) as error:
-                    toast.warn(tr(str(error)))
-        if not self._jobs.empty():
+                except (ValueError, OSError, tk.TclError) as err:
+                    toast.warn(tr(str(err)))
+        if not self._jobs.empty() or getattr(self, "_active_bg", 0) > 0:
             self._poll_job = self.after(100, self._poll)
 
     def _ensure_poll(self):
@@ -224,16 +230,21 @@ class KnowledgePage(tk.Frame):
         except tk.TclError:
             self._poll_job = None
 
-    def background(self, work, done):
+    def background(self, work, done, on_error=None):
+        self._active_bg = getattr(self, "_active_bg", 0) + 1
+        self._ensure_poll()
+        def finish_ok(val):
+            self._active_bg = max(0, getattr(self, "_active_bg", 1) - 1)
+            done(val)
+        def finish_err(_):
+            self._active_bg = max(0, getattr(self, "_active_bg", 1) - 1)
+            if callable(on_error):
+                on_error()
         def run():
             try:
-                self._jobs.put((done, work(), None))
+                self._jobs.put((finish_ok, work(), None))
             except Exception as error:
-                self._jobs.put((done, None, error))
-            try:
-                self.after(0, self._ensure_poll)
-            except tk.TclError:
-                pass
+                self._jobs.put((finish_err, None, error))
         threading.Thread(target=run, daemon=True).start()
 
     def call_ai(self, prompt, *, image=None, timeout=90):
@@ -832,17 +843,27 @@ class KnowledgePage(tk.Frame):
         wrap_label(note)
         progress_row = tk.Frame(area.inner, bg=COLORS["bg"])
         progress_row.pack(fill="x", pady=(0, 6))
-        init_total = max(1, saved["total_files"]) if saved else 1
-        init_done = min(saved["done_files"], saved["total_files"]) if saved else 0
+        def _saved_counts(rec):
+            if not rec:
+                return 0, 0
+            tf, df = int(rec.get("total_files", 0)), int(rec.get("done_files", 0))
+            tg, dg = int(rec.get("total_groups", 0)), len(rec.get("done_groups") or ())
+            if tg > tf:
+                return min(dg, tg), tg
+            return min(df, tf), tf
+
+        init_done, init_raw_total = _saved_counts(saved)
+        init_total = max(1, init_raw_total)
         progress_bar = ttk.Progressbar(progress_row, mode="determinate", maximum=init_total, value=init_done)
         progress_bar.pack(side="left", fill="x", expand=True)
-        progress_text = tk.Label(progress_row, text=(f"{init_done}/{saved['total_files']}" if saved else "0/0"), bg=COLORS["bg"], fg=COLORS["text_dim"], font=config.font("small"), width=10, anchor="e")
+        progress_text = tk.Label(progress_row, text=(f"{init_done}/{init_raw_total}" if saved else "0/0"), bg=COLORS["bg"], fg=COLORS["text_dim"], font=config.font("small"), width=12, anchor="e")
         progress_text.pack(side="left", padx=(8, 0))
         init_status = ""
         if saved:
             rep = saved["report"]
-            init_status = tr("检测到上次未完成的进度：已完成 {done}/{total} 个文件（已创建 {created} 张概念卡，{proposals} 个技巧提案），可直接继续。",
-                             done=init_done, total=saved["total_files"], created=rep.get("created", 0), proposals=rep.get("proposals", 0))
+            unit = tr("组") if int(saved.get("total_groups", 0)) > int(saved.get("total_files", 0)) else tr("个文件")
+            init_status = tr("检测到上次未完成的进度：已完成 {done}/{total} {unit}（已创建 {created} 张概念卡，{proposals} 个技巧提案），可直接继续。",
+                             done=init_done, total=init_raw_total, unit=unit, created=rep.get("created", 0), proposals=rep.get("proposals", 0))
         status = tk.Label(area.inner, text=init_status, bg=COLORS["bg"], fg=COLORS["text_dim"], justify="left", anchor="w", font=config.font("body"))
         status.pack(fill="x")
         wrap_label(status)
@@ -851,8 +872,10 @@ class KnowledgePage(tk.Frame):
             if not dlg.winfo_exists():
                 return
             done_n, total_n = pair
-            progress_bar.configure(maximum=max(1, total_n), value=done_n)
+            progress_bar.configure(maximum=max(1, total_n), value=min(done_n, max(1, total_n)))
             progress_text.configure(text=f"{done_n}/{total_n}")
+            if running_cancel.get("event") is not None and not running_cancel["event"].is_set():
+                status.configure(text=tr("正在扫描并生成卡片… ({done}/{total})", done=done_n, total=total_n))
         def start(resume=True):
             root = folder.get().strip()
             types = [key for key, _ in choices if selected[key].get()]
@@ -875,7 +898,15 @@ class KnowledgePage(tk.Frame):
             status.configure(text=tr("正在扫描并生成卡片…"))
             def on_prog(done_n, total_n):
                 self._jobs.put((update_progress, (done_n, total_n), None))
-            self.background(lambda: auto_generate(self.kb, self.call_ai, root, types, on_progress=on_prog, resume=resume, cancel_event=ev), done)
+            def on_err():
+                running_cancel["event"] = None
+                if dlg.winfo_exists():
+                    status.configure(text=tr("自动生成失败，请检查所选文件夹或模型配置。"))
+                    start_button.state(["!disabled"])
+                    pause_button.state(["disabled"])
+                    if load_auto_progress(self.kb):
+                        reset_button.state(["!disabled"])
+            self.background(lambda: auto_generate(self.kb, self.call_ai, root, types, on_progress=on_prog, resume=resume, cancel_event=ev), done, on_error=on_err)
         def pause():
             ev = running_cancel.get("event")
             if ev is not None:
@@ -894,16 +925,21 @@ class KnowledgePage(tk.Frame):
             if not dlg.winfo_exists():
                 self.show()
                 return
-            total_n = int(report.get("files", 0))
+            files_n = int(report.get("files", 0))
+            groups_n = int(report.get("groups", 0))
+            total_n = groups_n if groups_n > files_n else files_n
             if report.get("paused"):
-                summary = tr("已暂停并保存进度：当前已完成 {done}/{total} 组（创建 {created} 张概念卡，生成 {proposals} 个技巧提案），下次打开可继续。",
-                             done=int(report.get("resumed", 0)) + int(report.get("created", 0) > 0 or 0),
-                             total=int(report.get("groups", 0)),
-                             created=report.get("created", 0), proposals=report.get("proposals", 0))
                 cur = load_auto_progress(self.kb)
+                done_cur, total_cur = _saved_counts(cur)
                 if cur:
-                    summary = tr("已暂停并保存进度：已完成 {done}/{total} 个文件（创建 {created} 张概念卡，生成 {proposals} 个技巧提案），下次打开可继续。",
-                                 done=cur["done_files"], total=cur["total_files"],
+                    unit = tr("组") if int(cur.get("total_groups", 0)) > int(cur.get("total_files", 0)) else tr("个文件")
+                    progress_bar.configure(maximum=max(1, total_cur), value=done_cur)
+                    progress_text.configure(text=f"{done_cur}/{total_cur}")
+                    summary = tr("已暂停并保存进度：已完成 {done}/{total} {unit}（创建 {created} 张概念卡，生成 {proposals} 个技巧提案），下次打开可继续。",
+                                 done=done_cur, total=total_cur, unit=unit,
+                                 created=report.get("created", 0), proposals=report.get("proposals", 0))
+                else:
+                    summary = tr("已暂停并保存进度：已创建 {created} 张概念卡，生成 {proposals} 个技巧提案，下次打开可继续。",
                                  created=report.get("created", 0), proposals=report.get("proposals", 0))
                 status.configure(text=summary)
                 start_button.configure(text=tr("继续生成"))
