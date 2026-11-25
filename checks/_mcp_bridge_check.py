@@ -836,6 +836,134 @@ def main():
             c.cfg["pro_key"] = orig_pro_key
             c._others.pop("bg-test", None)
 
+        # 9g. 上下文瘦身、无回复绑定、近期历史续接、自动轮换与旧会话归档验证
+        old_rmax = bridge.rollover_max_turns
+        old_rcomp = bridge.rollover_compact_min_turns
+        try:
+            bridge.rollover_max_turns = 2
+            bridge.rollover_compact_min_turns = 2
+            c._add("me", "刚才我们在聊微积分作业")
+            c._add("ai", "嗯，记得先画受力分析再列方程")
+            bind_roll = _http_json(port, bridge.token, "/tool/execute", {
+                "name": "oit_bind_persona",
+                "arguments": {"conversation_id": "conv-roll-1", "force": True},
+            })
+            assert bind_roll["ok"] and bind_roll.get("reply_required") is False, f"绑定后应标记不需要回复: {bind_roll}"
+            fb_bind = _http_json(port, bridge.token, "/turn/fallback_sync", {
+                "conversation_id": "conv-roll-1", "text": "已绑定完成",
+            })
+            assert fb_bind.get("skipped") == "just_bound_no_reply", f"刚绑定完成不应误写回 OIT 聊天: {fb_bind}"
+
+            # 首次 consumed /turn/context(delta=1) 自动补齐人设、记忆卡与近期历史；第二次进入差量瘦身
+            ctx_r1 = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-roll-1&consume_trigger=1&delta=1")
+            assert "近期对话上下文" in ctx_r1["system_message"] and "微积分作业" in ctx_r1["system_message"]
+            assert "[OIT解答图片模式]" in ctx_r1["system_message"]
+            ctx_r2 = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-roll-1&consume_trigger=1&delta=1")
+            assert "近期对话上下文" not in ctx_r2["system_message"], "近期历史不应在后续轮次重复注入"
+            assert "[OIT解答图片模式]" not in ctx_r2["system_message"], "未变化的状态行在差量模式下应省略"
+            assert "[OIT动态状态]" in ctx_r2["system_message"]
+
+            # SessionStart 也应携带 recent_history
+            p_ss_roll = subprocess.run(
+                [sys.executable, ss_script],
+                input=json.dumps({"conversationId": "conv-roll-1"}),
+                capture_output=True, text=True, encoding="utf-8", env=hook_env, timeout=10, check=True,
+            )
+            ss_out = json.loads(p_ss_roll.stdout)
+            assert "微积分作业" in ss_out["injectSteps"][0]["systemMessage"]["systemMessage"]
+
+            # 累计 2 轮回复后，下一条 push_user_message 自动触发轮换：解绑旧会话 + 携带 archive_conversation_id
+            for idx_turn in range(2):
+                r_sub = _http_json(port, bridge.token, "/reply/submit", {
+                    "conversation_id": "conv-roll-1", "bubbles": [f"第 {idx_turn + 1} 轮回复"],
+                })
+                assert r_sub["ok"]
+                for it in r_sub["items"]:
+                    _http_json(port, bridge.token, "/ui/delivered", {"msg_id": it["id"]})
+
+            sse_q = bridge._register_sse()
+            try:
+                assert bridge.push_user_message(c.pid, "继续聊刚才的作业") is True
+                ev_name, ev_payload = sse_q.get(timeout=2)
+                assert ev_name == "user_message"
+                assert ev_payload["conversation_id"] == "", "达到轮换阈值后应让 Sidecar 新建会话"
+                assert ev_payload.get("archive_conversation_id") == "conv-roll-1", "应通知 Sidecar 归档旧会话"
+                assert not bridge.is_bound_conversation("conv-roll-1"), "旧会话应已解绑"
+            finally:
+                bridge._unregister_sse(sse_q)
+
+            # 新会话绑定后首轮应收到 [OIT记忆整理提示] 与近期历史
+            _http_json(port, bridge.token, "/tool/execute", {
+                "name": "oit_bind_persona",
+                "arguments": {"conversation_id": "conv-roll-2", "force": True},
+            })
+            ctx_new = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-roll-2&consume_trigger=1&bootstrap=1")
+            assert "[OIT记忆整理提示]" in ctx_new["system_message"]
+            assert "近期对话上下文" in ctx_new["system_message"]
+
+            # 手动点击 OIT Chat 换新会话按钮 -> 发射 rollover SSE
+            sse_q2 = bridge._register_sse()
+            try:
+                act_roll = _http_json(port, bridge.token, "/ui/action", {"action": "rollover_session"})
+                assert act_roll["ok"] and act_roll["rolled_over"] is True and act_roll["old_cid"] == "conv-roll-2"
+                ev_name2, ev_payload2 = sse_q2.get(timeout=2)
+                assert ev_name2 == "rollover" and ev_payload2["archive_conversation_id"] == "conv-roll-2"
+            finally:
+                bridge._unregister_sse(sse_q2)
+
+            # Sidecar rollover 分发与 ConversationService 归档请求验证
+            import importlib.util
+            import http.server
+            sc_path = os.path.join(ROOT, "antigravity_plugin", "sidecars", "oit-proactive", "bridge.py")
+            spec = importlib.util.spec_from_file_location("oit_sidecar_bridge_test", sc_path)
+            sc_mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sc_mod)
+
+            archived_reqs = []
+            class _MockLSHandler(http.server.BaseHTTPRequestHandler):
+                def log_message(self, fmt, *a):
+                    pass
+                def do_POST(self):
+                    n = int(self.headers.get("Content-Length") or "0")
+                    body = json.loads(self.rfile.read(n).decode("utf-8"))
+                    archived_reqs.append((self.path, self.headers.get("x-antigravity-csrf-token"), body))
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b"{}")
+
+            ls_srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _MockLSHandler)
+            ls_port = ls_srv.server_address[1]
+            threading.Thread(target=ls_srv.serve_forever, daemon=True).start()
+            dispatched_cmds = []
+            try:
+                with patch.dict(os.environ, {
+                    "ANTIGRAVITY_LS_ADDRESS": f"127.0.0.1:{ls_port}",
+                    "ANTIGRAVITY_CSRF_TOKEN": "test-csrf-token",
+                }), patch.object(sc_mod, "_run_agentapi", side_effect=lambda a: dispatched_cmds.append(a)):
+                    assert sc_mod._archive_conversation("conv-old-99") is True
+                    sc_mod.dispatch_event({
+                        "event": "rollover",
+                        "kind": "rollover",
+                        "persona_name": "Claudia",
+                        "archive_conversation_id": "conv-old-100",
+                        "compact_memory": False,
+                    })
+                    time.sleep(0.2)
+            finally:
+                ls_srv.shutdown()
+                ls_srv.server_close()
+
+            assert len(archived_reqs) >= 2
+            assert archived_reqs[0][0] == "/product.v1.ConversationService/UpdateConversation"
+            assert archived_reqs[0][1] == "test-csrf-token"
+            assert archived_reqs[0][2] == {"conversationId": "conv-old-99", "annotations": {"archived": True}}
+            assert dispatched_cmds and dispatched_cmds[0][:2] == ["agentapi", "new-conversation"]
+            assert "不要调用 oit_reply" in dispatched_cmds[0][-1]
+        finally:
+            bridge.rollover_max_turns = old_rmax
+            bridge.rollover_compact_min_turns = old_rcomp
+
         # 9f. 重启竞态回归验证：旧 Bridge stop() 不得误删新 Bridge 的 mcp_bridge.json，且误删后 ensure_discovery() 自愈
         bridge2 = OitMcpBridge(c, tmp)
         try:

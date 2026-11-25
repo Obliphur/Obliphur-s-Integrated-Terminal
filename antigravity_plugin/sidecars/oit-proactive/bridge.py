@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 
@@ -83,11 +84,73 @@ def _run_agentapi(args: list):
         _log(f"agentapi exception exe={exe}: {exc}")
 
 
+def _archive_conversation(cid: str) -> bool:
+    """通过 Antigravity ConversationService 将已轮换的旧对话归档（静默降级，不阻塞正常消息）。"""
+    cid = str(cid or "").strip()
+    if not cid:
+        return False
+    addr = str(os.environ.get("ANTIGRAVITY_LS_ADDRESS") or "").strip()
+    csrf = str(os.environ.get("ANTIGRAVITY_CSRF_TOKEN") or "").strip()
+    if not addr or not csrf:
+        _log(f"skip archive cid={cid}: ANTIGRAVITY_LS_ADDRESS/CSRF unavailable")
+        return False
+    url = f"http://{addr}/product.v1.ConversationService/UpdateConversation"
+    body = json.dumps({
+        "conversationId": cid,
+        "annotations": {"archived": True},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Connect-Protocol-Version": "1",
+            "x-antigravity-csrf-token": csrf,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            resp.read()
+        _log(f"archived old conversation cid={cid}")
+        return True
+    except Exception as exc:
+        _log(f"archive failed cid={cid}: {exc}")
+        return False
+
+
+def _archive_conversation_async(cid: str):
+    if not cid:
+        return
+    threading.Thread(target=_archive_conversation, args=(cid,), daemon=True).start()
+
+
 def dispatch_event(event: dict):
     cid = str(event.get("conversation_id") or "").strip()
     kind = str(event.get("kind") or event.get("event") or "proactive")
     persona_name = str(event.get("persona_name") or "").strip()
+    archive_cid = str(event.get("archive_conversation_id") or "").strip()
+    if archive_cid:
+        _archive_conversation_async(archive_cid)
     _log(f"dispatch kind={kind} cid={cid or '(new)'} persona={persona_name or '?'}")
+    if kind == "rollover":
+        who = persona_name or "当前 OIT 人设"
+        if event.get("compact_memory"):
+            prompt = (
+                f"这是 OIT 人设「{who}」自动轮换后的新会话。请先调用 oit_bind_persona"
+                f"（persona_name={who!r}, force=true）将本对话与该人设 1 对 1 绑定，"
+                "再调用 oit_get_turn_context 载入人设、记忆卡与近期对话上下文，并按其中的记忆整理提示"
+                "调用 oit-memory-compact 子代理整理保存长期记忆。"
+                "完成后不要调用 oit_reply 给用户发消息，直接输出 ✓ 结束本轮即可。"
+            )
+        else:
+            prompt = (
+                f"这是 OIT 人设「{who}」自动轮换后的新会话。请调用 oit_bind_persona"
+                f"（persona_name={who!r}, force=true）将本对话与该人设 1 对 1 绑定。"
+                "完成绑定后不要调用 oit_reply 给用户发消息，直接输出 ✓ 结束本轮即可。"
+            )
+        _run_agentapi(["agentapi", "new-conversation", "--", prompt])
+        return
     if kind == "user_message":
         text = str(event.get("text") or "").strip()
         image_path = str(event.get("image_path") or "").strip()
@@ -151,7 +214,7 @@ def consume_sse(cfg: dict, boot_mtime: float):
                 if data_lines:
                     try:
                         payload = json.loads("\n".join(data_lines))
-                        if event_name in ("proactive", "user_message") or payload.get("event") in ("proactive", "user_message"):
+                        if event_name in ("proactive", "user_message", "rollover") or payload.get("event") in ("proactive", "user_message", "rollover"):
                             dispatch_event(payload)
                     except Exception as exc:
                         _log(f"event error: {exc}")

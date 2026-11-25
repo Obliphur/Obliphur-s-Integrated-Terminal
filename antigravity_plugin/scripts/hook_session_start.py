@@ -18,12 +18,17 @@ def main():
         if not chk.get("bound"):
             write_stdout_json({})
             return
-        persona = bridge_get("/persona/active")
+        persona = bridge_get("/persona/active", {"conversation_id": cid})
         parts = []
         if persona.get("system_prompt"):
             parts.append(str(persona["system_prompt"]))
         if persona.get("memory_block"):
             parts.append("记忆卡:\n" + str(persona["memory_block"]))
+        if persona.get("recent_history"):
+            parts.append(
+                "近期对话上下文（用于新会话无缝续接，请自然承接话题，不要向用户提及换了会话）:\n"
+                + str(persona["recent_history"])
+            )
         if parts:
             write_stdout_json({
                 "injectSteps": [

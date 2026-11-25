@@ -71,7 +71,7 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_bind_persona",
       description:
-        "将当前对话与指定 OIT 人设严格 1 对 1 排斥绑定（同一人设不能同时绑定两个对话；若目标人设已绑定其他对话会返回冲突错误，仅当用户明确要求解绑旧对话并迁移时才传 force=true）。绑定后再调用 oit_reply 与用户打招呼即可自动打开 OIT Chat。",
+        "将当前对话与指定 OIT 人设严格 1 对 1 排斥绑定（同一人设不能同时绑定两个对话；若目标人设已绑定其他对话会返回冲突错误，仅当用户明确要求解绑旧对话并迁移时才传 force=true）。完成绑定后不需要调用 oit_reply 打招呼，直接输出 ✓ 结束本轮即可（除非本轮同时附带了待回复的用户消息或主动触发）。",
       inputSchema: {
         type: "object",
         properties: {
@@ -489,6 +489,7 @@ function createOitServer(): Server {
           conversation_id: args.conversation_id as string | undefined,
           host: args.host as string | undefined,
           consume_trigger: args.consume_trigger === false ? "0" : "1",
+          bootstrap: "1",
         });
         const { system_message: _sm, ...meta } = res as Record<string, unknown>;
         return {
@@ -502,12 +503,12 @@ function createOitServer(): Server {
         const items = Array.isArray(res.items) ? res.items : [];
         const summary = items.length
           ? (res.held
-              ? `已提交 ${items.length} 条气泡（当前用户暂不可接收或日程延后，待恢复后推送；batch=${res.batch_id}）。请勿在主聊天区重复复述这些内容，直接回复 ✓ 结束本轮即可。`
-              : `已提交 ${items.length} 条气泡到 OIT Chat 侧栏（batch=${res.batch_id}）。请勿在主聊天区重复复述这些内容，直接回复 ✓ 结束本轮即可。`)
+              ? `已提交 ${items.length} 条气泡（延后送达），请回复 ✓ 结束本轮。`
+              : `已提交 ${items.length} 条气泡，请回复 ✓ 结束本轮。`)
           : res.silent
-            ? "本轮保持静默。"
+            ? "静默。"
             : res.refuse
-              ? "本轮暂不回复。"
+              ? "暂不回复。"
               : "已提交。";
         return {
           content: [{ type: "text", text: summary }],
@@ -550,6 +551,15 @@ function createOitServer(): Server {
         name,
         arguments: args,
       });
+      if (name === "oit_bind_persona" && res.ok !== false) {
+        const pname = String(res.persona_name || "");
+        const hint = `已完成与人设「${pname}」的 1 对 1 绑定。若本轮仅为绑定/换会话且无待回复的用户聊天消息或主动触发，请勿调用 oit_reply，直接输出 ✓ 结束本轮即可。`;
+        return {
+          content: [{ type: "text", text: hint }],
+          structuredContent: res,
+          isError: false,
+        };
+      }
       return {
         content: [{ type: "text", text: JSON.stringify(res, null, 2) }],
         structuredContent: res,
@@ -605,6 +615,7 @@ function createOitServer(): Server {
         `# ${res.persona_name || "OIT Persona"}`,
         String(res.system_prompt || ""),
         res.memory_block ? `\n## Memory\n${res.memory_block}` : "",
+        res.recent_history ? `\n## Recent History\n${res.recent_history}` : "",
       ]
         .filter(Boolean)
         .join("\n\n");
@@ -644,6 +655,7 @@ function createOitServer(): Server {
     const text = [
       String(res.system_prompt || ""),
       res.memory_block ? `\n记忆卡:\n${res.memory_block}` : "",
+      res.recent_history ? `\n近期对话上下文:\n${res.recent_history}` : "",
       "\n请遵守 OIT MCP 协议：每轮若未收到动态状态则先调用 oit_get_turn_context；回复尽量使用 oit_reply(bubbles=[...])。",
     ]
       .filter(Boolean)

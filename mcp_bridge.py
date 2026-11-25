@@ -29,6 +29,11 @@ SESSIONS_FILE = "mcp_sessions.json"
 BRIDGE_PROTOCOL = 1
 BODY_MAX = 4 * 1024 * 1024
 SSE_HEARTBEAT_S = 15.0
+BRIDGE_HANDOFF_MSGS = 24
+BRIDGE_HANDOFF_CHARS = 8000
+ROLLOVER_MAX_TURNS = 40
+ROLLOVER_NEW_DAY_TURNS = 12
+ROLLOVER_COMPACT_MIN_TURNS = 10
 
 SUBAGENT_ROLES = ("subject", "mental_health", "music_review", "memory_compact")
 _ROLE_TASK_KEY = {
@@ -189,6 +194,47 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
     return lines
 
 
+def _recent_history_block(comm_obj, max_msgs: int = BRIDGE_HANDOFF_MSGS,
+                          max_chars: int = BRIDGE_HANDOFF_CHARS) -> str:
+    """提取最近 N 条已送达的对话记录，用于新 Antigravity 会话无缝续接上下文。"""
+    msgs = getattr(comm_obj, "messages", None)
+    if not isinstance(msgs, list) or not msgs:
+        return ""
+    pname = _display_persona_name(comm_obj) or "对方"
+    selected = []
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        if role not in ("me", "ai"):
+            continue
+        if m.get("hold") or "pending_reply" in m:
+            continue
+        text = str(m.get("text") or "").strip()
+        if not text:
+            continue
+        if len(text) > 600:
+            text = text[:420] + "…" + text[-150:]
+        at = str(m.get("at") or "")
+        stamp = at[5:16].replace("T", " ") if len(at) >= 16 else ""
+        who = "用户" if role == "me" else pname
+        line = f"[{stamp}] {who}: {text}" if stamp else f"{who}: {text}"
+        selected.append(line)
+    if not selected:
+        return ""
+    selected = selected[-max(1, int(max_msgs)):]
+    kept = []
+    total = 0
+    for line in reversed(selected):
+        cost = len(line) + 1
+        if kept and total + cost > max_chars:
+            break
+        kept.append(line)
+        total += cost
+    kept.reverse()
+    return "\n".join(kept)
+
+
 def _bubble_delay_ms(comm_obj, text: str, index: int) -> int:
     """按 OIT 字数节奏计算气泡延时（毫秒）；首条立即可见，后续气泡带自然停顿。"""
     if index <= 0:
@@ -228,6 +274,14 @@ class OitMcpBridge:
         self._share_sent_ts = {}        # persona_id -> int (已下发给 Antigravity 的最新共享数据 sys 消息 ts)
         self._answer_image_context = {} # (conversation_id, subject session) -> original answer and source image
         self._pending_answer_images = {} # conversation_id -> rendered bytes awaiting oit_reply
+        self._bootstrapped_cids = set() # conversation_id -> 已注入过人设/记忆卡/近期历史
+        self._delta_state = {}          # conversation_id -> dict (上一轮已消费的静态/半静态状态快照)
+        self._pending_compact = set()   # persona_id -> 轮换后待整理长期记忆
+        self._last_bind_ms = {}         # conversation_id -> int (刚绑定时间，防 fallback_sync 误写绑定确认语)
+        self._rollover_hinted = set()   # conversation_id -> 已在直接聊天中提醒过一次轮换
+        self.rollover_max_turns = ROLLOVER_MAX_TURNS
+        self.rollover_new_day_turns = ROLLOVER_NEW_DAY_TURNS
+        self.rollover_compact_min_turns = ROLLOVER_COMPACT_MIN_TURNS
         self._running = False
         self._load_sessions()
 
@@ -483,6 +537,90 @@ class OitMcpBridge:
             except queue.Full:
                 pass
 
+    def _should_rollover(self, cid: str, now: datetime) -> bool:
+        if not cid:
+            return False
+        meta = self._sessions_map().get(cid)
+        if not isinstance(meta, dict) or not meta.get("persona_id"):
+            return False
+        turns = int(meta.get("turns") or 0)
+        if turns >= max(1, int(self.rollover_max_turns)):
+            return True
+        created_day = str(meta.get("created_day") or "")
+        today = f"{now:%Y-%m-%d}"
+        if created_day and created_day != today and turns >= max(1, int(self.rollover_new_day_turns)):
+            return True
+        return False
+
+    def _prepare_rollover(self, persona_id: str, now: datetime, force: bool = False) -> dict:
+        """在不删除聊天记录的前提下解绑旧对话并准备轮换到新对话；返回轮换信息。"""
+        pid = str(persona_id or getattr(self.comm, "pid", "") or "").strip()
+        cid = self._conversation_for_persona(pid)
+        if not cid:
+            return {"rolled_over": False, "old_cid": "", "compact_memory": False, "turns": 0}
+        if not force and not self._should_rollover(cid, now):
+            return {"rolled_over": False, "old_cid": "", "compact_memory": False, "turns": 0}
+        sessions = self._sessions_map()
+        meta = sessions.pop(cid, None) if isinstance(sessions.get(cid), dict) else {}
+        turns = int((meta or {}).get("turns") or 0)
+        need_compact = turns >= max(1, int(self.rollover_compact_min_turns))
+        with self._lock:
+            self._bootstrapped_cids.discard(cid)
+            self._delta_state.pop(cid, None)
+            self._last_bind_ms.pop(cid, None)
+            self._rollover_hinted.discard(cid)
+            self._last_reply_ms.pop(cid, None)
+            self._recent_user_ms.pop(cid, None)
+            old_trig = self._pending_triggers.pop(cid, None)
+            if old_trig and pid:
+                old_trig["conversation_id"] = ""
+                self._pending_triggers[pid] = old_trig
+            if need_compact and pid:
+                self._pending_compact.add(pid)
+        self._save_sessions()
+        if hasattr(self.comm, "save_cfg"):
+            self.comm.save_cfg()
+        return {
+            "rolled_over": True,
+            "old_cid": cid,
+            "compact_memory": need_compact,
+            "turns": turns,
+        }
+
+    def rollover_persona(self, persona_id: str = "", force: bool = True) -> dict:
+        """主动触发会话轮换：解绑旧会话，通知 Sidecar 归档旧会话并静默新建+绑定新会话。"""
+        pid = str(persona_id or getattr(self.comm, "pid", "") or "").strip()
+        now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
+        info = self._prepare_rollover(pid, now, force=force)
+        if not info["rolled_over"]:
+            return {"ok": True, "rolled_over": False, "persona_id": pid}
+        pname = self._persona_name_by_pid(pid) or _display_persona_name(self.comm)
+        payload = {
+            "event": "rollover",
+            "kind": "rollover",
+            "persona_id": pid,
+            "persona_name": pname,
+            "archive_conversation_id": info["old_cid"],
+            "compact_memory": info["compact_memory"],
+            "turns": info["turns"],
+            "ts": _now_ms(),
+        }
+        self._emit_sse("rollover", payload)
+        return {"ok": True, **info, "persona_id": pid, "persona_name": pname}
+
+    def _bump_session_turns(self, cid: str):
+        if not cid:
+            return
+        sessions = self._sessions_map()
+        meta = sessions.get(cid)
+        if not isinstance(meta, dict) or not meta.get("persona_id"):
+            return
+        meta["turns"] = int(meta.get("turns") or 0) + 1
+        if not meta.get("created_day"):
+            now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
+            meta["created_day"] = f"{now:%Y-%m-%d}"
+        self._save_sessions()
+
     # ── 主动触发与事件推送 ──
     def push_proactive(self, persona_id: str, body: str, kind: str = "proactive",
                        extra: dict = None) -> dict:
@@ -492,6 +630,14 @@ class OitMcpBridge:
         cid = self._conversation_for_persona(persona_id)
         if (extra or {}).get("bg") and not cid:
             return {"event": "proactive", "skipped": "unbound_background_persona", "persona_id": persona_id}
+        archive_cid = ""
+        with self._lock:
+            has_client = bool(self._sse_clients)
+        if cid and has_client and self._should_rollover(cid, now):
+            r_info = self._prepare_rollover(persona_id, now)
+            if r_info["rolled_over"]:
+                archive_cid = r_info["old_cid"]
+                cid = ""
         key = cid or persona_id or "*"
         entry_ts = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
         entry = {
@@ -514,6 +660,8 @@ class OitMcpBridge:
             "display_time": display_time,
             "ts": entry["ts"],
         }
+        if archive_cid:
+            event["archive_conversation_id"] = archive_cid
         self._emit_sse("proactive", event)
         return event
 
@@ -532,6 +680,11 @@ class OitMcpBridge:
                 self._pending_triggers.pop(key, None)
                 self._last_reply_ms.pop(key, None)
                 self._recent_user_ms.pop(key, None)
+                self._bootstrapped_cids.discard(key)
+                self._delta_state.pop(key, None)
+                self._last_bind_ms.pop(key, None)
+                self._rollover_hinted.discard(key)
+            self._pending_compact.discard(pid)
             self._interrupted.pop(pid, None)
             self._last_batch.pop(pid, None)
             self._share_sent_ts.pop(pid, None)
@@ -544,13 +697,22 @@ class OitMcpBridge:
     def push_user_message(self, persona_id: str, text: str, api_context: str = "",
                           trigger_kind: str = "user_attachment", held_messages: str = "",
                           image_path: str = "") -> bool:
-        """用户在 OIT 桌面端或同步手机端直接发消息时，转发给 Sidecar 唤醒对应 Antigravity 对话（未绑定时由 Sidecar 自动新建会话并绑定）；返回是否有活跃 Sidecar 接收。"""
+        """用户在 OIT 桌面端或同步手机端直接发消息时，转发给 Sidecar 唤醒对应 Antigravity 对话（未绑定或需轮换时由 Sidecar 自动新建会话并绑定）；返回是否有活跃 Sidecar 接收。"""
         if not str(text or "").strip():
             return False
+        now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
         cid = self._conversation_for_persona(persona_id)
         pname = _display_persona_name(self.comm) or self._persona_name_by_pid(persona_id)
         now_ms = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
         img_path = str(image_path or "").strip()
+        archive_cid = ""
+        with self._lock:
+            has_client = bool(self._sse_clients)
+        if cid and has_client and self._should_rollover(cid, now):
+            r_info = self._prepare_rollover(persona_id, now)
+            if r_info["rolled_over"]:
+                archive_cid = r_info["old_cid"]
+                cid = ""
         with self._lock:
             self._pending_answer_images.pop(cid, None)
             for key in [key for key in self._answer_image_context if key[0] == cid]:
@@ -581,7 +743,7 @@ class OitMcpBridge:
                 }
         if not has_client:
             return False
-        self._emit_sse("user_message", {
+        payload = {
             "event": "user_message",
             "persona_id": persona_id,
             "persona_name": pname,
@@ -589,7 +751,10 @@ class OitMcpBridge:
             "text": str(text).strip(),
             "image_path": img_path,
             "ts": now_ms,
-        })
+        }
+        if archive_cid:
+            payload["archive_conversation_id"] = archive_cid
+        self._emit_sse("user_message", payload)
         return True
 
     def _sessions_map(self) -> dict:
@@ -769,7 +934,21 @@ class OitMcpBridge:
                     self.comm.set_persona(target_name)
                 for old_cid in other_cids:
                     sessions.pop(old_cid, None)
-                sessions[cid] = {"persona_id": pid, "host": host, "ts": _now_ms()}
+                now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
+                now_ts = _now_ms()
+                sessions[cid] = {
+                    "persona_id": pid,
+                    "host": host,
+                    "ts": now_ts,
+                    "turns": 0,
+                    "created_day": f"{now:%Y-%m-%d}",
+                }
+                with self._lock:
+                    for old_cid in (*other_cids, cid):
+                        self._bootstrapped_cids.discard(old_cid)
+                        self._delta_state.pop(old_cid, None)
+                        self._rollover_hinted.discard(old_cid)
+                    self._last_bind_ms[cid] = now_ts
                 self._save_sessions()
                 if hasattr(self.comm, "save_cfg"):
                     self.comm.save_cfg()
@@ -780,28 +959,54 @@ class OitMcpBridge:
                 "persona_name": _display_persona_name(self.comm),
                 "host": host,
                 "subagent_routes": self._subagent_routes(host),
+                "reply_required": False,
             }
         return self._call_main(work)
 
+    def _persona_bootstrap_payload(self) -> dict:
+        name = self.comm.persona_name() if hasattr(self.comm, "persona_name") else ""
+        pid = getattr(self.comm, "pid", "")
+        system = ""
+        if name and hasattr(self.comm, "personas"):
+            from comm.comm_persona import persona_system
+            try:
+                system = persona_system(self.comm.personas, name, False)
+            except Exception:
+                system = ""
+        mem = self.comm.memory_block_of(self.comm.cfg) if hasattr(self.comm, "memory_block_of") else ""
+        recent = _recent_history_block(self.comm)
+        return {
+            "persona_id": pid,
+            "persona_name": _display_persona_name(self.comm),
+            "system_prompt": system,
+            "memory_block": mem,
+            "recent_history": recent,
+        }
+
+    def _persona_bootstrap_text(self) -> str:
+        info = self._persona_bootstrap_payload()
+        parts = []
+        if info.get("system_prompt"):
+            parts.append(str(info["system_prompt"]))
+        if info.get("memory_block"):
+            parts.append("记忆卡:\n" + str(info["memory_block"]))
+        if info.get("recent_history"):
+            parts.append(
+                "近期对话上下文（用于新会话无缝续接，请自然承接话题，不要向用户提及换了会话）:\n"
+                + str(info["recent_history"])
+            )
+        return "\n\n".join(parts)
+
     def handle_persona_active(self, qs: dict) -> dict:
+        cid = str(qs.get("conversation_id") or "").strip()
+
         def work():
-            name = self.comm.persona_name() if hasattr(self.comm, "persona_name") else ""
-            pid = getattr(self.comm, "pid", "")
-            system = ""
-            if name and hasattr(self.comm, "personas"):
-                from comm.comm_persona import persona_system
-                try:
-                    system = persona_system(self.comm.personas, name, False)
-                except Exception:
-                    system = ""
-            mem = self.comm.memory_block_of(self.comm.cfg) if hasattr(self.comm, "memory_block_of") else ""
-            return {
-                "ok": True,
-                "persona_id": pid,
-                "persona_name": _display_persona_name(self.comm),
-                "system_prompt": system,
-                "memory_block": mem,
-            }
+            if cid and self.is_bound_conversation(cid):
+                self._ensure_persona_for_conversation(cid)
+                with self._lock:
+                    self._bootstrapped_cids.add(cid)
+            info = self._persona_bootstrap_payload()
+            return {"ok": True, **info}
         return self._call_main(work)
 
     def handle_claudia_reference(self) -> dict:
@@ -824,6 +1029,8 @@ class OitMcpBridge:
         cid = str(qs.get("conversation_id") or "").strip()
         consume = str(qs.get("consume_trigger") or "1") not in ("0", "false", "False")
         only_bound = str(qs.get("only_bound") or "0") in ("1", "true", "True")
+        delta = str(qs.get("delta") or "0") in ("1", "true", "True")
+        bootstrap = str(qs.get("bootstrap") or "0") in ("1", "true", "True")
         host = str(qs.get("host") or "").strip()
         last_input = str(qs.get("last_user_input") or "")
 
@@ -853,7 +1060,30 @@ class OitMcpBridge:
 
             routes = self._subagent_routes(eff_host)
             head = f"[OIT动态状态] {now:%Y-%m-%d %H:%M} | {_display_persona_name(self.comm)}"
-            lines = [head, _compact_schedule_line(self.comm, now, status)]
+            lines = []
+            # 新绑定会话尚未经过 SessionStart 注入时，在首轮动态上下文（delta/bootstrap）中一次性补齐人设、记忆卡与近期历史
+            need_bootstrap = bool(
+                (delta or bootstrap) and cid and self.is_bound_conversation(cid)
+                and cid not in self._bootstrapped_cids
+            )
+            if need_bootstrap:
+                boot_txt = self._persona_bootstrap_text()
+                if boot_txt:
+                    lines.append(boot_txt)
+                if consume:
+                    with self._lock:
+                        self._bootstrapped_cids.add(cid)
+
+            use_delta = bool(delta and consume and cid)
+            prev_delta = dict(self._delta_state.get(cid) or {}) if use_delta else {}
+            cur_delta = {}
+
+            lines.append(head)
+            sched_line = _compact_schedule_line(self.comm, now, status)
+            cur_delta["schedule"] = sched_line
+            if not use_delta or prev_delta.get("schedule") != sched_line:
+                lines.append(sched_line)
+
             if hasattr(self.comm, "_interaction_prepare"):
                 d_inter = self.comm._interaction_prepare(pid, status)
                 with self._lock:
@@ -866,10 +1096,15 @@ class OitMcpBridge:
                     if (not trigger or trigger.get("kind") in ("user_attachment", "user", "retry"))
                     else "proactive"
                 )
-                lines.extend(_compact_interaction_lines(self.comm, pid, status, judge_kind))
+                inter_lines = _compact_interaction_lines(self.comm, pid, status, judge_kind)
+                inter_sig = "\n".join(inter_lines)
+                cur_delta["interaction"] = inter_sig
+                if inter_lines and (not use_delta or prev_delta.get("interaction") != inter_sig):
+                    lines.extend(inter_lines)
                 if hasattr(self.comm, "realism_note"):
                     r_note = self.comm.realism_note(pid)
-                    if r_note:
+                    cur_delta["realism"] = r_note or ""
+                    if r_note and (not use_delta or prev_delta.get("realism") != r_note):
                         lines.append(r_note)
 
             # 增量下发尚未送达 Antigravity 的 share data 页面数据（role="sys"），供悬浮窗聊天与结束总结使用
@@ -951,10 +1186,50 @@ class OitMcpBridge:
             non_default_routes = [
                 f"{r}={v['mode']}" for r, v in routes.items() if v.get("mode") != "host_subagent"
             ]
-            if non_default_routes:
-                lines.append(f"[OIT子代理路由] {', '.join(non_default_routes)}")
+            routes_line = f"[OIT子代理路由] {', '.join(non_default_routes)}" if non_default_routes else ""
+            cur_delta["routes"] = routes_line
+            if routes_line and (not use_delta or prev_delta.get("routes") != routes_line):
+                lines.append(routes_line)
+
             answer_images = callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()
-            lines.append(f"[OIT解答图片模式] {'开启' if answer_images else '关闭'}。")
+            ans_img_line = f"[OIT解答图片模式] {'开启' if answer_images else '关闭'}。"
+            cur_delta["answer_images"] = ans_img_line
+            if not use_delta or prev_delta.get("answer_images") != ans_img_line:
+                lines.append(ans_img_line)
+
+            # 会话自动轮换后，触发一次隔离的长期记忆整理子代理
+            need_compact = False
+            with self._lock:
+                if pid in self._pending_compact:
+                    need_compact = True
+                    if consume:
+                        self._pending_compact.discard(pid)
+            if need_compact:
+                mc_mode = (routes.get("memory_compact") or {}).get("mode", "host_subagent")
+                if mc_mode == "host_subagent":
+                    lines.append(
+                        "[OIT记忆整理提示] 本人设刚刚完成会话轮换以释放上下文。"
+                        "请调用隔离子代理 oit-memory-compact，将旧记忆卡与近期对话上下文压缩为简洁长期记忆并由其调用 oit_memory_save_auto 保存；"
+                        "整理过程对用户完全静默，绝不可向用户提及记忆整理或换会话。"
+                    )
+
+            # 若用户直接在 Antigravity 内长期聊天超过阈值（未经过 OIT 转发），提醒一次可整理换新
+            if cid and self._should_rollover(cid, now):
+                with self._lock:
+                    hinted = cid in self._rollover_hinted
+                    if not hinted and consume:
+                        self._rollover_hinted.add(cid)
+                if not hinted:
+                    turns = int((sess_meta or {}).get("turns") or 0)
+                    lines.append(
+                        f"[OIT会话轮换提示] 当前对话已累计 {turns} 轮，上下文较长。"
+                        "你可在不打扰聊天节奏的前提下提示用户点击 OIT Chat 顶部的换新会话按钮（🔄）以自动整理记忆并切换到轻量新对话。"
+                    )
+
+            if consume and cid:
+                with self._lock:
+                    self._delta_state[cid] = cur_delta
+
             return {
                 "ok": True,
                 "conversation_id": cid,
@@ -1021,7 +1296,21 @@ class OitMcpBridge:
                     self.comm.set_persona(resolved)
                 for old_cid in other_cids:
                     sessions.pop(old_cid, None)
-                sessions[target_cid] = {"persona_id": pid, "host": host, "ts": _now_ms()}
+                now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
+                now_ts = _now_ms()
+                sessions[target_cid] = {
+                    "persona_id": pid,
+                    "host": host,
+                    "ts": now_ts,
+                    "turns": 0,
+                    "created_day": f"{now:%Y-%m-%d}",
+                }
+                with self._lock:
+                    for old_cid in (*other_cids, target_cid):
+                        self._bootstrapped_cids.discard(old_cid)
+                        self._delta_state.pop(old_cid, None)
+                        self._rollover_hinted.discard(old_cid)
+                    self._last_bind_ms[target_cid] = now_ts
                 self._save_sessions()
                 self.comm.save_cfg()
                 return {
@@ -1029,6 +1318,8 @@ class OitMcpBridge:
                     "persona_id": pid,
                     "persona_name": _display_persona_name(self.comm),
                     "conversation_id": target_cid,
+                    "reply_required": False,
+                    "message": "绑定完成。如本轮没有附带待回复的用户聊天消息或主动触发，请勿调用 oit_reply 打招呼，直接输出 ✓ 结束本轮即可。",
                 }
             if self.comm.hard_block():
                 return {"ok": False, "error": "当前处于禁止沟通状态"}
@@ -1452,6 +1743,7 @@ class OitMcpBridge:
                 if pid:
                     self._last_reply_ms[pid] = now_ts
                 self._last_reply_ms["*"] = now_ts
+            self._bump_session_turns(cid)
             self.comm.save_chat()
             self.comm._changed()
             if hasattr(self.comm, "_push"):
@@ -1645,6 +1937,8 @@ class OitMcpBridge:
             if action == "clear_chat" and hasattr(self.comm, "clear_chat"):
                 self.comm.clear_chat()
                 return {"ok": True}
+            if action == "rollover_session":
+                return self.rollover_persona(pid, force=True)
             if action == "open_native_dialog":
                 kind = str(params.get("kind") or "")
                 if callable(self._open_native_dialog):
@@ -1703,11 +1997,16 @@ class OitMcpBridge:
                     self._last_reply_ms.get(pid, 0),
                     self._last_reply_ms.get("*", 0),
                 )
+                recent_bind = self._last_bind_ms.get(cid, 0)
+                cid_reply = self._last_reply_ms.get(cid, 0)
+            if now_ts - recent_bind < 60_000 and recent_bind >= cid_reply:
+                return {"ok": True, "skipped": "just_bound_no_reply"}
             if now_ts - recent < 60_000:
                 return {"ok": True, "skipped": "already_replied_via_oit_reply"}
             if self.comm.messages and self.comm.messages[-1].get("role") == "ai" and self.comm.messages[-1].get("text") == text:
                 return {"ok": True, "dedup": True}
             self.comm._add("ai", text)
+            self._bump_session_turns(cid)
             self.comm.save_chat()
             self.comm._changed()
             if hasattr(self.comm, "_push"):

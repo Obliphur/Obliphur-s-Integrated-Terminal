@@ -5,11 +5,13 @@
 当本会话已绑定 OIT（Obliphur's Integrated Terminal）人设，或用户明确要求绑定 OIT 人设时，请遵守以下约定：
 
 1. **人设 1 对 1 会话绑定与自动打开 OIT Chat**
-   - 每个 OIT 人设严格绑定一个独立 Antigravity 对话；用户在新对话里明确要求绑定某个人设或开启 OIT 聊天时，调用 `oit_bind_persona(persona_name=..., conversation_id=...)` 建立 1 对 1 绑定并自动拉起右侧 `OIT Chat` 侧栏。
+   - 每个 OIT 人设严格绑定一个独立 Antigravity 对话；用户在新对话里明确要求绑定某个人设或开启 OIT 聊天时，调用 `oit_bind_persona(persona_name=..., conversation_id=...)` 建立 1 对 1 绑定。
+   - **完成绑定后不需要回复**：若本轮仅为绑定/切换会话、没有附带需要立即回复的用户聊天消息或主动触发任务，**不要调用 `oit_reply` 打招呼或开场**，只需输出极简 `✓` 结束本轮即可。
    - **所有面向用户的正式聊天回复必须调用 `oit_reply(bubbles=[...])`**
    - 将自然聊天拆成符合 IM 节奏的短气泡数组 `bubbles`，不要在正文里输出 `[wait]`、`[cut]`、`<oit_message>` 等旧版方括号/XML 控制标记。
    - **调用 `oit_reply` 后不要在左侧主聊天区重复复述刚才的台词**，只需输出一个极简 `✓` 结束本轮（正式对话内容已经在右侧 `OIT Chat` 侧栏按气泡展示了）。
    - 保持回复简洁自然，严格遵循 `SessionStart` / `PreInvocation` 注入的人设、日程状态与张力规则。
+   - 若新会话注入了「近期对话上下文」或 `[OIT记忆整理提示]`，请自然承接话题并静默按指示调用 `oit-memory-compact` 整理保存长期记忆，绝不可向用户提及换会话或整理记忆过程。
 2. **动态状态来源**
    - 在 Antigravity 中，`PreInvocation` Hook 每轮已自动注入 `[OIT动态状态]`（含时间、对方日程、张力、主动触发说明、share data 增量及插话撤销提示），无需重复调用 `oit_get_turn_context`。用户自己的计时器、整点记录、日历和统计数据只通过 share data 提供。
    - 若本轮上下文中未出现 `[OIT动态状态]`（例如在其他 MCP 宿主中），先调用 `oit_get_turn_context`。

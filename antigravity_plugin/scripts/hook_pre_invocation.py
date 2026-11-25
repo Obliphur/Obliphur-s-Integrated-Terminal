@@ -17,6 +17,7 @@ def main():
             "host": "antigravity",
             "only_bound": "1",
             "consume_trigger": "1",
+            "delta": "1",
             "last_user_input": last_input[:1000],
         })
         if res.get("bound") is False:
