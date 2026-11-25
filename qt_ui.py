@@ -10,10 +10,12 @@ continue to work until each page is migrated.
 from __future__ import annotations
 
 import tkinter as tk
+import calendar as _calendar
+from datetime import datetime
 
 import config
 from config import COLORS, IDLE, ON_BREAK, READY_BREAK, RUNNING
-from i18n import tr
+from i18n import is_en, tr
 
 try:
     from PySide6.QtCore import QTimer, Qt
@@ -21,7 +23,10 @@ try:
     from PySide6.QtWidgets import (
         QApplication,
         QHBoxLayout,
+        QGridLayout,
         QLabel,
+        QListWidget,
+        QTabWidget,
         QMainWindow,
         QPushButton,
         QSizePolicy,
@@ -45,6 +50,223 @@ def _tk_text(widget, default: str = "") -> str:
 
 
 if QApplication is not None:
+    class QtCalendarPage(QWidget):
+        """Qt calendar view backed by the existing DataManager calendar rules."""
+
+        _KINDS = (("study", "专注"), ("break", "休息"), ("idle", "空闲"), ("sleep", "睡眠"))
+        _DAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+        def __init__(self, model, parent=None):
+            super().__init__(parent)
+            self.model = model
+            self.offset = 0
+            self.kind = "study"
+            root = QVBoxLayout(self)
+            root.setContentsMargins(28, 22, 28, 22)
+            root.setSpacing(12)
+            header = QHBoxLayout()
+            self.title = QLabel(self)
+            self.title.setObjectName("pageTitle")
+            self.total = QLabel(self)
+            self.total.setObjectName("today")
+            header.addWidget(self.title)
+            header.addWidget(self.total)
+            header.addStretch(1)
+            self.kind_buttons = {}
+            for key, label in self._KINDS:
+                button = QPushButton(tr(label), self)
+                button.clicked.connect(lambda _checked=False, k=key: self.set_kind(k))
+                self.kind_buttons[key] = button
+                header.addWidget(button)
+            self.prev = QPushButton(tr("‹ 上月"), self)
+            self.next = QPushButton(tr("本月 ›"), self)
+            self.prev.clicked.connect(lambda: self.go(-1))
+            self.next.clicked.connect(lambda: self.go(0))
+            header.addWidget(self.prev)
+            header.addWidget(self.next)
+            root.addLayout(header)
+
+            self.grid = QGridLayout()
+            self.grid.setSpacing(2)
+            self.cells = []
+            for col, day in enumerate(self._DAYS):
+                label = QLabel(tr(day), self)
+                label.setAlignment(Qt.AlignCenter)
+                label.setObjectName("calendarHeader")
+                self.grid.addWidget(label, 0, col)
+            for row in range(6):
+                cells = []
+                for col in range(7):
+                    label = QLabel("", self)
+                    label.setAlignment(Qt.AlignCenter)
+                    label.setMinimumHeight(52)
+                    label.setObjectName("calendarCell")
+                    self.grid.addWidget(label, row + 1, col)
+                    cells.append(label)
+                self.cells.append(cells)
+            root.addLayout(self.grid, 1)
+
+        def _calendar_page(self):
+            return getattr(self.model, "pages", {}).get("cal")
+
+        def go(self, offset: int):
+            self.offset = -1 if offset < 0 else 0
+            self.refresh()
+
+        def set_kind(self, kind: str):
+            self.kind = kind
+            self.refresh()
+
+        def refresh(self):
+            now = datetime.now()
+            year, month = now.year, now.month
+            if self.offset < 0:
+                if month == 1:
+                    year, month = year - 1, 12
+                else:
+                    month -= 1
+            page = self._calendar_page()
+            dm = getattr(page, "dm", None)
+            prefix = f"{year}-{month:02d}"
+            today_str = now.strftime("%Y-%m-%d")
+            months = ("January", "February", "March", "April", "May", "June",
+                      "July", "August", "September", "October", "November", "December") if is_en() else (
+                          "1 月", "2 月", "3 月", "4 月", "5 月", "6 月", "7 月", "8 月", "9 月", "10 月", "11 月", "12 月")
+            fog_seed = None
+            try:
+                fog_seed = page.fog() if page is not None else None
+            except Exception:
+                pass
+            data = {}
+            if self.kind == "study":
+                for date_str, hours in (getattr(dm, "study_data", {}) or {}).items():
+                    if date_str.startswith(prefix):
+                        data[date_str] = float(hours)
+            elif page is not None and dm is not None:
+                try:
+                    data = page._kind_hours(self.kind, prefix, now)
+                except Exception:
+                    data = {}
+            if fog_seed is not None:
+                import random
+                rnd = random.Random(f"{fog_seed}/{prefix}")
+                data = {f"{prefix}-{day:02d}": round(rnd.uniform(16, 80), 1)
+                        for day in range(1, 32) if f"{prefix}-{day:02d}" <= today_str}
+                self.title.setText("???")
+                self.total.setText(tr("合计: ???"))
+            else:
+                self.title.setText(tr("{year} 年 {month}").format(year=year, month=months[month - 1]))
+                if self.kind == "study":
+                    self.total.setText(tr("合计: {h:.1f} h").format(h=sum(data.values())))
+                else:
+                    total_templates = {
+                        "break": "休息合计: {h:.1f} h",
+                        "idle": "空闲合计: {h:.1f} h",
+                        "sleep": "睡眠合计: {h:.1f} h",
+                    }
+                    self.total.setText(tr(total_templates[self.kind]).format(h=sum(data.values())))
+            self.prev.setEnabled(self.offset == 0)
+            self.next.setEnabled(self.offset < 0)
+            for key, button in self.kind_buttons.items():
+                button.setEnabled(key != self.kind)
+            weeks = _calendar.monthcalendar(year, month)
+            for row in range(6):
+                week = weeks[row] if row < len(weeks) else [0] * 7
+                for col, day in enumerate(week):
+                    label = self.cells[row][col]
+                    if not day:
+                        label.setText("")
+                        label.setProperty("today", False)
+                        continue
+                    date_str = f"{year}-{month:02d}-{day:02d}"
+                    hours = float(data.get(date_str, 0.0) or 0.0)
+                    label.setText(f"{day}\n{hours:.1f}h" if hours > 0 else str(day))
+                    label.setProperty("today", date_str == today_str)
+                    label.style().unpolish(label)
+                    label.style().polish(label)
+
+    class QtStatsPage(QWidget):
+        """Compact Qt statistics view; the existing model remains the source of truth."""
+
+        def __init__(self, model, parent=None):
+            super().__init__(parent)
+            self.model = model
+            root = QVBoxLayout(self)
+            root.setContentsMargins(28, 22, 28, 22)
+            title = QLabel(tr("📊  统计"), self)
+            title.setObjectName("pageTitle")
+            root.addWidget(title)
+            self.tabs = QTabWidget(self)
+            root.addWidget(self.tabs, 1)
+            self.summary = QWidget(self.tabs)
+            summary_layout = QVBoxLayout(self.summary)
+            summary_layout.setContentsMargins(18, 18, 18, 18)
+            self.summary_labels = {}
+            for key in ("today", "this_month", "last_month", "focus", "contract"):
+                label = QLabel(self.summary)
+                label.setWordWrap(True)
+                label.setMinimumHeight(34)
+                self.summary_labels[key] = label
+                summary_layout.addWidget(label)
+            summary_layout.addStretch(1)
+            self.tabs.addTab(self.summary, tr("概览"))
+
+            self.contracts = QListWidget(self.tabs)
+            self.violations = QListWidget(self.tabs)
+            self.tabs.addTab(self.contracts, tr("合约记录"))
+            self.tabs.addTab(self.violations, tr("违规记录"))
+
+        def _month_prefixes(self):
+            now = datetime.now()
+            this = f"{now.year}-{now.month:02d}"
+            if now.month == 1:
+                last = f"{now.year - 1}-12"
+            else:
+                last = f"{now.year}-{now.month - 1:02d}"
+            return this, last
+
+        def refresh(self):
+            dm = getattr(self.model, "dm", None)
+            if dm is None:
+                return
+            this, last = self._month_prefixes()
+            try:
+                today = float(dm.get_today_hours())
+            except Exception:
+                today = 0.0
+            try:
+                this_hours = sum(float(v) for v in dm.month_study(this).values())
+                last_hours = sum(float(v) for v in dm.month_study(last).values())
+            except Exception:
+                this_hours = sum(float(v) for k, v in dm.study_data.items() if str(k).startswith(this))
+                last_hours = sum(float(v) for k, v in dm.study_data.items() if str(k).startswith(last))
+            focus_count = len(getattr(dm, "focus_sessions", []) or [])
+            self.summary_labels["today"].setText(tr("今日专注: {h:.1f} 小时").format(h=today))
+            self.summary_labels["this_month"].setText(tr("本月专注: {h:.1f} 小时").format(h=this_hours))
+            self.summary_labels["last_month"].setText(tr("上月专注: {h:.1f} 小时").format(h=last_hours))
+            self.summary_labels["focus"].setText(tr("专注 / 休息记录: {n} 条").format(n=focus_count))
+            contract = getattr(self.model, "contract", None)
+            if contract is not None and getattr(contract, "active", False):
+                self.summary_labels["contract"].setText(tr("当前合约: 等级 {lv}, 目标生命值 {life} / {limit}").format(
+                    lv=getattr(contract, "level", 0), life=getattr(contract, "life", 0),
+                    limit=getattr(contract, "violation_limit", 0)))
+            else:
+                self.summary_labels["contract"].setText(tr("当前没有进行中的合约"))
+
+            self.contracts.clear()
+            history = list(getattr(contract, "history", []) or []) if contract is not None else []
+            for rec in reversed(history[-15:]):
+                result = tr("完成") if rec.get("result") == "completed" else tr("失败")
+                ended = str(rec.get("end") or rec.get("start") or "")[:16].replace("T", " ")
+                self.contracts.addItem(f"{ended} · {result} · {tr('等级')} {rec.get('level', 0)}")
+            if not history:
+                self.contracts.addItem(tr("暂无合约记录"))
+            self.violations.clear()
+            for rec in dm.recent_violations(15):
+                self.violations.addItem(f"{rec.get('at', '')} · {rec.get('text', '')}")
+            if not getattr(dm, "violations", None):
+                self.violations.addItem(tr("暂无违规记录"))
+
     class QtOitWindow(QMainWindow):
         """Visible Qt shell backed by the existing OIT application model."""
 
@@ -95,8 +317,11 @@ if QApplication is not None:
             self._add_timer_page()
             for key in order:
                 if key != "timer":
-                    page = QLabel(tr("正在迁移此页面到 Qt6"), self._stack)
-                    page.setAlignment(Qt.AlignCenter)
+                    page = (QtCalendarPage(self.model, self._stack) if key == "cal" else
+                            QtStatsPage(self.model, self._stack) if key == "stats" else QLabel(
+                        tr("正在迁移此页面到 Qt6"), self._stack))
+                    if isinstance(page, QLabel):
+                        page.setAlignment(Qt.AlignCenter)
                     self._pages[key] = page
                     self._stack.addWidget(page)
             self.show_page("timer")
@@ -156,6 +381,10 @@ if QApplication is not None:
                 QPushButton {{ background: {card}; color: {text}; border: 1px solid {border}; padding: 9px 14px; }}
                 QPushButton:hover {{ border-color: {accent}; }}
                 QPushButton:disabled {{ color: {dim}; }}
+                QPushButton[active="true"] {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
+                QLabel#calendarHeader {{ background: {card}; color: {dim}; padding: 6px; }}
+                QLabel#calendarCell {{ background: {card}; border: 1px solid {border}; padding: 4px; }}
+                QLabel#calendarCell[today="true"] {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
                 QWidget#timerCard QPushButton {{ background: {accent}; color: {COLORS.get('on_accent', '#ffffff')}; }}
             """)
 
@@ -167,6 +396,10 @@ if QApplication is not None:
             except Exception:
                 pass
             self._stack.setCurrentWidget(self._pages[key])
+            if key == "cal":
+                self._pages[key].refresh()
+            elif key == "stats":
+                self._pages[key].refresh()
             for name, button in self._nav.items():
                 button.setProperty("active", name == key)
                 button.style().unpolish(button)
