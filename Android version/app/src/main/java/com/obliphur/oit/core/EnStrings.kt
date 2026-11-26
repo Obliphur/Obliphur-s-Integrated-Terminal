@@ -947,6 +947,7 @@ object EnStrings {
         "Claudia 的内容和默认人设不一样" to "Claudia differs from the default persona",
         "推荐使用Claude" to "Claude is recommended",
         "推荐使用Gemini" to "Gemini is recommended",
+        "推荐使用ChatGPT" to "ChatGPT is recommended",
         "还原" to "Restore",
         "已还原默认人设" to "Default persona restored",
         "已经看过了." to "Already read.",

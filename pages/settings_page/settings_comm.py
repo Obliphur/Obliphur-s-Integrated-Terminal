@@ -306,7 +306,11 @@ class CommSettingsMixin:
             self._voice_settings_refresh()
         set_var(self.comm_persona, next((lab for n, lab in self._persona_labels if n == cur), ""))
         title = comm_mod.persona_title(cur).strip().casefold() if cur else ""
-        rec = tr("推荐使用Claude") if title == "claudia" else (tr("推荐使用Gemini") if title == "gemina" else "")
+        rec = {
+            "claudia": tr("推荐使用Claude"),
+            "gemina": tr("推荐使用Gemini"),
+            "charlotte": tr("推荐使用ChatGPT"),
+        }.get(title, "")
         if rec:
             cfg(self.lbl_claudia_recommend, text=rec)
             if not self.lbl_claudia_recommend.winfo_manager():

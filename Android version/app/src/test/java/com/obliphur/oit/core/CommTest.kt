@@ -461,11 +461,11 @@ class CommTest {
 
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))
-        assertTrue(File(td, "personas/README.md").exists() && c.listPersonas() == listOf("Assistant.txt", "Claudia.txt", "Gemina.txt"))
+        assertTrue(File(td, "personas/README.md").exists() && c.listPersonas() == listOf("Assistant.txt", "Charlotte.txt", "Claudia.txt", "Gemina.txt"))
         assertEquals("小夏.txt", c.importPersona("小夏.txt", "你是小夏, 大学生.".byteInputStream()))
         assertEquals("小夏 (2).txt", c.importPersona("小夏.txt", "x".byteInputStream()))
         assertEquals("", c.importPersona("x.json", "x".byteInputStream()))
-        assertEquals(listOf("Assistant.txt", "Claudia.txt", "Gemina.txt", "小夏 (2).txt", "小夏.txt"), c.listPersonas())
+        assertEquals(listOf("Assistant.txt", "Charlotte.txt", "Claudia.txt", "Gemina.txt", "小夏 (2).txt", "小夏.txt"), c.listPersonas())
         assertTrue("大学生" in c.readPersona("小夏.txt") && c.readPersona("../x").isEmpty())
         c.set(persona = "")
         assertEquals("还没有选人设", c.send("hi"))
@@ -1726,30 +1726,37 @@ class CommTest {
         val td = Files.createTempDirectory("oit").toFile()
         val dir = File(td, "d").also { it.mkdirs() }
         val c = comm(dir, File(td, "pp"))
-        assertEquals(listOf("Assistant.txt", "Claudia.txt", "Gemina.txt"), c.listPersonas())
+        assertEquals(listOf("Assistant.txt", "Charlotte.txt", "Claudia.txt", "Gemina.txt"), c.listPersonas())
         assertEquals("Claudia.txt", c.personaName())            // 第一次运行默认选中
         assertTrue(c.readPersona("Claudia.txt").startsWith("你将扮演一位文静,冷淡"))
         assertTrue(c.readPersona("Assistant.txt").startsWith("你是名为 Assistant 的 AI 助手"))
         assertTrue(c.readPersona("Gemina.txt").startsWith("你将扮演一位表面元气活泼"))
+        assertTrue(c.readPersona("Charlotte.txt").startsWith("你将扮演一位博学稳重"))
         for (name in listOf(BuiltinPersonas.DEFAULT, BuiltinPersonas.BACKGROUND, BuiltinPersonas.EXAMPLE, BuiltinPersonas.ROUTINE)) {
             assertTrue(File(td, "pp/$name").readText().startsWith(PersonaCodec.MAGIC))
             assertEquals(BuiltinPersonas.ALL.getValue(name), c.personaDoc()[name])
         }
-        for (name in BuiltinPersonas.GEMINA_FILES) {
+        for (name in BuiltinPersonas.GEMINA_FILES + BuiltinPersonas.CHARLOTTE_FILES) {
             assertFalse(File(td, "pp/$name").readText().startsWith(PersonaCodec.MAGIC))
         }
         val profile = BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE)
         val geminaProfile = BuiltinPersonas.ALL.getValue(BuiltinPersonas.GEMINA_PROFILE)
+        val charlotteProfile = BuiltinPersonas.ALL.getValue(BuiltinPersonas.CHARLOTTE_PROFILE)
         assertEquals(profile, c.personaDoc(profiles = true)[BuiltinPersonas.PROFILE])
         assertEquals(geminaProfile, c.personaDoc(profiles = true)[BuiltinPersonas.GEMINA_PROFILE])
+        assertEquals(charlotteProfile, c.personaDoc(profiles = true)[BuiltinPersonas.CHARLOTTE_PROFILE])
         assertEquals(profile.trim(), c.readPersonaProfile(BuiltinPersonas.DEFAULT))
         assertFalse(profile.trim() in c.readPersonaFull(BuiltinPersonas.DEFAULT))
         assertTrue(geminaProfile.trim() in c.otherProfilesText(BuiltinPersonas.DEFAULT))
+        assertTrue(charlotteProfile.trim() in c.otherProfilesText(BuiltinPersonas.DEFAULT))
         assertFalse(profile.trim() in c.otherProfilesText(BuiltinPersonas.DEFAULT))
-        assertTrue(profile.trim() in c.otherProfilesText(BuiltinPersonas.GEMINA))
-        c.applyPersonaDoc(mapOf(BuiltinPersonas.PROFILE to null, BuiltinPersonas.GEMINA_PROFILE to null), profiles = true)
+        assertTrue(profile.trim() in c.otherProfilesText(BuiltinPersonas.CHARLOTTE))
+        assertTrue(geminaProfile.trim() in c.otherProfilesText(BuiltinPersonas.CHARLOTTE))
+        assertFalse(charlotteProfile.trim() in c.otherProfilesText(BuiltinPersonas.CHARLOTTE))
+        c.applyPersonaDoc(mapOf(BuiltinPersonas.PROFILE to null, BuiltinPersonas.GEMINA_PROFILE to null, BuiltinPersonas.CHARLOTTE_PROFILE to null), profiles = true)
         assertEquals(profile.trim(), c.readPersonaProfile(BuiltinPersonas.DEFAULT))
         assertEquals(geminaProfile.trim(), c.readPersonaProfile(BuiltinPersonas.GEMINA))
+        assertEquals(charlotteProfile.trim(), c.readPersonaProfile(BuiltinPersonas.CHARLOTTE))
         assertFalse(c.claudiaDiffers())
         assertNull(c.checkPersonaChanges())
         c.set(persona = "")
@@ -1758,17 +1765,17 @@ class CommTest {
         File(td, "pp/Claudia_background.txt").delete()
         File(td, "pp/Claudia_example.txt").delete()
         File(td, "pp/Assistant.txt").delete()
-        for (name in BuiltinPersonas.GEMINA_FILES) File(td, "pp/$name").delete()
+        for (name in BuiltinPersonas.GEMINA_FILES + BuiltinPersonas.CHARLOTTE_FILES) File(td, "pp/$name").delete()
         c.flush()
         val c2 = Comm(dir, File(td, "pp"), { clock }) { _, _, _ -> "" }
         assertTrue(c2.listPersonas().isEmpty() && c2.personaName().isEmpty())     // 删掉之后不再写回, 也不再自动选
-        // 老版本升级上来: 已经 seeded 过, 也会补一次 Assistant 与 Gemina (没有同名文件时)
+        // 老版本升级上来: 已经 seeded 过, 也会补一次 Assistant、Gemina 与 Charlotte (没有同名文件时)
         val od = File(td, "od").also { it.mkdirs() }
         val op = File(td, "op").also { it.mkdirs() }
         File(op, "小夏.txt").writeText("你是小夏.")
         File(od, "comm_config.json").writeText("""{"seeded":true,"persona":"小夏.txt"}""")
         val co = Comm(od, op, { clock }) { _, _, _ -> "" }
-        assertTrue("Assistant.txt" in co.listPersonas() && "Gemina.txt" in co.listPersonas() && "Claudia.txt" !in co.listPersonas())
+        assertTrue("Assistant.txt" in co.listPersonas() && "Gemina.txt" in co.listPersonas() && "Charlotte.txt" in co.listPersonas() && "Claudia.txt" !in co.listPersonas())
     }
 
     @Test
@@ -3770,8 +3777,8 @@ class CommTest {
         val dir = File(td, "d").also { it.mkdirs() }
         val c = comm(dir, File(td, "p"))
         assertEquals("Claudia.txt", c.personaName())
-        assertEquals(listOf("Assistant.txt", "Claudia.txt", "Gemina.txt"), c.listPersonas())              // Claudia_templates / Gemina_templates 是配套文件, 不是人设
-        assertEquals(listOf("Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt", "Gemina_background.txt", "Gemina_example.txt", "Gemina_templates.txt"), c.companionFiles())
+        assertEquals(listOf("Assistant.txt", "Charlotte.txt", "Claudia.txt", "Gemina.txt"), c.listPersonas())              // Claudia / Gemina / Charlotte 的 _templates 是配套文件, 不是人设
+        assertEquals(listOf("Charlotte_background.txt", "Charlotte_example.txt", "Charlotte_templates.txt", "Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt", "Gemina_background.txt", "Gemina_example.txt", "Gemina_templates.txt"), c.companionFiles())
         assertEquals("Claudia_templates.txt", c.routineNameOf("Claudia.txt"))
         assertTrue(c.isCompanionName("Claudia_templates.txt") && c.isCompanionName("Claudia_background.txt") && !c.isCompanionName("Claudia.txt"))
         assertEquals("Claudia.txt", c.baseOfCompanion("Claudia_templates.txt"))
@@ -3788,7 +3795,7 @@ class CommTest {
         for ((n, t) in listOf("Ann.txt" to "A", "Ann_diary.md" to "D", "Ann_Bob.txt" to "B", "Ann_Bob_x.txt" to "X", "Zed_note.txt" to "Z", "Ann_.txt" to "E", "_x.txt" to "Q"))
             File(cpd, n).writeText(t)
         val cc = comm(File(td, "cpd").also { it.mkdirs() }, cpd)
-        assertEquals(listOf("_x.txt", "Ann.txt", "Ann_.txt", "Assistant.txt", "Claudia.txt", "Gemina.txt", "Zed_note.txt"), cc.listPersonas())      // Assistant / Claudia / Gemina 是第一次运行放进去的自带人设
+        assertEquals(listOf("_x.txt", "Ann.txt", "Ann_.txt", "Assistant.txt", "Charlotte.txt", "Claudia.txt", "Gemina.txt", "Zed_note.txt"), cc.listPersonas())      // Assistant / Charlotte / Claudia / Gemina 是第一次运行放进去的自带人设
         assertEquals(listOf("Ann_Bob.txt", "Ann_diary.md"), cc.companionsOf("Ann.txt"))
         assertTrue(cc.companionsOf("Ann_.txt").isEmpty())
         assertEquals("Ann_Bob.txt", cc.baseOfCompanion("Ann_Bob_x.txt"))

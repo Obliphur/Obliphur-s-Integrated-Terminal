@@ -133,7 +133,7 @@ def _selftest():
     wait(c)
     system, msgs = calls[-1]
     assert system.startswith(prefix_prompt()) and "每天 8 点到 12 点上课." in system
-    assert "【OIT 中的其他人设简介】" in system and "Claudia" in system and "Gemina" in system
+    assert "【OIT 中的其他人设简介】" in system and "Claudia" in system and "Gemina" in system and "Charlotte" in system
     assert msgs[0]["role"] == "user" and "早" in msgs[0]["content"] and "2026-11-02 周一 09:00" in msgs[0]["content"]
     assert "OIT 附带信息" not in msgs[0]["content"] and "整点记录" not in msgs[0]["content"] and "计时器" not in msgs[0]["content"]
     assert "早" in msgs[0]["content"] and "[OIT_STATUS:" in msgs[0]["content"] and "没有确定的结束时间" in msgs[0]["content"], "每次请求自动附加状态"
@@ -334,42 +334,50 @@ def _selftest():
     assert "Claudia.txt" in list_personas(fresh_personas) and cf.persona_name() == "Claudia.txt"
     assert "Assistant.txt" in list_personas(fresh_personas), "自带的人设也有 Assistant"
     assert "Gemina.txt" in list_personas(fresh_personas), "自带的人设也有 Gemina"
+    assert "Charlotte.txt" in list_personas(fresh_personas), "自带的人设也有 Charlotte"
     assert read_persona(fresh_personas, "Claudia.txt").startswith("你将扮演一位文静,冷淡")
     assert read_persona(fresh_personas, "Assistant.txt").startswith("你是名为 Assistant 的 AI 助手")
     assert read_persona(fresh_personas, "Gemina.txt").startswith("你将扮演一位表面元气活泼")
+    assert read_persona(fresh_personas, "Charlotte.txt").startswith("你将扮演一位博学稳重")
     from comm.persona_codec import MAGIC
     for name in (DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_EXAMPLE, DEFAULT_ROUTINE):
         with open(os.path.join(fresh_personas, name), encoding="utf-8") as f:
             assert f.read(len(MAGIC)) == MAGIC
         assert cf.persona_doc()[name] == BUILTIN_PERSONAS[name]
-    for name in GEMINA_FILES:
+    for name in (*GEMINA_FILES, *CHARLOTTE_FILES):
         with open(os.path.join(fresh_personas, name), encoding="utf-8") as f:
-            assert not f.read(len(MAGIC)).startswith(MAGIC), f"Gemina 不需要加密 ({name})"
+            assert not f.read(len(MAGIC)).startswith(MAGIC), f"Gemina/Charlotte 不需要加密 ({name})"
     from comm.comm_persona import read_profile
     assert cf.persona_doc(profiles=True)[DEFAULT_PROFILE] == BUILTIN_PERSONAS[DEFAULT_PROFILE]
     assert cf.persona_doc(profiles=True)[GEMINA_PROFILE] == BUILTIN_PERSONAS[GEMINA_PROFILE]
+    assert cf.persona_doc(profiles=True)[CHARLOTTE_PROFILE] == BUILTIN_PERSONAS[CHARLOTTE_PROFILE]
     assert read_profile(fresh_personas, DEFAULT_PERSONA) not in persona_system(fresh_personas, DEFAULT_PERSONA)
     assert read_profile(fresh_personas, GEMINA_PERSONA) in persona_system(fresh_personas, DEFAULT_PERSONA)
+    assert read_profile(fresh_personas, CHARLOTTE_PERSONA) in persona_system(fresh_personas, DEFAULT_PERSONA)
     assert read_profile(fresh_personas, DEFAULT_PERSONA) in persona_system(fresh_personas, GEMINA_PERSONA)
-    assert read_profile(fresh_personas, GEMINA_PERSONA) not in persona_system(fresh_personas, GEMINA_PERSONA)
-    cf.apply_persona_doc({DEFAULT_PROFILE: None, GEMINA_PROFILE: None}, profiles=True)
+    assert read_profile(fresh_personas, CHARLOTTE_PERSONA) in persona_system(fresh_personas, GEMINA_PERSONA)
+    assert read_profile(fresh_personas, DEFAULT_PERSONA) in persona_system(fresh_personas, CHARLOTTE_PERSONA)
+    assert read_profile(fresh_personas, GEMINA_PERSONA) in persona_system(fresh_personas, CHARLOTTE_PERSONA)
+    assert read_profile(fresh_personas, CHARLOTTE_PERSONA) not in persona_system(fresh_personas, CHARLOTTE_PERSONA)
+    cf.apply_persona_doc({DEFAULT_PROFILE: None, GEMINA_PROFILE: None, CHARLOTTE_PROFILE: None}, profiles=True)
     assert read_profile(fresh_personas, DEFAULT_PERSONA) == BUILTIN_PERSONAS[DEFAULT_PROFILE].strip(), "同步不应删除自带 Claudia_profile.txt"
     assert read_profile(fresh_personas, GEMINA_PERSONA) == BUILTIN_PERSONAS[GEMINA_PROFILE].strip(), "同步不应删除自带 Gemina_profile.txt"
+    assert read_profile(fresh_personas, CHARLOTTE_PERSONA) == BUILTIN_PERSONAS[CHARLOTTE_PROFILE].strip(), "同步不应删除自带 Charlotte_profile.txt"
     assert not cf.claudia_differs() and cf.check_persona_changes() is None
     cf.set_cfg(persona="")
-    for name in ("Claudia.txt", "Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt", "Assistant.txt", *GEMINA_FILES):
+    for name in ("Claudia.txt", "Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt", "Assistant.txt", *GEMINA_FILES, *CHARLOTTE_FILES):
         os.remove(os.path.join(fresh_personas, name))
     cf.flush()
     cf2 = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
     assert list_personas(fresh_personas) == [] and cf2.persona_name() == "", "删掉之后不再写回, 也不再自动选"
-    # 老版本升级上来: 已经 seeded 过, 也会补一次 Assistant 与 Gemina (没有同名文件时)
+    # 老版本升级上来: 已经 seeded 过, 也会补一次 Assistant、Gemina 与 Charlotte (没有同名文件时)
     old_dir, old_personas = os.path.join(td, "old"), os.path.join(td, "old_personas")
     os.makedirs(old_dir)
     os.makedirs(old_personas)
     open(os.path.join(old_personas, "小夏.txt"), "w", encoding="utf-8").write("你是小夏.")
     config.save_json_file(os.path.join(old_dir, "comm_config.json"), {"seeded": True, "persona": "小夏.txt"})
     co = Comm(old_dir, old_personas, now=lambda: clock[0], chat_fn=fake)
-    assert "Assistant.txt" in list_personas(old_personas) and "Gemina.txt" in list_personas(old_personas) and "Claudia.txt" not in list_personas(old_personas)
+    assert "Assistant.txt" in list_personas(old_personas) and "Gemina.txt" in list_personas(old_personas) and "Charlotte.txt" in list_personas(old_personas) and "Claudia.txt" not in list_personas(old_personas)
     co.flush()
     # 请求日志 / 配置 (最多 10 份, 每个 AI 各选一份) / 等待提示
     logp = os.path.join(data, "comm.log")

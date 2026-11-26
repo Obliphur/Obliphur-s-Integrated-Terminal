@@ -769,6 +769,7 @@ fun CommSettings() {
         val recModel = when (comm.personaTitle(comm.personaName()).trim().lowercase()) {
             "claudia" -> tr("推荐使用Claude")
             "gemina" -> tr("推荐使用Gemini")
+            "charlotte" -> tr("推荐使用ChatGPT")
             else -> ""
         }
         if (recModel.isNotEmpty()) {
