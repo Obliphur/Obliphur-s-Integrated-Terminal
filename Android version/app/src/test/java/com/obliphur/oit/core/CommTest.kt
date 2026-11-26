@@ -1557,9 +1557,11 @@ class CommTest {
         assertTrue(PersonaAuthor.CONSENT_MODE_HINT.contains("保持原强度"))
         assertEquals(setOf(3, 4), PersonaAuthor.CONSENT_MODE_LEVELS)
         val claudiaConsent = CommRules.burstConsent(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE))
-        assertEquals(5, claudiaConsent.size)
+        assertEquals(7, claudiaConsent.size)
         assertTrue("intimate_shelter" in claudiaConsent)
         assertTrue("restraint_actions" in claudiaConsent)
+        assertTrue("unequal_dynamics" in claudiaConsent)
+        assertTrue("exclusivity" in claudiaConsent)
         // 首次触发 BURST 前不初始化同意声明，触发时挂起等待用户确认，确认后激活并注入状态，可随时撤回。
         val now = 1_700_000_000_000L
         val until = now + 1_800_000L
