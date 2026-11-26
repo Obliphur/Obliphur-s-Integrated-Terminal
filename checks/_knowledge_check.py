@@ -588,4 +588,35 @@ def retry_ai(prompt, *, image=None, **kwargs):
 retry_rep = auto_generate(kb, retry_ai, retry_dir, ["txt"])
 assert retry_rep["errors"] == 0 and retry_rep["created"] == 1 and len(retry_calls) == 2, (retry_rep, len(retry_calls))
 
+# 自动生成时 AI 返回无效/跨学科/概念卡/待审提案 parent_ids 应自动过滤，仅保留同学科技巧卡 ID，不得导致整组报错
+valid_math_parent = next(cid for cid, c in kb.cards.items() if c.get("subject") == "math")
+other_subject_parent = next((cid for cid, c in kb.cards.items() if c.get("subject") != "math"), "nonexistent_other")
+concept_parent = kb.conceptual_cards()[0]["id"]
+open_pr_parent = kb.proposals()[0]["pr_id"]
+parent_dir = base / "bad_parent_src"
+parent_dir.mkdir()
+(parent_dir / "parents.txt").write_text("带非法父结论 ID 的自动导入技巧笔记", encoding="utf-8")
+def bad_parent_ai(prompt, *, image=None, **kwargs):
+    return (
+        "===CARD===\n"
+        "kind: tactical\n"
+        "subject: math\n"
+        "title: 过滤父结论测试技巧\n"
+        "category: 代数与不等式\n"
+        "triggers: 父结论过滤测试 | 自动导入容错\n"
+        f"parent_ids: {valid_math_parent} | {other_subject_parent} | {concept_parent} | {open_pr_parent} | 编造标题\n"
+        "statement: 测试非法 parent_ids 不会导致自动生成失败。\n"
+        "preconditions: 仅用于单测。\n"
+        "proof_sketch: 略。\n"
+        "generality: explain_first\n"
+        "review_summary: 验证父结论清洗逻辑。\n"
+        "===END==="
+    )
+
+parent_rep = auto_generate(kb, bad_parent_ai, parent_dir, ["txt"])
+assert parent_rep["errors"] == 0 and parent_rep["proposals"] == 1, parent_rep
+filtered_pr = next(p for p in kb.proposals() if p.get("title") == "过滤父结论测试技巧")
+assert filtered_pr["parent_ids"] == [valid_math_parent], filtered_pr["parent_ids"]
+assert filtered_pr["proposed_card"].get("parent_ids") == [valid_math_parent], filtered_pr["proposed_card"]
+
 print("knowledge check OK")

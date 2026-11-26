@@ -445,10 +445,23 @@ def _duplicate(kb, candidate):
     return None
 
 
+def _sanitize_parent_ids(kb, subject, raw_parents):
+    """仅保留已入库的同学科技巧卡 ID，过滤概念卡/待审提案/无效 ID。"""
+    if not isinstance(raw_parents, list):
+        return []
+    cleaned = []
+    for pid in raw_parents:
+        key = str(pid or "").strip()
+        if key and key in kb.cards and kb.cards[key].get("subject") == subject and key not in cleaned:
+            cleaned.append(key)
+    return cleaned
+
+
 def _merge_into_proposal(kb, existing_pr, card, source):
     """将新提取的技巧信息合并进已有未审批提案；无新信息时返回 False。"""
     if not _has_tactical_new_info(existing_pr, card):
         return False
+    card["parent_ids"] = _sanitize_parent_ids(kb, card["subject"], card.get("parent_ids"))
     review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
     target_card_id = existing_pr.get("target_card_id")
     if target_card_id and target_card_id in kb.cards and kb.cards[target_card_id].get("subject") == card["subject"]:
@@ -617,58 +630,68 @@ def auto_generate(kb, call, root, file_types, on_progress=None, resume=True, can
                 if not cards:
                     report["ignored"] += 1
                 else:
+                    kb.refresh()
+                    group_error = None
                     for card in cards:
-                        card["generality"] = card.get("generality") if card.get("generality") in {"universal", "explain_first", "non_universal"} else "explain_first"
-                        card["source"] = str(group["source"])
-                        target_id = str(card.pop("target_card_id", "") or "").strip()
-                        if target_id and target_id in kb.cards and kb.cards[target_id].get("subject") == card["subject"]:
-                            review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
-                            if _has_tactical_new_info(kb.cards[target_id], card):
-                                kb.propose("UPDATE_CARD", subject=card["subject"], title=kb.cards[target_id]["title"],
-                                           target_card_id=target_id, proposed_card=card,
-                                           summary=review_summary or f"补充已有技巧「{kb.cards[target_id]['title']}」",
-                                           evidence=[{"source": str(group["source"])[:1200]}])
-                                report["proposals"] += 1
-                            else:
-                                report["duplicates"] += 1
-                            continue
-                        if target_id and card["kind"] == "tactical":
-                            open_pr = next((p for p in kb.proposals() if p.get("pr_id") == target_id
-                                            and p.get("subject") == card["subject"]), None)
-                            if open_pr is not None:
-                                pr_view = {"title": open_pr.get("title", ""), "subject": open_pr.get("subject", ""),
-                                           "target_card_id": open_pr.get("target_card_id"), **open_pr.get("proposed_card", {})}
-                                if _merge_into_proposal(kb, pr_view, card, group["source"]):
+                        try:
+                            card["generality"] = card.get("generality") if card.get("generality") in {"universal", "explain_first", "non_universal"} else "explain_first"
+                            card["source"] = str(group["source"])
+                            card["parent_ids"] = _sanitize_parent_ids(kb, card["subject"], card.get("parent_ids"))
+                            target_id = str(card.pop("target_card_id", "") or "").strip()
+                            if target_id and target_id in kb.cards and kb.cards[target_id].get("subject") == card["subject"]:
+                                review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
+                                if _has_tactical_new_info(kb.cards[target_id], card):
+                                    kb.propose("UPDATE_CARD", subject=card["subject"], title=kb.cards[target_id]["title"],
+                                               target_card_id=target_id, proposed_card=card,
+                                               summary=review_summary or f"补充已有技巧「{kb.cards[target_id]['title']}」",
+                                               evidence=[{"source": str(group["source"])[:1200]}])
                                     report["proposals"] += 1
                                 else:
                                     report["duplicates"] += 1
                                 continue
-                        dup = _duplicate(kb, card)
-                        if dup:
-                            report["duplicates"] += 1
-                            dup_id = dup.get("id") or dup.get("card_id")
-                            if (card["kind"] == "tactical" and dup_id and dup_id in kb.cards
-                                    and kb.cards[dup_id].get("subject") == card["subject"]
-                                    and _has_tactical_new_info(kb.cards[dup_id], card)):
+                            if target_id and card["kind"] == "tactical":
+                                open_pr = next((p for p in kb.proposals() if p.get("pr_id") == target_id
+                                                and p.get("subject") == card["subject"]), None)
+                                if open_pr is not None:
+                                    pr_view = {"title": open_pr.get("title", ""), "subject": open_pr.get("subject", ""),
+                                               "target_card_id": open_pr.get("target_card_id"), **open_pr.get("proposed_card", {})}
+                                    if _merge_into_proposal(kb, pr_view, card, group["source"]):
+                                        report["proposals"] += 1
+                                    else:
+                                        report["duplicates"] += 1
+                                    continue
+                            dup = _duplicate(kb, card)
+                            if dup:
+                                report["duplicates"] += 1
+                                dup_id = dup.get("id") or dup.get("card_id")
+                                if (card["kind"] == "tactical" and dup_id and dup_id in kb.cards
+                                        and kb.cards[dup_id].get("subject") == card["subject"]
+                                        and _has_tactical_new_info(kb.cards[dup_id], card)):
+                                    review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
+                                    kb.propose("UPDATE_CARD", subject=card["subject"], title=kb.cards[dup_id]["title"],
+                                               target_card_id=dup_id, proposed_card=card,
+                                               summary=review_summary or f"补充已有技巧「{kb.cards[dup_id]['title']}」",
+                                               evidence=[{"source": str(group["source"])[:1200]}])
+                                    report["proposals"] += 1
+                                elif card["kind"] == "tactical" and dup.get("_proposal_id"):
+                                    if _merge_into_proposal(kb, dup, card, group["source"]):
+                                        report["proposals"] += 1
+                                continue
+                            if card["kind"] == "tactical":
                                 review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
-                                kb.propose("UPDATE_CARD", subject=card["subject"], title=kb.cards[dup_id]["title"],
-                                           target_card_id=dup_id, proposed_card=card,
-                                           summary=review_summary or f"补充已有技巧「{kb.cards[dup_id]['title']}」",
+                                kb.propose("ADD_CARD", subject=card["subject"], title=card["title"],
+                                           proposed_card=card, summary=review_summary,
                                            evidence=[{"source": str(group["source"])[:1200]}])
                                 report["proposals"] += 1
-                            elif card["kind"] == "tactical" and dup.get("_proposal_id"):
-                                if _merge_into_proposal(kb, dup, card, group["source"]):
-                                    report["proposals"] += 1
-                            continue
-                        if card["kind"] == "tactical":
-                            review_summary = str(card.pop("review_summary", "") or card.pop("summary", "")).strip()[:1200]
-                            kb.propose("ADD_CARD", subject=card["subject"], title=card["title"],
-                                       proposed_card=card, summary=review_summary,
-                                       evidence=[{"source": str(group["source"])[:1200]}])
-                            report["proposals"] += 1
-                        else:
-                            kb.save_card(card, maintainer=True)
-                            report["created"] += 1
+                            else:
+                                kb.save_card(card, maintainer=True)
+                                report["created"] += 1
+                        except Exception as error:
+                            logging.getLogger(__name__).warning("Auto import card failed for %s (%s): %s", group.get("source"), card.get("title"), error)
+                            if group_error is None:
+                                group_error = error
+                    if group_error is not None:
+                        raise group_error
                 succeeded = True
             except Exception as error:
                 logging.getLogger(__name__).warning("Auto import failed for %s: %s", group.get("source"), error)
