@@ -134,6 +134,15 @@ burst_rate:2.0
 burst_end_shift:+20
 [/valence:burst]
 
+【爆发同意声明】
+# id:说明文字（首次触发 BURST 前不初始化；首次触发时弹窗逐项询问，用户可随时撤回任一项）
+[burst:consent]
+intimate_shelter:亲密与庇护式表达
+strict_accountability:严格问责式表达
+intense_physical:情绪强烈的肢体动作
+scenario_roleplay:情景模拟中的文字扮演
+[/burst:consent]
+
 【真实事件的张力增长】
 # joint_hp_loss:[已定义的条件名,基础增量]，对应联合行动中的真实扣血事件。
 [tension:events]

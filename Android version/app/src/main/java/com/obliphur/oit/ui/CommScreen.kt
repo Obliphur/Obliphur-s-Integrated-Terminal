@@ -33,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.IconButton
 import com.obliphur.oit.core.Cfg
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
@@ -181,6 +182,10 @@ fun CommScreen(go: (String) -> Unit) {
     var scenarioInv by remember { mutableStateOf(comm.scenarioInvite()) }
     var loveInv by remember { mutableStateOf(comm.loveInvite()) }                  // 对方告白了: 等用户点 接受 / 拒绝
     var coreadInv by remember { mutableStateOf(comm.coreadInvite()) }
+    var consentAsked by remember { mutableStateOf(comm.burstConsentAsked()) }
+    var consentPending by remember { mutableStateOf(comm.burstConsentPending()) }
+    var consentDlg by remember { mutableStateOf(false) }
+    var consentPrompted by remember { mutableStateOf<Pair<String, Long>?>(null) }
     var ocrBusy by remember { mutableStateOf(false) }                          // 识别字体进行中
     var pendingImage by remember { mutableStateOf<ByteArray?>(null) }
     val pendingPreview = remember(pendingImage) { pendingImage?.let(::decodePreviewImage) }
@@ -291,6 +296,17 @@ fun CommScreen(go: (String) -> Unit) {
             comm.scenarioAsking().let { if (it != scenarioAsk) scenarioAsk = it }
             comm.scenarioInvite().let { if (it != scenarioInv) scenarioInv = it }
             comm.loveInvite().let { if (it != loveInv) loveInv = it }
+            comm.burstConsentAsked().let { if (it != consentAsked) consentAsked = it }
+            comm.burstConsentPending().let { pending ->
+                if (pending != consentPending) consentPending = pending
+                if (pending > 0L) {
+                    val key = comm.pid to pending
+                    if (consentPrompted != key && !consentDlg) {
+                        consentPrompted = key
+                        consentDlg = true
+                    }
+                }
+            }
             kotlinx.coroutines.delay(250)
         }
     }
@@ -376,6 +392,9 @@ fun CommScreen(go: (String) -> Unit) {
             // ❓ 帮助 (最左边): 解释每个按钮的作用
             TextButton({ help = true }, contentPadding = tight) { Text("❓", fontSize = 18.sp) }
             TextButton({ readingChoice = true }, contentPadding = tight) { Text("📚", fontSize = 18.sp) }
+            if (consentAsked) {
+                TextButton({ consentDlg = true }, contentPadding = tight) { Text("🛡", fontSize = 18.sp) }
+            }
             // 当前聊天模式：开启情景模拟采用申请制，双方均可随时结束。
             TextButton({
                 if (scenarioOn) comm.setScenario(false)
@@ -445,6 +464,11 @@ fun CommScreen(go: (String) -> Unit) {
             Text(tr("{name} 向你告白", "name" to comm.aiName()), color = o.accent, fontSize = 12.sp)
             AccentButton(tr("接受")) { comm.loveRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
             TextButton({ comm.loveRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
+        }
+        if (consentPending > 0L) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(start = 8.dp)) {
+            Text(tr("🛡 {name} 等待同意声明确认", "name" to comm.aiName()), color = o.accent, fontSize = 12.sp)
+            AccentButton(tr("确认")) { consentDlg = true }
         }
         // 选好、还没发出去的联合行动 / share data / coread 附件, 或发出去之后的进展
         if (jointLine.first.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -521,6 +545,79 @@ fun CommScreen(go: (String) -> Unit) {
         if (why.isEmpty()) { core.jointAsk = null; jointAsk = null } else core.toast(tr(why), "warn")
     } }
     if (askClear) Confirm(tr("清空"), tr("清空聊天记录?"), true, { askClear = false }) { comm.clear() }
+    if (consentDlg) {
+        val rules = comm.burstConsentRulesFor()
+        if (rules.isNotEmpty()) {
+            BurstConsentDialog(
+                name = comm.aiName(),
+                asked = comm.burstConsentAsked(),
+                rules = rules,
+                current = comm.burstConsentState(),
+                onDismiss = { consentDlg = false },
+                onConfirm = { choices ->
+                    comm.submitBurstConsent(choices)
+                    consentAsked = comm.burstConsentAsked()
+                    consentPending = comm.burstConsentPending()
+                    consentDlg = false
+                },
+            )
+        } else {
+            consentDlg = false
+        }
+    }
+}
+
+@Composable
+private fun BurstConsentDialog(
+    name: String,
+    asked: Boolean,
+    rules: LinkedHashMap<String, String>,
+    current: Map<String, Boolean>,
+    onDismiss: () -> Unit,
+    onConfirm: (Map<String, Boolean>) -> Unit,
+) {
+    val o = LocalOit.current
+    val states = remember(rules, current) {
+        mutableStateOf(rules.keys.associateWith { current[it] == true })
+    }
+    val intro = if (!asked) {
+        tr("{name} 即将首次进入高张力爆发（BURST）状态。请逐项勾选你同意允许的内容（未勾选的项目将被严格禁止；确认后仍可随时点击工具栏「🛡」修改或撤回）。", "name" to name)
+    } else {
+        tr("管理 {name} 在高张力爆发（BURST）期间的逐项同意状态。取消勾选会立即撤回该项同意，后续回复将立即停止使用对应行为。", "name" to name)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = o.bg,
+        title = { Text(tr("爆发内容同意声明")) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(intro, color = o.text, fontSize = 13.sp)
+                Text(
+                    tr("提示：明确勾选同意声明有助于模型理解边界，可以增大内容被正确且保持原强度生成的概率。"),
+                    color = o.dim, fontSize = 12.sp,
+                )
+                rules.forEach { (cid, label) ->
+                    val checked = states.value[cid] == true
+                    Row(
+                        Modifier.fillMaxWidth().clickable { states.value = states.value + (cid to !checked) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = checked, onCheckedChange = { states.value = states.value + (cid to it) })
+                        Text(label, color = o.text, fontSize = 13.sp)
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton({ states.value = rules.keys.associateWith { true } }) { Text(tr("全选"), color = o.accent) }
+                TextButton(onDismiss) { Text(tr("取消"), color = o.dim) }
+            }
+        },
+        confirmButton = {
+            TextButton({ onConfirm(states.value) }) { Text(tr("确定"), color = o.accent) }
+        },
+    )
 }
 
 /** ❓ 帮助: 沟通页上每个小按钮是干什么的, 还有"无言为真"会禁止沟通的提醒. */
@@ -562,6 +659,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
     val rows = listOf(
         Triple("❓", tr("帮助"), tr("打开这个说明.")),
         Triple("📚", tr("阅读"), tr("选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送，待对方明确同意后才打开共读室。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。")),
+        Triple("🛡", tr("爆发同意声明"), tr("当人设启用了「同意声明」模式时，首次触发 BURST 前不会初始化，触发时会自动弹出逐项勾选确认窗；确认后工具栏会显示 🛡，可随时点击修改或撤回任一项同意。")),
         Triple("💬", tr("说教"), tr("你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。")),
         Triple("📱 / 🎭", tr("聊天模式"), tr("输入框上方的 📱 / 🎭 按钮用于情景模拟。开启情景模拟采用申请制（📱 会把申请作为附件随下一条消息发出，或点「接受」同意对方申请），开启后显示 🎭，双方均可随时结束。模式按聊天对象保存。")),
         Triple("👀 / 🙈", tr("分享数据"), tr("🙈 会把请求作为附件加入待发送内容，随下一条消息询问对方；同意后才打开. 👀 表示已打开，去别的页面时对方会收到那一页上你们的数据；回到沟通自动关闭. 对方也可以发邀请，点「接受」才会打开.")),

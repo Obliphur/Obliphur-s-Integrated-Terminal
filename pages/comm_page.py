@@ -123,6 +123,14 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.btn_review.pack(side="left", padx=(4, 0))
         self.btn_coread = ttk.Button(tools, text="📚", width=3, command=self._reading)
         self.btn_coread.pack(side="left", padx=(4, 0))
+        self.btn_consent = ttk.Button(tools, text="🛡", width=3, command=self._open_burst_consent)
+        self._burst_consent_prompted = None
+        self._burst_consent_open = False
+        self.consent_btns = tk.Frame(tools, bg=bg)
+        self.lbl_consent_inv = tk.Label(self.consent_btns, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
+        self.lbl_consent_inv.pack(side="left")
+        ttk.Button(self.consent_btns, text=tr("确认"), width=6,
+                   command=self._open_burst_consent).pack(side="left", padx=(6, 0))
         self.coread_btns = tk.Frame(tools, bg=bg)
         self.lbl_coread_inv = tk.Label(self.coread_btns, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
         self.lbl_coread_inv.pack(side="left")
@@ -263,6 +271,63 @@ class CommPage(CommVoiceMixin, tk.Frame):
             toast.warn(tr(why))
         self.refresh(force=True)
 
+    def _open_burst_consent(self):
+        if self._burst_consent_open:
+            return
+        c = self.comm
+        rules = c.burst_consent_rules_for()
+        if not rules:
+            return
+        self._burst_consent_open = True
+        try:
+            asked = c.burst_consent_asked()
+            current = c.burst_consent_state() if asked else {}
+            dlg = Modal(self.winfo_toplevel(), tr("爆发内容同意声明"),
+                        min(560, self.winfo_screenwidth() - 40),
+                        min(460, self.winfo_screenheight() - 80))
+            intro = (
+                tr("{name} 即将首次进入高张力爆发（BURST）状态。请逐项勾选你同意允许的内容（未勾选的项目将被严格禁止；确认后仍可随时点击工具栏「🛡」修改或撤回）。",
+                   name=c.share_ai_name())
+                if not asked else
+                tr("管理 {name} 在高张力爆发（BURST）期间的逐项同意状态。取消勾选会立即撤回该项同意，后续回复将立即停止使用对应行为。",
+                   name=c.share_ai_name())
+            )
+            lbl_intro = tk.Label(dlg.body, text=intro, bg=COLORS["bg"], fg=COLORS["text"],
+                                 font=config.font("body"), justify="left", anchor="w")
+            wrap_label(lbl_intro)
+            lbl_intro.pack(fill="x", pady=(0, 6))
+            lbl_tip = tk.Label(
+                dlg.body,
+                text=tr("提示：明确勾选同意声明有助于模型理解边界，可以增大内容被正确且保持原强度生成的概率。"),
+                bg=COLORS["bg"], fg=COLORS["text_dim"], font=config.font("small"),
+                justify="left", anchor="w",
+            )
+            wrap_label(lbl_tip)
+            lbl_tip.pack(fill="x", pady=(0, 10))
+            vars_map = {}
+            box = tk.Frame(dlg.body, bg=COLORS["bg_card"], padx=12, pady=10)
+            box.pack(fill="both", expand=True)
+            for cid, label in rules.items():
+                v = tk.BooleanVar(value=bool(current.get(cid, False)))
+                vars_map[cid] = v
+                ttk.Checkbutton(box, text=label, variable=v).pack(anchor="w", pady=4)
+
+            def select_all():
+                for v in vars_map.values():
+                    v.set(True)
+
+            def confirm():
+                c.submit_burst_consent({cid: bool(v.get()) for cid, v in vars_map.items()})
+                dlg.finish(True)
+
+            ttk.Button(dlg.buttons, text=tr("全选"), command=select_all).pack(side="left")
+            ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right")
+            ttk.Button(dlg.buttons, text=tr("确定"), style="Accent.TButton", command=confirm).pack(side="right", padx=(0, 8))
+            dlg.wait()
+        finally:
+            self._burst_consent_open = False
+            self.refresh(force=True)
+
     def _sync_status(self):
         """状态行: 不能用的原因 > 出错 (每秒看一次, 不用重画消息)."""
         c = self.comm
@@ -366,6 +431,22 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 self.scenario_btns.pack(side="left", padx=(8, 0))
         elif self.scenario_btns.winfo_manager() == "pack":
             self.scenario_btns.pack_forget()
+        if c.burst_consent_asked() and c.burst_consent_rules_for():
+            if self.btn_consent.winfo_manager() != "pack":
+                self.btn_consent.pack(side="left", padx=(4, 0), after=self.btn_coread)
+        elif self.btn_consent.winfo_manager() == "pack":
+            self.btn_consent.pack_forget()
+        pending_consent = c.burst_consent_pending()
+        if pending_consent:
+            cfg(self.lbl_consent_inv, text=tr("🛡 {name} 等待同意声明确认", name=c.share_ai_name()))
+            if self.consent_btns.winfo_manager() != "pack":
+                self.consent_btns.pack(side="left", padx=(8, 0))
+            prompt_key = (c.pid, pending_consent)
+            if self._burst_consent_prompted != prompt_key and not self._burst_consent_open:
+                self._burst_consent_prompted = prompt_key
+                self.after(60, self._open_burst_consent)
+        elif self.consent_btns.winfo_manager() == "pack":
+            self.consent_btns.pack_forget()
         self.entry.config(state="disabled" if blocked else "normal")
         self._sync_rows()
 
@@ -1078,6 +1159,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
                 ("📚", "阅读", "选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送，待对方明确同意后才打开共读室。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。"),
+                ("🛡", "爆发同意声明", "当人设启用了「同意声明」模式时，首次触发 BURST 前不会初始化，触发时会自动弹出逐项勾选确认窗；确认后工具栏会显示 🛡，可随时点击修改或撤回任一项同意。"),
                 ("💬", "说教", "你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。"),
                 ("📱 / 🎭", "聊天模式", "输入框上方的 📱 / 🎭 按钮用于情景模拟。开启情景模拟采用申请制（📱 会把申请作为附件随下一条消息发出，或点「接受」同意对方申请），开启后显示 🎭，双方均可随时结束。模式按聊天对象保存。"),
                 ("👀 / 🙈", "分享数据 (share data)", "🙈 会把请求作为附件加入待发送内容，随下一条消息询问对方；同意后才打开. 👀 表示已打开，去别的页面时对方会收到那一页上你们的数据；回到沟通自动关闭. 对方也可以发邀请，点「接受」才会打开."),

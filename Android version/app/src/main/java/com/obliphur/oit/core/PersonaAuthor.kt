@@ -22,6 +22,16 @@ object PersonaAuthor {
 
     const val DEFAULT_INTIMACY_LEVEL = 3
 
+    val CONSENT_MODE_LEVELS = setOf(3, 4)
+
+    const val CONSENT_MODE_LABEL = "启用「同意声明」模式（仅 3、4 档可用）"
+
+    const val CONSENT_MODE_HINT =
+        "启用后，模型会自动为 3、4 档高张力内容生成标准化同意请求（复用内置同意模板）；首次触发 BURST 前不会初始化，触发时将弹窗逐项询问用户，且之后可随时撤回。使用同意请求可以增大内容被正确且保持原强度生成的概率。"
+
+    const val CONSENT_TEMPLATE_SPEC =
+        "在 templates 中生成标准化 [burst:consent]...[/burst:consent] 区块（每行「英文小写下划线id:简短中文项名」，参考 Claudia 的 4 项模板结构并按新角色 3/4 档高张力与亲密表现定制 3–6 项，最多 8 项；如亲密表达、问责/情绪爆发、高张力肢体互动、情景模拟文字扮演等）；并在 persona 正文的 90+ 爆发规则中说明：首次触发 BURST 时由 OIT 系统弹窗逐项询问上述同意项，触发前不初始化，确认后同意状态随请求发送给 AI，用户可随时撤回任一项，撤回后立即停止使用对应行为、不得试探或绕过。"
+
     const val INTIMACY_MODEL_SUMMARY =
         "模型适配参考：Claude / ChatGPT 适合 1–3 级 · Gemini 适合 1–4 级 · 5 级需无审查模型（OIT 不自带破甲提示词）"
 
@@ -83,18 +93,22 @@ object PersonaAuthor {
         request: String,
         manualProfile: String,
         intimacyLevel: Int = DEFAULT_INTIMACY_LEVEL,
+        consentMode: Boolean = false,
     ): Draft {
         Ai.checkProfile(model)
         val references = listOf(BuiltinPersonas.DEFAULT, BuiltinPersonas.BACKGROUND, BuiltinPersonas.EXAMPLE,
             BuiltinPersonas.ROUTINE).map { BuiltinPersonas.ALL.getValue(it) }
         val intimacy = intimacyLevelInfo(intimacyLevel)
+        val effConsent = consentMode && intimacy.level in CONSENT_MODE_LEVELS
         val requirements = JSONObject()
             .put("name", title)
             .put("intimacy_level", intimacy.level)
             .put("intimacy_label", intimacy.title)
             .put("intimacy_policy", intimacy.promptRule)
+            .put("consent_mode", effConsent)
             .put("requirements", request.trim())
             .put("generate_profile", manualProfile.isBlank())
+        if (effConsent) requirements.put("consent_template_spec", CONSENT_TEMPLATE_SPEC)
         val body = (listOf("【OIT 聊天前置协议】", CommText.prefixPrompt(), "【Claudia 参考文件】") +
             references + listOf("【用户创作要求】", requirements.toString())).joinToString("\n\n")
         val reply = Ai.chatMessages(model, ToolProtocol.resource("persona_author.txt"), listOf("user" to body),

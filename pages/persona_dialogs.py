@@ -94,11 +94,27 @@ def create_persona(parent, comm):
                                 font=config.font("small"), justify="left", anchor="w")
     wrap_label(intimacy_summary)
 
+    consent_var = tk.BooleanVar(value=False)
+    consent_chk = ttk.Checkbutton(
+        intimacy_card, text=tr(comm_author.CONSENT_MODE_LABEL), variable=consent_var,
+    )
+    consent_hint = tk.Label(
+        intimacy_card, text=tr(comm_author.CONSENT_MODE_HINT),
+        bg=COLORS["bg_card"], fg=COLORS["text_dim"],
+        font=config.font("small"), justify="left", anchor="w",
+    )
+    wrap_label(consent_hint)
+
     def _sync_intimacy(_val=None):
         info = comm_author.intimacy_level_info(intimacy_var.get())
         intimacy_title.configure(text=tr(info.title))
         intimacy_desc.configure(text=tr(info.description))
         intimacy_fit.configure(text=tr(info.model_fit))
+        if info.level in comm_author.CONSENT_MODE_LEVELS:
+            consent_chk.configure(state="normal")
+        else:
+            consent_var.set(False)
+            consent_chk.configure(state="disabled")
 
     intimacy_scale = tk.Scale(
         intimacy_card, from_=1, to=len(comm_author.INTIMACY_LEVELS), resolution=1,
@@ -117,6 +133,8 @@ def create_persona(parent, comm):
     intimacy_desc.pack(fill="x")
     intimacy_fit.pack(fill="x", pady=(4, 0))
     intimacy_summary.pack(fill="x", pady=(4, 0))
+    consent_chk.pack(anchor="w", pady=(8, 0))
+    consent_hint.pack(fill="x", pady=(2, 0))
     _sync_intimacy()
 
     label(body, "创作要求")
@@ -138,6 +156,7 @@ def create_persona(parent, comm):
         title, request, profile = name.get().strip(), value(requirements).strip(), value(manual)
         mode = mode_var.get()
         intimacy_level = intimacy_var.get()
+        consent_mode = bool(consent_var.get()) and intimacy_level in comm_author.CONSENT_MODE_LEVELS
         try:
             comm_author.all_file_names(comm.personas, title)
             if not request:
@@ -147,7 +166,7 @@ def create_persona(parent, comm):
         except (OSError, ValueError, ai_assist.AIError) as exc:
             status.configure(text=tr(str(exc)))
             return
-        for widget in (name, rb_det, rb_bri, intimacy_scale, requirements, manual, submit):
+        for widget in (name, rb_det, rb_bri, intimacy_scale, consent_chk, requirements, manual, submit):
             widget.configure(state="disabled")
         status.configure(text=tr("正在参考 Claudia 生成 5 份人设文件…"))
 
@@ -155,7 +174,7 @@ def create_persona(parent, comm):
             try:
                 drafts.put((comm_author.generate(
                     model, title, request, profile, mode=mode, folder=comm.personas,
-                    intimacy_level=intimacy_level,
+                    intimacy_level=intimacy_level, consent_mode=consent_mode,
                 ), ""))
             except (OSError, ValueError, ai_assist.AIError) as exc:
                 drafts.put((None, str(exc)))
@@ -169,6 +188,7 @@ def create_persona(parent, comm):
             if draft is None:
                 for widget in (name, rb_det, rb_bri, intimacy_scale, requirements, manual, submit):
                     widget.configure(state="normal")
+                _sync_intimacy()
                 status.configure(text=tr(error))
                 return
 
@@ -227,7 +247,7 @@ def create_persona(parent, comm):
                     try:
                         updated = comm_author.revise(
                             model, title, cur, instr, mode=mode, folder=comm.personas,
-                            intimacy_level=intimacy_level,
+                            intimacy_level=intimacy_level, consent_mode=consent_mode,
                         )
                         rev_q.put((updated, ""))
                     except (OSError, ValueError, ai_assist.AIError) as exc:

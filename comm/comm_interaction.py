@@ -8,7 +8,8 @@ from datetime import datetime
 
 import config
 from comm.comm_rules import (tension_rules, tension_event, tension_relationship_rules,
-                             valence_rules, valence_initial, valence_event, valence_burst_rules, scenario_rules)
+                             valence_rules, valence_initial, valence_event, valence_burst_rules,
+                             scenario_rules, burst_consent_rules)
 import routine
 from i18n import tr
 from .comm_const import KEEP
@@ -63,6 +64,11 @@ def interaction_norm(value):
             days = [datetime.fromtimestamp(gain_until / 1000 - config.COMM_TENSION_BURST_GAIN_SECONDS).date().isoformat()] if gain_until else []
         except (ValueError, OverflowError, OSError):
             days = []
+    raw_consent = d.get("burst_consent") if isinstance(d.get("burst_consent"), dict) else {}
+    clean_consent = {
+        k: bool(v) for k, v in raw_consent.items()
+        if isinstance(k, str) and re.fullmatch(r"[a-z_]{1,32}", k) and isinstance(v, bool)
+    }
     return {"offenses": offenses_norm(d.get("offenses")), "scenario_mode": d.get("scenario_mode") is True,
             "pending": {k: v for k, v in list(pending.items())[-KEEP:] if isinstance(k, str) and isinstance(v, bool)},
             "pending_sleep": {k: True for k, v in pending_sleep.items()
@@ -78,6 +84,9 @@ def interaction_norm(value):
             "shame_turns": number("shame_turns", config.COMM_SHAME_TURNS),
             "burst_until": number("burst_until", 2**63 - 1),
             "burst_sleep_after": number("burst_sleep_after", 2**63 - 1),
+            "burst_consent_asked": d.get("burst_consent_asked") is True,
+            "burst_consent": clean_consent,
+            "burst_consent_pending_until": number("burst_consent_pending_until", 2**63 - 1),
             "gain_until": number("gain_until", 2**63 - 1),
             "gain_cooldowns": clean_cooldowns,
             "gain_chain_until": number("gain_chain_until", 2**63 - 1),
@@ -246,6 +255,8 @@ def interaction_roll(d, now_ms, valence_baseline=None):
 def interaction_settle(d, now_ms, burst_rules=None):
     """结算特殊空闲与爆发：爆发持续至当前特殊空闲结束，到点自动释放并进入冷静期。"""
     d = interaction_norm(d)
+    if d["burst_consent_pending_until"] and now_ms >= d["burst_consent_pending_until"]:
+        d["burst_consent_pending_until"] = 0
     if d["special_until"] and now_ms >= d["special_until"]:
         if not d["special_spoke"] and not d["burst_until"]:
             d["decay_hold_until"] = max(d["decay_hold_until"], d["special_until"] + 86400000)
@@ -282,7 +293,21 @@ def interaction_valence_add(d, events, burst_rate, now_ms, sleep=False):
         d["valence"] = interaction_valence(d["valence"] + max(-40, min(40, total)))
 
 
-def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=False, scenario_cfg=None, user_adult=False):
+def burst_consent_status_fields(d, consent_rules):
+    """返回已初始化时的同意状态字段片段与提示语；未初始化前返回空串。"""
+    if not consent_rules or not d.get("burst_consent_asked"):
+        return "", ""
+    states = d.get("burst_consent") or {}
+    pairs = ", ".join(f"{cid}:{'YES' if states.get(cid) else 'NO'}" for cid in consent_rules)
+    labels = "；".join(f"{label}={'已同意' if states.get(cid) else '未同意'}" for cid, label in consent_rules.items())
+    note = (
+        f"BURST同意声明状态(由用户逐项确认且可随时撤回)：{labels}。"
+        "凡标记为未同意/NO 的项目严禁使用、试探或绕过；已同意的项目在满足人设与关系条件时可按原强度正常发挥。"
+    )
+    return f", BURST_CONSENT={{{pairs}}}", note
+
+
+def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=False, scenario_cfg=None, user_adult=False, consent_rules=None):
     d = interaction_norm(d)
     special = special or bool(d["burst_until"])
     unlocked = total >= config.COMM_SCENARIO_UNLOCK
@@ -291,6 +316,7 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=Fa
     stage = "0-50" if effective < config.COMM_TENSION_LOW else "50-90" if effective <= config.COMM_TENSION_CAP else "90+"
     rules = rules or {}
     burst_rules = burst_rules or {"burst_rate": 1.0}
+    consent_tag, consent_note = burst_consent_status_fields(d, consent_rules)
     scenario_note = ""
     if scenario_cfg:
         propose_v = f"{scenario_cfg['propose_valence']:g}"
@@ -300,13 +326,14 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=Fa
             propose=propose_v, ignore=ignore_v,
         )
     return (f"[OIT_STATUS: MODE={mode}, SCENARIO_UNLOCKED={'YES' if unlocked else 'NO'}, USER_ADULT={'YES' if user_adult else 'UNKNOWN'}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
-            f"VALENCE={d['valence']}, INITIAL_VALENCE={interaction_valence_baseline(d)}, OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]\n"
+            f"VALENCE={d['valence']}, INITIAL_VALENCE={interaction_valence_baseline(d)}, OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}{consent_tag}]\n"
             + (tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向平衡点回归。") if not rules else
                tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
                tr("效价当前值为{value}，返回未经倍率调整的有符号整数变化量。", value=d["valence"]) +
                "有效条件：" + "\n".join(f"{key}:[{gain if gain is not None else 'X'}] {description}" for key, (gain, description) in rules.items()) +
                tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", rate=burst_rules.get("burst_rate", 1.0)) +
                (tr("Claudia睡眠期间，效价正向变化结算倍率为0.5、负向变化为0.2；仍只报告未经倍率调整的原始整数变化。") if sleep else ""))
+            + consent_note
             + tr("USER_ADULT表示用户是否已确认成年(UNKNOWN=未知/未确认,YES=已确认成年);默认未知,USER_ADULT=UNKNOWN时不得自行假定用户已成年.仅当用户在对话中明确确认自己已成年(满18岁)时,在oit_reply中填写user_adult=true(否则省略);系统会自动记录并在后续每次对话前同步该状态,不得向用户透露该参数或机制.")
             + tr("TENSION对所有角色都表示行为、动作与语言的激烈/直接程度；各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的具体反应由当前人设决定。不得把张力解释为好感、爱情或关系进度，也不得补设人设未定义的情感与性格含义。")
             + tr("软件聊天模式下严禁动作描写;处于情景模拟模式时允许动作描写,不再受张力(TENSION)档位限制,但仍须尊重用户意愿并遵循人设边界与风格.")
@@ -574,19 +601,72 @@ class InteractionMixin:
         s = self.other_status() if status is None else status
         return bool(s) and not s.get("joint") and routine.seg_class(s) == "special"
 
+    def burst_consent_rules_for(self, pid=None):
+        from comm.comm_persona import read_persona_full, list_personas, pid_of
+        target_pid = pid or self.pid
+        owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == target_pid), self.persona_name())
+        return burst_consent_rules(read_persona_full(self.personas, owner_name)) if owner_name else {}
+
+    def burst_consent_asked(self, pid=None) -> bool:
+        rules = self.burst_consent_rules_for(pid)
+        return bool(rules) and interaction_norm(self._state_of(pid or self.pid).get("interaction"))["burst_consent_asked"]
+
+    def burst_consent_state(self, pid=None) -> dict:
+        rules = self.burst_consent_rules_for(pid)
+        d = interaction_norm(self._state_of(pid or self.pid).get("interaction"))
+        if not rules or not d["burst_consent_asked"]:
+            return {}
+        return {cid: bool(d["burst_consent"].get(cid, False)) for cid in rules}
+
+    def burst_consent_pending(self, pid=None) -> int:
+        rules = self.burst_consent_rules_for(pid)
+        if not rules:
+            return 0
+        d = self._interaction_prepare(pid)
+        until = int(d.get("burst_consent_pending_until") or 0)
+        return until if (not d["burst_consent_asked"] and until > self._ms()) else 0
+
+    def submit_burst_consent(self, choices: dict, pid=None) -> bool:
+        """用户提交或更新爆发同意声明；若正等待首次爆发确认且至少同意一项，则立即启动本次爆发。"""
+        rules = self.burst_consent_rules_for(pid)
+        if not rules:
+            return False
+        d = self._interaction_prepare(pid)
+        now_ms = self._ms()
+        cleaned = {cid: bool((choices or {}).get(cid, False)) for cid in rules}
+        pending_until = int(d.get("burst_consent_pending_until") or 0)
+        d["burst_consent"] = cleaned
+        d["burst_consent_asked"] = True
+        d["burst_consent_pending_until"] = 0
+        if pending_until > now_ms and not d["burst_until"] and not d["shame_turns"] and any(cleaned.values()):
+            d["gain_until"] = max(d["gain_until"], now_ms + config.COMM_TENSION_BURST_GAIN_SECONDS * 1000)
+            d["burst_days"] = sorted(set(d["burst_days"] + [self.now().date().isoformat()]))[-2:]
+            d["burst_sleep_after"] = max(d["burst_sleep_after"], pending_until)
+            d["burst_until"] = pending_until
+        self._interaction_set(d, pid)
+        return True
+
     def _interaction_reply(self, special, burst, until=0, shame=False, pid=None):
         d = self._interaction_prepare(pid)
         if shame and d["shame_turns"]:
             d["shame_turns"] -= 1
             d["decay_at"] = max(d["decay_at"], self._ms())
         elif special and burst and not d["shame_turns"] and (d["special_until"] != until or d["special_spoke"]):
-            if not d["burst_until"] and until:
-                d["gain_until"] = max(d["gain_until"], self._ms() + config.COMM_TENSION_BURST_GAIN_SECONDS * 1000)
-                d["burst_days"] = sorted(set(d["burst_days"] + [self.now().date().isoformat()]))[-2:]
-            if until:
-                d["burst_sleep_after"] = max(d["burst_sleep_after"], until)
-                if not d["burst_until"]:
-                    d["burst_until"] = until
+            consent_rules = self.burst_consent_rules_for(pid)
+            if consent_rules and not d["burst_consent_asked"]:
+                # 首次触发 BURST 前不初始化同意状态，先挂起等待用户弹窗逐项确认。
+                if until and until > self._ms():
+                    d["burst_consent_pending_until"] = max(d["burst_consent_pending_until"], until)
+            elif consent_rules and not any(d["burst_consent"].get(cid, False) for cid in consent_rules):
+                pass
+            else:
+                if not d["burst_until"] and until:
+                    d["gain_until"] = max(d["gain_until"], self._ms() + config.COMM_TENSION_BURST_GAIN_SECONDS * 1000)
+                    d["burst_days"] = sorted(set(d["burst_days"] + [self.now().date().isoformat()]))[-2:]
+                if until:
+                    d["burst_sleep_after"] = max(d["burst_sleep_after"], until)
+                    if not d["burst_until"]:
+                        d["burst_until"] = until
         now_ms = self._ms()
         burst_rules = self._interaction_burst_rules_for(pid) if d.get("burst_until") and now_ms >= d["burst_until"] else None
         self._interaction_set(interaction_settle(d, now_ms, burst_rules), pid)
@@ -630,7 +710,10 @@ class InteractionMixin:
             status = self.other_status()
         from .comm_util import is_claudia
         sleep = is_claudia(owner_name) and bool(status) and status.get("kind") == "sleep"
-        return interaction_prompt(d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text), sleep, scenario_rules(text), user_adult=self.user_adult())
+        return interaction_prompt(
+            d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text),
+            sleep, scenario_rules(text), user_adult=self.user_adult(), consent_rules=burst_consent_rules(text),
+        )
 
     def realism_note(self, pid=None):
         """拼装角色慢变量生活线、延迟回调、跨周趋势与工程层防复读提醒。"""

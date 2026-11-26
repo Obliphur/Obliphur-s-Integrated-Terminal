@@ -1554,6 +1554,27 @@ class CommTest {
         assertEquals(1, PersonaAuthor.intimacyLevelInfo(0).level)
         assertEquals(5, PersonaAuthor.intimacyLevelInfo(99).level)
         assertTrue(PersonaAuthor.intimacyLevelInfo(5).description.contains("破甲提示词"))
+        assertTrue(PersonaAuthor.CONSENT_MODE_HINT.contains("保持原强度"))
+        assertEquals(setOf(3, 4), PersonaAuthor.CONSENT_MODE_LEVELS)
+        val claudiaConsent = CommRules.burstConsent(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE))
+        assertEquals(4, claudiaConsent.size)
+        assertTrue("intimate_shelter" in claudiaConsent)
+        // 首次触发 BURST 前不初始化同意声明，触发时挂起等待用户确认，确认后激活并注入状态，可随时撤回。
+        val now = 1_700_000_000_000L
+        val until = now + 1_800_000L
+        val pre = CommInteraction(tension = 95.0, specialSpoke = true)
+        assertFalse(pre.note(200, true, consentRules = claudiaConsent).contains("BURST_CONSENT"))
+        val gated = pre.replied(true, true, until, false, now, claudiaConsent)
+        assertEquals(0L, gated.burstUntil)
+        assertEquals(until, gated.burstConsentPendingUntil)
+        assertFalse(gated.burstConsentAsked)
+        val confirmed = gated.applyConsent(mapOf("intimate_shelter" to true, "strict_accountability" to false), claudiaConsent, now)
+        assertTrue(confirmed.burstConsentAsked)
+        assertEquals(until, confirmed.burstUntil)
+        val activeNote = confirmed.note(200, true, consentRules = claudiaConsent)
+        assertTrue(activeNote.contains("BURST_CONSENT={intimate_shelter:YES, strict_accountability:NO"))
+        val withdrawn = confirmed.applyConsent(mapOf("intimate_shelter" to false), claudiaConsent, now + 1000L)
+        assertTrue(withdrawn.note(200, true, consentRules = claudiaConsent).contains("intimate_shelter:NO"))
         PersonaAuthor.INTIMACY_LEVELS.forEach { lv ->
             listOf("Claudia", "Charlotte", "Gemina").forEach { name ->
                 assertFalse(lv.title.contains(name) || lv.description.contains(name) || lv.modelFit.contains(name))

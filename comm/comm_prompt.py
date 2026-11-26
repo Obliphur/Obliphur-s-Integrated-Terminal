@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 _LEGACY_CONTROLS = json.loads((Path(__file__).resolve().parent.parent / "defaults" / "comm_legacy_controls.json").read_text(encoding="utf-8"))
-_TEMPLATE_SECTION = re.compile(r"\s*\[/?(?:condition(?::strict)?|tension(?::events)?|valence(?::(?:initial|events|burst))?|shift|life:arcs|trend|callback|anti_repeat)\]\s*")
+_TEMPLATE_SECTION = re.compile(r"\s*\[/?(?:condition(?::strict)?|tension(?::(?:events|relationship))?|valence(?::(?:initial|events|burst))?|burst:consent|scenario|typing|shift|life:arcs|trend|callback|anti_repeat)\]\s*")
 
 
 def native_persona_text(text: str) -> str:

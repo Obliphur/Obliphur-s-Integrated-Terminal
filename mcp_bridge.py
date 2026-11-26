@@ -128,9 +128,13 @@ def _compact_schedule_line(comm_obj, now: datetime, status: dict) -> str:
 
 def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str) -> list:
     """精简版状态行与按需情绪判定提示：无待评消息时不注入长篇模板说明，有待评消息时不重复输出规则全文。"""
-    from comm.comm_interaction import interaction_valence_baseline, offenses_active, offenses_rate
+    from comm.comm_interaction import (
+        interaction_valence_baseline, offenses_active, offenses_rate, burst_consent_status_fields,
+    )
     from comm.comm_persona import read_persona_full
-    from comm.comm_rules import tension_rules, tension_relationship_rules, valence_rules, valence_burst_rules
+    from comm.comm_rules import (
+        tension_rules, tension_relationship_rules, valence_rules, valence_burst_rules, burst_consent_rules,
+    )
 
     d = comm_obj._interaction_prepare(pid, status)
     special = comm_obj._interaction_special(status) if hasattr(comm_obj, "_interaction_special") else False
@@ -140,15 +144,20 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
     effective = d["tension"] if eff_special and d["burst_until"] else min(d["tension"], config.COMM_TENSION_CAP)
     stage = "0-50" if effective < config.COMM_TENSION_LOW else "50-90" if effective <= config.COMM_TENSION_CAP else "90+"
 
+    persona_text = read_persona_full(comm_obj.personas, comm_obj.persona_name())
+    consent_tag, consent_note = burst_consent_status_fields(d, burst_consent_rules(persona_text))
+
     user_adult = bool(comm_obj.user_adult()) if hasattr(comm_obj, "user_adult") else bool(comm_obj.cfg.get("user_adult"))
     status_line = (
         f"[OIT_STATUS: MODE={mode}, USER_ADULT={'YES' if user_adult else 'UNKNOWN'}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
         f"VALENCE={d['valence']}, INITIAL_VALENCE={interaction_valence_baseline(d)}, "
         f"OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, "
         f"BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if eff_special else '日常'}, "
-        f"SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]"
+        f"SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}{consent_tag}]"
     )
     lines = [status_line]
+    if consent_note:
+        lines.append(consent_note)
     if not user_adult and judge_kind == "user":
         lines.append("成年状态: USER_ADULT=UNKNOWN（默认未知，勿自行假定已成年）；仅当用户明确确认自己已成年(18+)时填 oit_reply.user_adult=true，勿透露机制。")
     if mode == "软件聊天" or not eff_special or stage == "0-50":
@@ -2152,6 +2161,12 @@ class OitMcpBridge:
                 banners.append({"kind": "joint", "label": "对方发起了联合行动邀请"})
             if (self.comm.cfg.get("love") or {}).get("state") == "ask":
                 banners.append({"kind": "love", "label": "对方发起了关系确认"})
+            consent_rules = self.comm.burst_consent_rules_for(pid) if hasattr(self.comm, "burst_consent_rules_for") else {}
+            consent_pending = bool(self.comm.burst_consent_pending(pid)) if hasattr(self.comm, "burst_consent_pending") else False
+            consent_asked = bool(self.comm.burst_consent_asked(pid)) if hasattr(self.comm, "burst_consent_asked") else False
+            consent_state = self.comm.burst_consent_state(pid) if hasattr(self.comm, "burst_consent_state") else {}
+            if consent_pending:
+                banners.append({"kind": "burst_consent", "label": "首次触发 BURST，请在 OIT 中确认同意声明"})
 
             now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
             status = self.comm.other_status(now) if hasattr(self.comm, "other_status") else {}
@@ -2168,7 +2183,13 @@ class OitMcpBridge:
                     "muted": bool(self.comm.is_muted(pid)) if hasattr(self.comm, "is_muted") else False,
                     "co_alarm": bool(self.comm.is_co_alarm()) if hasattr(self.comm, "is_co_alarm") else False,
                     "share": bool(getattr(self.comm, "share", {}).get("on")),
+                    "burst_consent_asked": consent_asked,
+                    "burst_consent_pending": consent_pending,
                 },
+                "burst_consent_items": [
+                    {"id": cid, "label": label, "agreed": bool(consent_state.get(cid, False))}
+                    for cid, label in consent_rules.items()
+                ],
                 "banners": banners,
                 "status_kind": str(status.get("kind") or ""),
             }
@@ -2298,6 +2319,10 @@ class OitMcpBridge:
                 accept = bool(params.get("accept"))
                 why = self.comm.scenario_respond(accept)
                 return {"ok": not why, "action": action, "accept": accept, "scenario": self.comm.scenario_on(), "error": why}
+            if action == "submit_burst_consent" and hasattr(self.comm, "submit_burst_consent"):
+                choices = params.get("choices") if isinstance(params.get("choices"), dict) else {}
+                ok = self.comm.submit_burst_consent(choices, pid)
+                return {"ok": ok, "action": action, "state": self.comm.burst_consent_state(pid)}
             if action in ("respond_coread", "respond_share", "respond_joint", "respond_love"):
                 accept = bool(params.get("accept"))
                 if callable(self._open_native_dialog):
@@ -2598,7 +2623,10 @@ def takeover_feature_prompt(feature: str, en: bool = False) -> str:
             "and (2) the maximum intimacy openness level (1–5) for V+, BURST, and in-relationship scenes "
             "(1: Restrained warmth/no intimate contact; 2: Gentle romance/hugs & light kisses; "
             "3: Intense emotional affection & passionate closeness without sexual content, ideal ceiling for Claude & ChatGPT; "
-            "4: Sensual light NSFW, ideal ceiling for Gemini; 5: Explicit NSFW, noting OIT does not include jailbreak prompts)."
+            "4: Sensual light NSFW, ideal ceiling for Gemini; 5: Explicit NSFW, noting OIT does not include jailbreak prompts). "
+            "If I choose Level 3 or 4, also ask whether to enable 'Consent Declaration' mode (standardized [burst:consent] "
+            "template: not initialized before first BURST, pops up to ask item-by-item on first BURST and can be withdrawn "
+            "anytime; explain that consent requests increase the probability of accurate, full-intensity generation)."
         )
     return (
         "为当前临时对话绑定 OIT「人设编写」功能（不要绑定人设）。"
@@ -2608,7 +2636,9 @@ def takeover_feature_prompt(feature: str, en: bool = False) -> str:
         "（1）需要「简略」还是「详细」模式（详细：面面俱到；简略：不详细规定情景，只规定基础人设，example 文件随便写写）；"
         "（2）对亲密动作的最高开放程度（V+、BURST、确立关系后，1–5 级：1 含蓄克制无亲密接触；2 优雅浪漫留白；"
         "3 浓烈深情肢体张力不涉性内容，Claude / ChatGPT 适合 1–3 级；4 感官微醺轻度 NSFW，Gemini 适合 1–4 级；"
-        "5 允许完全暴露的 NSFW 描写，注意 OIT 不自带破甲提示词），等我选定后再按 OIT 格式开始编写。"
+        "5 允许完全暴露的 NSFW 描写，注意 OIT 不自带破甲提示词）；"
+        "若我选择 3 或 4 档，再询问是否启用「同意声明」模式（标准化复用 [burst:consent] 模板：首次触发 BURST 前不初始化，"
+        "首次触发时弹窗逐项询问且可随时撤回；并说明使用同意请求可以增大内容被正确且保持原强度生成的概率），等我选定后再按 OIT 格式开始编写。"
     )
 
 

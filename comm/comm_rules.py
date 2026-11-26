@@ -309,3 +309,17 @@ def anti_repeat_rules(text):
         else:
             return None
     return out
+
+
+def burst_consent_rules(text):
+    """标准化爆发同意声明区块 [burst:consent]：每行 id:说明文字，最多 8 项；非法项使整组无效。"""
+    out = {}
+    for line in rule_lines(text, "burst:consent"):
+        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*(\S.*)", line)
+        if not m or m[1] in out:
+            return {}
+        label = m[2].strip()
+        if not label or len(label) > 80 or len(out) >= 8:
+            return {}
+        out[m[1]] = label
+    return out

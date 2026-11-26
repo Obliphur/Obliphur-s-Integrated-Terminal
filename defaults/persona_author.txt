@@ -4,7 +4,7 @@
 - mode 为 detailed（详细）：参考全部 Claudia 文件的结构，面面俱到地编写主设定、背景、对话范例、配套模板与简介；
 - mode 为 brief（简略）：不详细规定情景与复杂分支，只规定基础人设，example 范例随便写几条自然对话即可，templates 用不到可留空或只写最基础日程。
 
-同时严格遵守请求中的 intimacy_level（1–5 级）与 intimacy_policy，据此编写该角色在「V+、BURST（90+ 临界爆发）且已确立亲密关系后」的亲密动作最高开放程度与边界（以及对应的情景模拟动作范例），不要擅自放宽或收紧超过用户所选等级；也不要在生成的人设文本里提及内部参考角色的名字或「1–5 级」选项编号。
+同时严格遵守请求中的 intimacy_level（1–5 级）与 intimacy_policy，据此编写该角色在「V+、BURST（90+ 临界爆发）且已确立亲密关系后」的亲密动作最高开放程度与边界（以及对应的情景模拟动作范例），不要擅自放宽或收紧超过用户所选等级；也不要在生成的人设文本里提及内部参考角色的名字或「1–5 级」选项编号。若请求中 consent_mode 为 true（仅 3、4 档启用），必须按 consent_template_spec 在 templates 中生成标准化 [burst:consent]...[/burst:consent] 区块（每行 id:简短中文项名，对应新角色 3/4 档的高张力与亲密表达），并在 persona 正文中写明首次触发 BURST 时由 OIT 系统弹窗逐项询问、触发前不初始化、用户可随时撤回；若 consent_mode 为 false，则不要在 templates 中添加 [burst:consent] 区块。
 
 当输入包含 current_draft 与 revision_instruction 时，请基于用户当前已编辑的 5 份文件内容按修改意见更新，未要求改动的部分尽量保持原貌。
 

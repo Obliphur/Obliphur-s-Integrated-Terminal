@@ -303,4 +303,18 @@ object CommRules {
         }
         return AntiRepeatConfig(window, minHits, maxItems, forbid)
     }
+
+    /** 标准化爆发同意声明区块 [burst:consent]：每行 id:说明文字，最多 8 项；非法项使整组无效。 */
+    fun burstConsent(text: String): LinkedHashMap<String, String> {
+        val out = linkedMapOf<String, String>()
+        val pattern = Regex("""([a-z_]{1,32})\s*[:：]\s*(\S.*)""")
+        for (line in lines(text, "burst:consent")) {
+            val m = pattern.matchEntire(line) ?: return linkedMapOf()
+            val id = m.groupValues[1]
+            val label = m.groupValues[2].trim()
+            if (id in out || label.isEmpty() || label.length > 80 || out.size >= 8) return linkedMapOf()
+            out[id] = label
+        }
+        return out
+    }
 }

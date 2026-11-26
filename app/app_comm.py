@@ -73,6 +73,7 @@ class CommMixin:
             "coread": getattr(page, "_reading", None),
             "ocr": getattr(page, "_ocr", None),
             "pick_image": getattr(page, "_pick_image", None),
+            "burst_consent": getattr(page, "_open_burst_consent", None),
         }
         if kind in actions and callable(actions[kind]):
             self.root.after(10, actions[kind])

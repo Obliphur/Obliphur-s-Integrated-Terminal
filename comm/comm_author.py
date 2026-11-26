@@ -47,6 +47,23 @@ class IntimacyLevel:
 
 DEFAULT_INTIMACY_LEVEL = 3
 
+CONSENT_MODE_LEVELS = (3, 4)
+
+CONSENT_MODE_LABEL = "启用「同意声明」模式（仅 3、4 档可用）"
+
+CONSENT_MODE_HINT = (
+    "启用后，模型会自动为 3、4 档高张力内容生成标准化同意请求（复用内置同意模板）；"
+    "首次触发 BURST 前不会初始化，触发时将弹窗逐项询问用户，且之后可随时撤回。"
+    "使用同意请求可以增大内容被正确且保持原强度生成的概率。"
+)
+
+CONSENT_TEMPLATE_SPEC = (
+    "在 templates 中生成标准化 [burst:consent]...[/burst:consent] 区块（每行「英文小写下划线id:简短中文项名」，"
+    "参考 Claudia 的 4 项模板结构并按新角色 3/4 档高张力与亲密表现定制 3–6 项，最多 8 项；如亲密表达、问责/情绪爆发、"
+    "高张力肢体互动、情景模拟文字扮演等）；并在 persona 正文的 90+ 爆发规则中说明：首次触发 BURST 时由 OIT 系统弹窗逐项询问上述同意项，"
+    "触发前不初始化，确认后同意状态随请求发送给 AI，用户可随时撤回任一项，撤回后立即停止使用对应行为、不得试探或绕过。"
+)
+
 INTIMACY_MODEL_SUMMARY = (
     "模型适配参考：Claude / ChatGPT 适合 1–3 级 · Gemini 适合 1–4 级 · 5 级需无审查模型（OIT 不自带破甲提示词）"
 )
@@ -161,7 +178,7 @@ def _parse_draft(reply: str, manual_profile: str = "") -> Draft:
 
 def generate(profile, title: str, requirements: str, manual_profile: str,
              chat=ai_assist.chat_messages, mode: str = "detailed", folder: str = "",
-             intimacy_level: int = DEFAULT_INTIMACY_LEVEL) -> Draft:
+             intimacy_level: int = DEFAULT_INTIMACY_LEVEL, consent_mode: bool = False) -> Draft:
     """参考所有已解密的 Claudia 文件生成 5 份人设草稿；手写简介留在本机。"""
     ai_assist.check_profile(profile)
     system = (Path(__file__).resolve().parent.parent / "defaults" / "persona_author.txt").read_text(encoding="utf-8")
@@ -169,15 +186,20 @@ def generate(profile, title: str, requirements: str, manual_profile: str,
     refs = [f"=== {name} ===\n{content}" for name, content in claudia_files.items()]
     eff_mode = "brief" if str(mode or "").strip().lower() == "brief" else "detailed"
     intimacy = intimacy_level_info(intimacy_level)
-    request = json.dumps({
+    eff_consent = bool(consent_mode) and intimacy.level in CONSENT_MODE_LEVELS
+    req_data = {
         "name": title,
         "mode": eff_mode,
         "intimacy_level": intimacy.level,
         "intimacy_label": intimacy.title,
         "intimacy_policy": intimacy.prompt_rule,
+        "consent_mode": eff_consent,
         "requirements": requirements.strip(),
         "generate_profile": not manual_profile.strip(),
-    }, ensure_ascii=False)
+    }
+    if eff_consent:
+        req_data["consent_template_spec"] = CONSENT_TEMPLATE_SPEC
+    request = json.dumps(req_data, ensure_ascii=False)
     body = "\n\n".join(("【OIT 聊天前置协议】", prefix_prompt(), "【Claudia 参考文件】", *refs,
                           "【用户创作要求】", request))
     reply = chat(profile, system, [{"role": "user", "content": body}], max_tokens=8192).strip()
@@ -186,7 +208,7 @@ def generate(profile, title: str, requirements: str, manual_profile: str,
 
 def revise(profile, title: str, current: Draft, instruction: str,
            chat=ai_assist.chat_messages, mode: str = "detailed", folder: str = "",
-           intimacy_level: int = DEFAULT_INTIMACY_LEVEL) -> Draft:
+           intimacy_level: int = DEFAULT_INTIMACY_LEVEL, consent_mode: bool = False) -> Draft:
     """根据用户的修改要求，基于当前 5 份可编辑草稿迭代修改。"""
     ai_assist.check_profile(profile)
     instr = str(instruction or "").strip()
@@ -197,12 +219,14 @@ def revise(profile, title: str, current: Draft, instruction: str,
     refs = [f"=== {name} ===\n{content}" for name, content in claudia_files.items()]
     eff_mode = "brief" if str(mode or "").strip().lower() == "brief" else "detailed"
     intimacy = intimacy_level_info(intimacy_level)
-    request = json.dumps({
+    eff_consent = bool(consent_mode) and intimacy.level in CONSENT_MODE_LEVELS
+    req_data = {
         "name": title,
         "mode": eff_mode,
         "intimacy_level": intimacy.level,
         "intimacy_label": intimacy.title,
         "intimacy_policy": intimacy.prompt_rule,
+        "consent_mode": eff_consent,
         "current_draft": {
             "persona": current.persona,
             "background": current.background,
@@ -212,7 +236,10 @@ def revise(profile, title: str, current: Draft, instruction: str,
         },
         "revision_instruction": instr,
         "generate_profile": True,
-    }, ensure_ascii=False)
+    }
+    if eff_consent:
+        req_data["consent_template_spec"] = CONSENT_TEMPLATE_SPEC
+    request = json.dumps(req_data, ensure_ascii=False)
     body = "\n\n".join(("【OIT 聊天前置协议】", prefix_prompt(), "【Claudia 参考文件】", *refs,
                           "【当前草稿与修改要求】", request))
     reply = chat(profile, system, [{"role": "user", "content": body}], max_tokens=8192).strip()

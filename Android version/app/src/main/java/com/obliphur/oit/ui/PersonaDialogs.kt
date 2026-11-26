@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -22,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,11 +54,13 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
     var request by remember { mutableStateOf("") }
     var profile by remember { mutableStateOf("") }
     var intimacyLevel by remember { mutableIntStateOf(PersonaAuthor.DEFAULT_INTIMACY_LEVEL) }
+    var consentMode by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf<PersonaAuthor.Draft?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val preview = draft
     val intimacyInfo = PersonaAuthor.intimacyLevelInfo(intimacyLevel)
+    val consentAvailable = intimacyInfo.level in PersonaAuthor.CONSENT_MODE_LEVELS
     AlertDialog(onDismissRequest = onDismiss, title = { Text(tr("创建人设")) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -81,7 +85,11 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
                             )
                             Slider(
                                 value = intimacyLevel.toFloat(),
-                                onValueChange = { intimacyLevel = it.roundToInt().coerceIn(1, PersonaAuthor.INTIMACY_LEVELS.size) },
+                                onValueChange = {
+                                    val next = it.roundToInt().coerceIn(1, PersonaAuthor.INTIMACY_LEVELS.size)
+                                    intimacyLevel = next
+                                    if (next !in PersonaAuthor.CONSENT_MODE_LEVELS) consentMode = false
+                                },
                                 valueRange = 1f..PersonaAuthor.INTIMACY_LEVELS.size.toFloat(),
                                 steps = PersonaAuthor.INTIMACY_LEVELS.size - 2,
                                 enabled = !busy,
@@ -103,6 +111,23 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
                             )
                             Text(
                                 tr(PersonaAuthor.INTIMACY_MODEL_SUMMARY),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = consentAvailable && consentMode,
+                                    onCheckedChange = { consentMode = it },
+                                    enabled = !busy && consentAvailable,
+                                )
+                                Text(
+                                    tr(PersonaAuthor.CONSENT_MODE_LABEL),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (consentAvailable) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Text(
+                                tr(PersonaAuthor.CONSENT_MODE_HINT),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -136,6 +161,7 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
                     val requirements = request.trim()
                     val manualProfile = profile
                     val chosenIntimacy = intimacyLevel
+                    val chosenConsent = consentAvailable && consentMode
                     val problem = runCatching {
                         comm.checkNewPersonaName(name)
                         require(requirements.isNotEmpty()) { "请填写创作要求。" }
@@ -145,7 +171,12 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
                         busy = true
                         scope.launch {
                             val result = withContext(Dispatchers.IO) {
-                                runCatching { PersonaAuthor.generate(comm.aiConfig().profile(), name, requirements, manualProfile, chosenIntimacy) }
+                                runCatching {
+                                    PersonaAuthor.generate(
+                                        comm.aiConfig().profile(), name, requirements, manualProfile,
+                                        chosenIntimacy, chosenConsent,
+                                    )
+                                }
                             }
                             busy = false
                             result.onSuccess { draft = it }.onFailure { error = it.message.orEmpty() }

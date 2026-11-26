@@ -22,7 +22,10 @@ data class CommInteraction(
     val valence: Double = 0.0, val valenceDecayAt: Long = 0L,
     val valenceCooldowns: Map<String, Long> = emptyMap(), val valenceChainUntil: Long = 0L,
     val valenceInitialized: Boolean = false, val valenceInitial: Double = 0.0, val valenceInitialSet: Boolean = false,
-    val offenses: List<CommOffense> = emptyList()
+    val offenses: List<CommOffense> = emptyList(),
+    val burstConsentAsked: Boolean = false,
+    val burstConsent: Map<String, Boolean> = emptyMap(),
+    val burstConsentPendingUntil: Long = 0L
 ) {
     fun json(): JSONObject = JSONObject().put("scenario_mode", scenarioMode).put("tension", tension)
         .put("offenses", JSONArray(offenses.map { it.json() }))
@@ -31,6 +34,9 @@ data class CommInteraction(
         .put("valence_initial_set", valenceInitialSet)
         .put("valence_cooldowns", JSONObject(valenceCooldowns)).put("valence_chain_until", valenceChainUntil)
         .put("shame_turns", shameTurns).put("day", day).put("ts", ts).put("burst_until", burstUntil)
+        .put("burst_consent_asked", burstConsentAsked)
+        .put("burst_consent", JSONObject(burstConsent))
+        .put("burst_consent_pending_until", burstConsentPendingUntil)
         .put("pending", JSONObject(pending)).put("pending_sleep", JSONArray(pendingSleep.toList()))
         .put("gain_until", gainUntil)
         .put("burst_days", JSONArray(burstDays)).put("morning_day", morningDay)
@@ -87,9 +93,17 @@ data class CommInteraction(
 
     fun note(total: Int, special: Boolean, valenceRules: Map<String, Pair<Int?, String>> = emptyMap(),
              burstRules: CommRules.ValenceBurst = CommRules.ValenceBurst(), sleep: Boolean = false,
-             scenarioCfg: CommRules.ScenarioRules? = null, userAdult: Boolean = false): String {
+             scenarioCfg: CommRules.ScenarioRules? = null, userAdult: Boolean = false,
+             consentRules: Map<String, String> = emptyMap()): String {
         val unlocked = total >= Cfg.COMM_SCENARIO_UNLOCK
         val mode = if (scenarioMode && unlocked) "情景模拟" else "软件聊天"
+        val consentTag = if (consentRules.isNotEmpty() && burstConsentAsked) {
+            ", BURST_CONSENT={" + consentRules.keys.joinToString(", ") { cid -> "$cid:${if (burstConsent[cid] == true) "YES" else "NO"}" } + "}"
+        } else ""
+        val consentNote = if (consentRules.isNotEmpty() && burstConsentAsked) {
+            val labels = consentRules.entries.joinToString("；") { (cid, label) -> "$label=${if (burstConsent[cid] == true) "已同意" else "未同意"}" }
+            "BURST同意声明状态(由用户逐项确认且可随时撤回)：$labels。凡标记为未同意/NO 的项目严禁使用、试探或绕过；已同意的项目在满足人设与关系条件时可按原强度正常发挥。"
+        } else ""
         val scenarioNote = if (scenarioCfg == null) "" else {
             val propose = if (scenarioCfg.proposeValence % 1.0 == 0.0) scenarioCfg.proposeValence.toInt().toString() else scenarioCfg.proposeValence.toString()
             val ignore = if (scenarioCfg.ignoreValence % 1.0 == 0.0) scenarioCfg.ignoreValence.toInt().toString() else scenarioCfg.ignoreValence.toString()
@@ -97,13 +111,14 @@ data class CommInteraction(
                 "propose" to propose, "ignore" to ignore)
         }
         return "[OIT_STATUS: MODE=$mode, SCENARIO_UNLOCKED=${if (unlocked) "YES" else "NO"}, USER_ADULT=${if (userAdult) "YES" else "UNKNOWN"}, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, VALENCE=$valence, INITIAL_VALENCE=${effectiveValenceBaseline()}, OFFENSE_COUNT=${CommOffenses.active(offenses).size}, VALENCE_RISE_RATE=${CommOffenses.rate(offenses)}, " +
-            "BURST=${if (burstUntil > 0L) "YES" else "NO"}, PERIOD=${if (special || burstUntil > 0L) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}]\n" +
+            "BURST=${if (burstUntil > 0L) "YES" else "NO"}, PERIOD=${if (special || burstUntil > 0L) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}$consentTag]\n" +
             (if (valenceRules.isEmpty()) tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向平衡点回归。") else
                 tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
                 tr("效价当前值为{value}，返回未经倍率调整的有符号整数变化量。", "value" to valence) +
                 "有效条件：" + valenceRules.entries.joinToString("\n") { "${it.key}:[${it.value.first ?: "X"}] ${it.value.second}" } +
                 tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", "rate" to burstRules.rate) +
                 if (sleep) tr("Claudia睡眠期间，效价正向变化结算倍率为0.5、负向变化为0.2；仍只报告未经倍率调整的原始整数变化。") else "") +
+            consentNote +
             tr("USER_ADULT表示用户是否已确认成年(UNKNOWN=未知/未确认,YES=已确认成年);默认未知,USER_ADULT=UNKNOWN时不得自行假定用户已成年.仅当用户在对话中明确确认自己已成年(满18岁)时,在oit_reply中填写user_adult=true(否则省略);系统会自动记录并在后续每次对话前同步该状态,不得向用户透露该参数或机制.") +
             tr("TENSION对所有角色都表示行为、动作与语言的激烈/直接程度；各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的具体反应由当前人设决定。不得把张力解释为好感、爱情或关系进度，也不得补设人设未定义的情感与性格含义。") +
             tr("软件聊天模式下严禁动作描写;处于情景模拟模式时允许动作描写,不再受张力(TENSION)档位限制,但仍须尊重用户意愿并遵循人设边界与风格.") +
@@ -120,6 +135,8 @@ data class CommInteraction(
     /** 结算特殊空闲与爆发：爆发持续至当前特殊空闲结束，到点自动释放并进入冷静期。 */
     fun settle(nowMs: Long, burstEndShift: Int = 0): CommInteraction {
         var d = this
+        if (d.burstConsentPendingUntil > 0L && nowMs >= d.burstConsentPendingUntil)
+            d = d.copy(burstConsentPendingUntil = 0L)
         if (d.specialUntil > 0L && nowMs >= d.specialUntil)
             d = d.copy(decayHoldUntil = if (!d.specialSpoke && d.burstUntil == 0L) maxOf(d.decayHoldUntil, d.specialUntil + 86400000L) else d.decayHoldUntil, specialUntil = 0L, specialSpoke = false)
         if (d.burstUntil > 0L && nowMs >= d.burstUntil) {
@@ -185,15 +202,43 @@ data class CommInteraction(
         return rate to next
     }
 
-    fun replied(special: Boolean, burst: Boolean, until: Long = 0L, shame: Boolean = shameTurns > 0, nowMs: Long = 0L): CommInteraction = when {
+    fun replied(
+        special: Boolean,
+        burst: Boolean,
+        until: Long = 0L,
+        shame: Boolean = shameTurns > 0,
+        nowMs: Long = 0L,
+        consentRules: Map<String, String> = emptyMap(),
+    ): CommInteraction = when {
         shame && shameTurns > 0 -> copy(shameTurns = shameTurns - 1, decayAt = maxOf(decayAt, nowMs))
-        special && burst && shameTurns == 0 && (specialUntil != until || specialSpoke) -> copy(
-            burstUntil = if (burstUntil == 0L && until > 0L) until else burstUntil,
-            burstSleepAfter = maxOf(burstSleepAfter, until),
-            burstDays = if (burstUntil == 0L && until > 0L)
-                (burstDays + localDay(nowMs)).distinct().sorted().takeLast(2) else burstDays,
-            gainUntil = if (burstUntil == 0L && until > 0L) maxOf(gainUntil, nowMs + Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L) else gainUntil)
+        special && burst && shameTurns == 0 && (specialUntil != until || specialSpoke) -> when {
+            consentRules.isNotEmpty() && !burstConsentAsked ->
+                if (until > nowMs) copy(burstConsentPendingUntil = maxOf(burstConsentPendingUntil, until)) else this
+            consentRules.isNotEmpty() && consentRules.keys.none { burstConsent[it] == true } -> this
+            else -> copy(
+                burstUntil = if (burstUntil == 0L && until > 0L) until else burstUntil,
+                burstSleepAfter = maxOf(burstSleepAfter, until),
+                burstDays = if (burstUntil == 0L && until > 0L)
+                    (burstDays + localDay(nowMs)).distinct().sorted().takeLast(2) else burstDays,
+                gainUntil = if (burstUntil == 0L && until > 0L) maxOf(gainUntil, nowMs + Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L) else gainUntil,
+            )
+        }
         else -> this
+    }
+
+    fun applyConsent(choices: Map<String, Boolean>, consentRules: Map<String, String>, nowMs: Long): CommInteraction {
+        if (consentRules.isEmpty()) return this
+        val cleaned = consentRules.keys.associateWith { choices[it] == true }
+        val pending = burstConsentPendingUntil
+        val base = copy(burstConsent = cleaned, burstConsentAsked = true, burstConsentPendingUntil = 0L)
+        return if (pending > nowMs && burstUntil == 0L && shameTurns == 0 && cleaned.values.any { it }) {
+            base.copy(
+                burstUntil = pending,
+                burstSleepAfter = maxOf(burstSleepAfter, pending),
+                burstDays = (burstDays + localDay(nowMs)).distinct().sorted().takeLast(2),
+                gainUntil = maxOf(gainUntil, nowMs + Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L),
+            )
+        } else base
     }
 
     companion object {
@@ -229,7 +274,13 @@ data class CommInteraction(
             if (o?.has("valence_initialized") == true) o.optBoolean("valence_initialized") else o?.has("valence") ?: false,
             (o?.optDouble("valence_initial", 0.0) ?: 0.0).takeIf { it.isFinite() }?.coerceIn(-100.0, 100.0) ?: 0.0,
             o?.optBoolean("valence_initial_set") ?: false,
-            CommOffenses.parse(o?.optJSONArray("offenses"))).let { d ->
+            CommOffenses.parse(o?.optJSONArray("offenses")),
+            o?.optBoolean("burst_consent_asked") ?: false,
+            o?.optJSONObject("burst_consent")?.let { c ->
+                c.keys().asSequence().filter { Regex("[a-z_]{1,32}").matches(it) && c.opt(it) is Boolean }
+                    .associateWith { c.getBoolean(it) }
+            } ?: emptyMap(),
+            maxOf(0L, o?.optLong("burst_consent_pending_until") ?: 0L)).let { d ->
                 d.copy(pendingSleep = d.pendingSleep.intersect(d.pending.keys))
             }
 

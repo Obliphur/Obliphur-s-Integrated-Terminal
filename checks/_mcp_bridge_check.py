@@ -1065,18 +1065,27 @@ def main():
         assert "Brief" in takeover_feature_prompt("persona", en=True) and "Detailed" in takeover_feature_prompt("persona", en=True)
         assert "破甲提示词" in takeover_feature_prompt("persona", en=False)
         assert "jailbreak prompts" in takeover_feature_prompt("persona", en=True)
+        assert "同意声明" in takeover_feature_prompt("persona", en=False) and "保持原强度" in takeover_feature_prompt("persona", en=False)
+        assert "Consent Declaration" in takeover_feature_prompt("persona", en=True)
         assert "萌娘百科" in takeover_feature_help_text("persona", en=False)
         assert "Moegirlpedia" in takeover_feature_help_text("persona", en=True)
 
-        # 10a. API 版 5 文件人设生成、修改与保存验证（含 5 级亲密动作开放度）
+        # 10a. API 版 5 文件人设生成、修改与保存验证（含 5 级亲密动作开放度与 3/4 档同意声明模式）
         from comm import comm_author
+        from comm.comm_rules import burst_consent_rules
         assert len(comm_author.INTIMACY_LEVELS) == 5
         assert comm_author.intimacy_level_info(0).level == 1 and comm_author.intimacy_level_info(99).level == 5
+        assert "保持原强度" in comm_author.CONSENT_MODE_HINT
+        claudia_consent = burst_consent_rules(comm_author.claudia_reference_files(personas_dir).get("Claudia_templates.txt", ""))
+        assert len(claudia_consent) == 4 and "intimate_shelter" in claudia_consent
         fake_prof = {"provider": "openai", "protocol": "openai", "api_key": "sk-test", "base_url": "https://api.example.com/v1", "model": "gpt-4o"}
         def _fake_chat(_prof, _sys, msgs, **_kw):
             payload = msgs[-1]["content"]
             assert "OIT-PERSONA-ENC:" not in payload, "发给 API 的 Claudia 参考必须已解密"
-            assert '"intimacy_level": 2' in payload and "优雅浪漫" in payload
+            if '"intimacy_level": 3' in payload:
+                assert '"consent_mode": true' in payload and "burst:consent" in payload
+            else:
+                assert '"intimacy_level": 2' in payload and '"consent_mode": false' in payload and "优雅浪漫" in payload
             if "revision_instruction" in payload:
                 return json.dumps({
                     "persona": "修改后的主人设", "background": "修改后的背景",
@@ -1088,9 +1097,12 @@ def main():
                 "example": "用户：你好\n角色：你好呀。", "templates": "",
                 "profile": "初始简介",
             }, ensure_ascii=False)
-        d0 = comm_author.generate(fake_prof, "测试角色五件套", "轻松温柔", "", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=2)
+        # 2 档即使传 consent_mode=True 也不启用同意声明；3 档传 True 启用
+        d0 = comm_author.generate(fake_prof, "测试角色五件套", "轻松温柔", "", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=2, consent_mode=True)
         assert d0.persona == "初始主人设" and d0.background == "初始背景" and d0.example
-        d1 = comm_author.revise(fake_prof, "测试角色五件套", d0, "把语气改得更活泼", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=2)
+        d0_c = comm_author.generate(fake_prof, "测试角色同意", "深情可靠", "", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=3, consent_mode=True)
+        assert d0_c.persona == "初始主人设"
+        d1 = comm_author.revise(fake_prof, "测试角色五件套", d0, "把语气改得更活泼", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=2, consent_mode=True)
         assert d1.persona == "修改后的主人设" and d1.templates
         saved_base = comm_author.save(personas_dir, "测试角色五件套", d1)
         assert saved_base == "测试角色五件套.txt"
