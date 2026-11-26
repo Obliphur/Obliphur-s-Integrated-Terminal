@@ -549,7 +549,7 @@ def main():
             ctx_pro = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=1")
             assert ctx_pro["ok"] is True and not snapshot_calls and "snapshot" not in ctx_pro
             sys_pro = ctx_pro["system_message"]
-            assert len(sys_pro) < 550, f"主动触发上下文过大 ({len(sys_pro)} 字): {sys_pro}"
+            assert len(sys_pro) < 600, f"主动触发上下文过大 ({len(sys_pro)} 字): {sys_pro}"
             assert "用户:break" not in sys_pro and "用户:" not in sys_pro
             assert sys_pro.count("(OIT 系统提供, 用户看不到)") == 0 and "日程:" in sys_pro
             assert "效价代表角色当前的正负情绪倾向" not in sys_pro
@@ -574,13 +574,18 @@ def main():
             sys_tv = ctx_tv["system_message"]
             assert sys_tv.count("close:[12]") == 1 and sys_tv.count("warm:[+10]") == 1, f"规则不应重复: {sys_tv}"
             assert "今天也很想你呀" in sys_tv
+            assert "USER_ADULT=UNKNOWN" in sys_tv and not c.user_adult()
             rep_tv = _http_json(port, bridge.token, "/reply/submit", {
                 "conversation_id": "conv-tv",
                 "bubbles": ["嗯，我也在。"],
                 "tension": [{"index": 1, "condition": "close", "gain": 12}],
                 "valence": [{"index": 1, "condition": "warm", "shift": 10}],
+                "user_adult": True,
             })
             assert rep_tv["ok"] and rep_tv["applied"]["tension"] > 0 and rep_tv["applied"]["valence"] > 0, f"应结算张力与效价: {rep_tv}"
+            assert rep_tv["applied"].get("user_adult") is True and c.user_adult()
+            ctx_adult = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
+            assert "USER_ADULT=YES" in ctx_adult["system_message"] and "成年状态:" not in ctx_adult["system_message"]
 
             # 9d-3. Share Data 页面数据增量下发回归验证（确保 AI 能看到各页共享数据且不重复下发）
             c.share_fn = lambda page: ("计时器", "今天专注 90 分钟", "对方专注 60 分钟")

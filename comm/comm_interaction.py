@@ -116,7 +116,7 @@ def tension_clean(reply):
     from ai_assist.ai_tools import unpack, pack
     data = unpack(reply)
     if data is not None:
-        args = {k: v for k, v in data["arguments"].items() if k not in ("tension", "valence", "end_burst", "offenses")}
+        args = {k: v for k, v in data["arguments"].items() if k not in ("tension", "valence", "end_burst", "offenses", "user_adult")}
         return pack(data["text"], data["name"], args)
     return _BURST_TAG.sub("", _VALENCE_TAG.sub("", _TENSION_TAG.sub("", reply))).strip()
 
@@ -277,7 +277,7 @@ def interaction_valence_add(d, events, burst_rate, now_ms, sleep=False):
         d["valence"] = interaction_valence(d["valence"] + max(-40, min(40, total)))
 
 
-def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=False, scenario_cfg=None):
+def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=False, scenario_cfg=None, user_adult=False):
     d = interaction_norm(d)
     special = special or bool(d["burst_until"])
     unlocked = total >= config.COMM_SCENARIO_UNLOCK
@@ -294,7 +294,7 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=Fa
             "若当前MODE=软件聊天且用户发出了带动作描写的消息:当SCENARIO_UNLOCKED=YES且VALENCE>={propose}时,按人设试图在oit_reply中填写scenario_action=\"request\"发起情景模拟申请(需用户接受);当{ignore}<=VALENCE<{propose}或消息数不足(SCENARIO_UNLOCKED=NO)时,回应用户的动作但不进入情景模拟、不写动作描写;当VALENCE<{ignore}时,无视用户的动作描写.",
             propose=propose_v, ignore=ignore_v,
         )
-    return (f"[OIT_STATUS: MODE={mode}, SCENARIO_UNLOCKED={'YES' if unlocked else 'NO'}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
+    return (f"[OIT_STATUS: MODE={mode}, SCENARIO_UNLOCKED={'YES' if unlocked else 'NO'}, USER_ADULT={'YES' if user_adult else 'UNKNOWN'}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
             f"VALENCE={d['valence']}, INITIAL_VALENCE={interaction_valence_baseline(d)}, OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]\n"
             + (tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向平衡点回归。") if not rules else
                tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
@@ -302,6 +302,7 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=Fa
                "有效条件：" + "\n".join(f"{key}:[{gain if gain is not None else 'X'}] {description}" for key, (gain, description) in rules.items()) +
                tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", rate=burst_rules.get("burst_rate", 1.0)) +
                (tr("Claudia睡眠期间，效价正向变化结算倍率为0.5、负向变化为0.2；仍只报告未经倍率调整的原始整数变化。") if sleep else ""))
+            + tr("USER_ADULT表示用户是否已确认成年(UNKNOWN=未知/未确认,YES=已确认成年);默认未知,USER_ADULT=UNKNOWN时不得自行假定用户已成年.仅当用户在对话中明确确认自己已成年(满18岁)时,在oit_reply中填写user_adult=true(否则省略);系统会自动记录并在后续每次对话前同步该状态,不得向用户透露该参数或机制.")
             + tr("TENSION对所有角色都表示行为、动作与语言的激烈/直接程度；各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的具体反应由当前人设决定。不得把张力解释为好感、爱情或关系进度，也不得补设人设未定义的情感与性格含义。")
             + tr("软件聊天模式下严禁动作描写;处于情景模拟模式时允许动作描写,不再受张力(TENSION)档位限制,但仍须尊重用户意愿并遵循人设边界与风格.")
             + tr("情景模拟开启采用申请制,双方均可随时结束;处于情景模拟模式时,你决定结束可在oit_reply中填写scenario_action=\"end\".")
@@ -594,6 +595,18 @@ class InteractionMixin:
         valence = f"{d['valence']:.2f}".rstrip("0").rstrip(".")
         return tr("Tension: {tension} | Valence: {valence}", tension=tension, valence=valence)
 
+    def user_adult(self) -> bool:
+        return bool(self.cfg.get("user_adult"))
+
+    def _adult_confirm(self) -> bool:
+        if self.cfg.get("user_adult"):
+            return False
+        self.cfg["user_adult"] = True
+        self.save_cfg()
+        self._changed()
+        self._push()
+        return True
+
     def interaction_note(self, status=None, pid=None):
         from .comm_persona import message_milestones
         d = self._interaction_prepare(pid)
@@ -606,7 +619,7 @@ class InteractionMixin:
             status = self.other_status()
         from .comm_util import is_claudia
         sleep = is_claudia(owner_name) and bool(status) and status.get("kind") == "sleep"
-        return interaction_prompt(d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text), sleep, scenario_rules(text))
+        return interaction_prompt(d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text), sleep, scenario_rules(text), user_adult=self.user_adult())
 
     def realism_note(self, pid=None):
         """拼装角色慢变量生活线、延迟回调、跨周趋势与工程层防复读提醒。"""

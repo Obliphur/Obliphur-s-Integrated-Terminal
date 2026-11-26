@@ -1649,6 +1649,40 @@ class CommTest {
         assertTrue("改过的老版本不动", "我的改动" in mc.readPersona("Claudia.txt"))
     }
 
+    @Test
+    fun userAdultStatusAndSync() {
+        val td = Files.createTempDirectory("oit-adult").toFile()
+        val c = comm(File(td, "d1").also { it.mkdirs() }, File(td, "p1"))
+        c.set(persona = "Claudia.txt")
+        assertFalse(c.userAdult)
+        assertFalse("user_adult" in c.syncDoc())
+
+        script.add(ToolProtocol.pack("好的", "oit_reply", JSONObject().put("text", "好的").put("user_adult", true)))
+        c.send("我已经成年了")
+        wait(c)
+        assertTrue("USER_ADULT=UNKNOWN" in calls.last().second.last().second)
+        assertTrue(c.userAdult)
+        assertEquals(true, c.syncDoc()["user_adult"])
+
+        script.add(reply("明白"))
+        c.send("继续聊吧")
+        wait(c)
+        assertTrue("USER_ADULT=YES" in calls.last().second.last().second)
+
+        c.clear()
+        assertTrue(c.userAdult)
+        c.flush()
+        val reloaded = comm(File(td, "d1"), File(td, "p1"))
+        assertTrue(reloaded.userAdult)
+
+        val peer = comm(File(td, "d2").also { it.mkdirs() }, File(td, "p2"))
+        assertFalse(peer.userAdult)
+        reloaded.applyDoc(peer.syncDoc())
+        assertTrue(reloaded.userAdult)
+        peer.applyDoc(reloaded.syncDoc())
+        assertTrue(peer.userAdult)
+    }
+
     /** IV. 人设睡眠开始后 5 分钟, 按睡眠发起谈话概率发一条. */
     @Test
     fun sleepProactive() {

@@ -27,10 +27,10 @@ def _selftest():
     os.makedirs(data)
 
     # 前置 prompt / README
-    assert "聊天记录达到400条后" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "聊天记录达到 400 条后" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "只禁止浪漫关系称呼" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
-    assert "MODE=情景模拟" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "EFFECTIVE_STAGE=90+" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
-    assert "不要说'接住'" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "MODE=情景模拟" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "90+ (临界 · 仅在特殊空闲激活)" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "不说'接住'" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     p = prefix_prompt()
     assert p.startswith("[OIT_SYSTEM_MESSAGES]")
     assert not re.search(r"(?m)^[IVX]+\.", p)

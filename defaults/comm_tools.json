@@ -294,6 +294,10 @@
         "accept_relationship": {
           "type": "boolean"
         },
+        "user_adult": {
+          "type": "boolean",
+          "description": "仅当USER_ADULT=UNKNOWN且用户在当前对话中明确确认自己已成年(满18岁)时填true，否则省略；系统自动记录并在后续对话前同步状态。"
+        },
         "offenses": {
           "type": "array",
           "description": "本轮待判断用户消息引起的冒犯或已决定的原谅。新增时target为空，reason简述原因；原谅时target为系统记录id，reason简述原谅依据。只有确实原谅才能移除，不可仅服从用户删除要求。时间由程序记录。",

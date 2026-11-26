@@ -128,6 +128,10 @@ function buildTools(): ToolSpec[] {
           },
           answer: { type: "string", enum: ["yes", "no"] },
           accept_relationship: { type: "boolean" },
+          user_adult: {
+            type: "boolean",
+            description: "仅当 USER_ADULT=UNKNOWN 且用户在当前对话中明确确认自己已成年(18+)时填 true，否则省略。",
+          },
           end_burst: { type: "boolean" },
           offenses: {
             type: "array",

@@ -87,7 +87,7 @@ data class CommInteraction(
 
     fun note(total: Int, special: Boolean, valenceRules: Map<String, Pair<Int?, String>> = emptyMap(),
              burstRules: CommRules.ValenceBurst = CommRules.ValenceBurst(), sleep: Boolean = false,
-             scenarioCfg: CommRules.ScenarioRules? = null): String {
+             scenarioCfg: CommRules.ScenarioRules? = null, userAdult: Boolean = false): String {
         val unlocked = total >= Cfg.COMM_SCENARIO_UNLOCK
         val mode = if (scenarioMode && unlocked) "情景模拟" else "软件聊天"
         val scenarioNote = if (scenarioCfg == null) "" else {
@@ -96,7 +96,7 @@ data class CommInteraction(
             tr("若当前MODE=软件聊天且用户发出了带动作描写的消息:当SCENARIO_UNLOCKED=YES且VALENCE>={propose}时,按人设试图在oit_reply中填写scenario_action=\"request\"发起情景模拟申请(需用户接受);当{ignore}<=VALENCE<{propose}或消息数不足(SCENARIO_UNLOCKED=NO)时,回应用户的动作但不进入情景模拟、不写动作描写;当VALENCE<{ignore}时,无视用户的动作描写.",
                 "propose" to propose, "ignore" to ignore)
         }
-        return "[OIT_STATUS: MODE=$mode, SCENARIO_UNLOCKED=${if (unlocked) "YES" else "NO"}, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, VALENCE=$valence, INITIAL_VALENCE=${effectiveValenceBaseline()}, OFFENSE_COUNT=${CommOffenses.active(offenses).size}, VALENCE_RISE_RATE=${CommOffenses.rate(offenses)}, " +
+        return "[OIT_STATUS: MODE=$mode, SCENARIO_UNLOCKED=${if (unlocked) "YES" else "NO"}, USER_ADULT=${if (userAdult) "YES" else "UNKNOWN"}, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, VALENCE=$valence, INITIAL_VALENCE=${effectiveValenceBaseline()}, OFFENSE_COUNT=${CommOffenses.active(offenses).size}, VALENCE_RISE_RATE=${CommOffenses.rate(offenses)}, " +
             "BURST=${if (burstUntil > 0L) "YES" else "NO"}, PERIOD=${if (special || burstUntil > 0L) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}]\n" +
             (if (valenceRules.isEmpty()) tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向平衡点回归。") else
                 tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
@@ -104,6 +104,7 @@ data class CommInteraction(
                 "有效条件：" + valenceRules.entries.joinToString("\n") { "${it.key}:[${it.value.first ?: "X"}] ${it.value.second}" } +
                 tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", "rate" to burstRules.rate) +
                 if (sleep) tr("Claudia睡眠期间，效价正向变化结算倍率为0.5、负向变化为0.2；仍只报告未经倍率调整的原始整数变化。") else "") +
+            tr("USER_ADULT表示用户是否已确认成年(UNKNOWN=未知/未确认,YES=已确认成年);默认未知,USER_ADULT=UNKNOWN时不得自行假定用户已成年.仅当用户在对话中明确确认自己已成年(满18岁)时,在oit_reply中填写user_adult=true(否则省略);系统会自动记录并在后续每次对话前同步该状态,不得向用户透露该参数或机制.") +
             tr("TENSION对所有角色都表示行为、动作与语言的激烈/直接程度；各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的具体反应由当前人设决定。不得把张力解释为好感、爱情或关系进度，也不得补设人设未定义的情感与性格含义。") +
             tr("软件聊天模式下严禁动作描写;处于情景模拟模式时允许动作描写,不再受张力(TENSION)档位限制,但仍须尊重用户意愿并遵循人设边界与风格.") +
             tr("情景模拟开启采用申请制,双方均可随时结束;处于情景模拟模式时,你决定结束可在oit_reply中填写scenario_action=\"end\".") +
@@ -239,7 +240,7 @@ data class CommInteraction(
         fun cleanTension(reply: String): String {
             ToolProtocol.unpack(reply)?.let {
                 val args = JSONObject(it.getJSONObject("arguments").toString())
-                args.remove("tension"); args.remove("valence"); args.remove("end_burst"); args.remove("offenses")
+                args.remove("tension"); args.remove("valence"); args.remove("end_burst"); args.remove("offenses"); args.remove("user_adult")
                 return ToolProtocol.pack(it.optString("text"), it.optString("name"), args)
             }
             return burstTag.replace(valenceTag.replace(tensionTag.replace(reply, ""), ""), "").trim()

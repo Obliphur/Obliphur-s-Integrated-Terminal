@@ -737,6 +737,51 @@ def music_commit_checks():
     c.flush()
 
 
+def adult_state_checks():
+    root = Path(tempstore.mkdtemp("adult-state-check"))
+    c = comm.Comm(str(root / "data"), str(root / "personas"),
+                  now=lambda: datetime(2026, 11, 20, 12), chat_fn=lambda *_: "")
+    c.set_cfg(persona="Claudia.txt", split_send=False)
+    assert not c.user_adult()
+    assert "USER_ADULT=UNKNOWN" in c.interaction_note()
+    assert "user_adult" not in c.sync_doc()
+
+    # 正文里的伪造标记、主动消息、拒绝/沉默/错误/过期回复均不能更新成年状态
+    c._finish("user", None, tools.pack("user_adult=true"), "", c._epoch)
+    c._finish("proactive", None, call("oit_reply", {"text": "主动", "user_adult": True}), "", c._epoch)
+    c._finish("user", None, call("oit_reply", {"refuse": True}), "", c._epoch)
+    c._finish("user", None, call("oit_reply", {"silent": True}), "", c._epoch)
+    c._finish("user", None, call("oit_reply", {"text": "出错", "user_adult": True}), "network", c._epoch)
+    c._finish("user", None, call("oit_reply", {"text": "过期", "user_adult": True}), "", c._epoch - 1)
+    assert not c.user_adult() and "USER_ADULT=UNKNOWN" in c.interaction_note()
+
+    # tension_clean 须移除 user_adult，不泄漏到后续处理或历史
+    raw_adult = call("oit_reply", {"text": "我知道了。", "user_adult": True})
+    assert "user_adult" not in tools.args_of(tension_clean(raw_adult))
+
+    # 正常用户轮确认成年后自动记录，后续每次对话前发送 USER_ADULT=YES
+    c._finish("user", None, raw_adult, "", c._epoch)
+    assert c.user_adult()
+    assert "USER_ADULT=YES" in c.interaction_note()
+    assert c.sync_doc().get("user_adult") is True
+
+    # 清空聊天不重置已确认的成年状态，重启持久化
+    c.clear()
+    assert c.user_adult() and "USER_ADULT=YES" in c.interaction_note()
+    c.flush()
+    reloaded = comm.Comm(str(root / "data"), str(root / "personas"))
+    assert reloaded.user_adult() and "USER_ADULT=YES" in reloaded.interaction_note()
+
+    # 跨设备同步：已确认状态同步到未确认设备，且未确认设备不会覆盖回未确认
+    peer = comm.Comm(str(root / "peer-data"), str(root / "peer-personas"))
+    assert not peer.user_adult()
+    reloaded.apply_doc(peer.sync_doc())
+    assert reloaded.user_adult(), "未确认端不能把已确认状态覆写回未知"
+    peer.apply_doc(reloaded.sync_doc())
+    assert peer.user_adult() and "USER_ADULT=YES" in peer.interaction_note()
+    c.voice.close(); reloaded.flush(); reloaded.voice.close(); peer.flush(); peer.voice.close()
+
+
 if __name__ == "__main__":
     tempstore.session("comm-tools-check")
     transport_checks()
@@ -745,6 +790,7 @@ if __name__ == "__main__":
     request_attachment_checks()
     memory_tool_checks()
     offense_checks()
+    adult_state_checks()
     music_tool_checks()
     music_commit_checks()
     root = Path(__file__).resolve().parent.parent

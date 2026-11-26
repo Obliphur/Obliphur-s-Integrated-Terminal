@@ -606,6 +606,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             doc["coread_offer"] = dict(self.cfg["coread_offer"])
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
+        if self.user_adult():
+            doc["user_adult"] = True
         doc["think"] = self.think_auto()                # 自动开思考的开关: 同上
         doc["bgpro"] = self.bg_on()
         doc["sfollow"] = self.sf_on()                   # 日程跟随的开关: 提示在主端弹, 两台设备要一致
@@ -903,6 +905,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 new = str(val or "")[:MAX_PROFILE] if val is not None else ""
                 if new != self.cfg.get("user_profile"):
                     self.cfg["user_profile"] = new
+                    self.save_cfg()
+                    self._changed()
+            elif key == "user_adult" and val is True:
+                if not self.user_adult():
+                    self.cfg["user_adult"] = True
                     self.save_cfg()
                     self._changed()
             elif kind == "pro" and isinstance(val, str):             # 已经处理过的主动消息时间点: 两边合起来
@@ -1658,6 +1665,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 special, until, shame = getattr(self, "_interaction_turn", (False, 0, False))
                 self._interaction_reply(special, burst, until, shame)
             self._interaction_end(tension_reply, getattr(self, "_interaction_burst", 0))
+            if kind in ("user", "retry", "followup") and args_of(tension_reply).get("user_adult") is True:
+                self._adult_confirm()
             if accept and self.offense_blocked():
                 accept = False
                 text = tr("我现在还不能答应。")

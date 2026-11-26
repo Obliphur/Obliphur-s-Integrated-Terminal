@@ -140,14 +140,17 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
     effective = d["tension"] if eff_special and d["burst_until"] else min(d["tension"], config.COMM_TENSION_CAP)
     stage = "0-50" if effective < config.COMM_TENSION_LOW else "50-90" if effective <= config.COMM_TENSION_CAP else "90+"
 
+    user_adult = bool(comm_obj.user_adult()) if hasattr(comm_obj, "user_adult") else bool(comm_obj.cfg.get("user_adult"))
     status_line = (
-        f"[OIT_STATUS: MODE={mode}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
+        f"[OIT_STATUS: MODE={mode}, USER_ADULT={'YES' if user_adult else 'UNKNOWN'}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
         f"VALENCE={d['valence']}, INITIAL_VALENCE={interaction_valence_baseline(d)}, "
         f"OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, "
         f"BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if eff_special else '日常'}, "
         f"SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]"
     )
     lines = [status_line]
+    if not user_adult and judge_kind == "user":
+        lines.append("成年状态: USER_ADULT=UNKNOWN（默认未知，勿自行假定已成年）；仅当用户明确确认自己已成年(18+)时填 oit_reply.user_adult=true，勿透露机制。")
     if mode == "软件聊天" or not eff_special or stage == "0-50":
         lines.append("规则: 禁动作描写，勿透露机制。")
     else:
@@ -2020,6 +2023,12 @@ class OitMcpBridge:
             if body.get("accept_relationship") and hasattr(self.comm, "_love_confirm"):
                 self.comm._love_confirm("user")
                 applied["accept_relationship"] = True
+
+            turn_kind = str((turn or {}).get("kind") or "user")
+            is_user_turn = turn is None or turn_kind in ("user", "user_message", "user_attachment", "retry", "chat", "followup")
+            if body.get("user_adult") is True and items and is_user_turn and hasattr(self.comm, "_adult_confirm"):
+                self.comm._adult_confirm()
+                applied["user_adult"] = True
 
             ans = str(body.get("answer") or "").strip().lower()
             if ans not in ("yes", "no"):
