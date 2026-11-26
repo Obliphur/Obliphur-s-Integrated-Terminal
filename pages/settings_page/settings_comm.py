@@ -305,7 +305,10 @@ class CommSettingsMixin:
         if hasattr(self, "_voice_settings_refresh"):
             self._voice_settings_refresh()
         set_var(self.comm_persona, next((lab for n, lab in self._persona_labels if n == cur), ""))
-        if cur and comm_mod.persona_title(cur).strip().casefold() == "claudia":
+        title = comm_mod.persona_title(cur).strip().casefold() if cur else ""
+        rec = tr("推荐使用Claude") if title == "claudia" else (tr("推荐使用Gemini") if title == "gemina" else "")
+        if rec:
+            cfg(self.lbl_claudia_recommend, text=rec)
             if not self.lbl_claudia_recommend.winfo_manager():
                 self.lbl_claudia_recommend.pack(fill="x", padx=12, pady=(0, 8))
         elif self.lbl_claudia_recommend.winfo_manager():

@@ -766,8 +766,13 @@ fun CommSettings() {
         if (names.isNotEmpty()) Box(Modifier.padding(top = 8.dp)) {
             Segmented(names, comm.personaName()) { comm.set(persona = it) }
         }
-        if (comm.personaTitle(comm.personaName()).trim().equals("Claudia", true)) {
-            Text(tr("推荐使用Claude"), color = o.accent, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+        val recModel = when (comm.personaTitle(comm.personaName()).trim().lowercase()) {
+            "claudia" -> tr("推荐使用Claude")
+            "gemina" -> tr("推荐使用Gemini")
+            else -> ""
+        }
+        if (recModel.isNotEmpty()) {
+            Text(recModel, color = o.accent, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
         }
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val selected = comm.personaName()

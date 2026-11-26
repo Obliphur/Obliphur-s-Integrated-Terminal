@@ -1082,6 +1082,7 @@ EN = {
     "{name} {st}, 现在没法征求同意": "{name} ({st}): can't be asked right now",
     "Claudia 的内容和默认人设不一样": "Claudia differs from the default persona",
     "推荐使用Claude": "Claude is recommended",
+    "推荐使用Gemini": "Gemini is recommended",
     "还原": "Restore",
     "已还原默认人设": "Default persona restored",
     "默认全屏": "Fullscreen by default",

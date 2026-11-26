@@ -44,8 +44,8 @@ from .comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, 
 from .comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
 from .persona_codec import read_file, write_file, migrate_folder, migrate_file, decode as decode_persona
 from .comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, DEFAULT_EXAMPLE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
-from .comm_builtin import DEFAULT_PROFILE, EXAMPLE_LEGACY_HASHES
-from .comm_persona import is_profile_name, profile_files
+from .comm_builtin import DEFAULT_PROFILE, EXAMPLE_LEGACY_HASHES, GEMINA_FILES, GEMINA_PERSONA, GEMINA_PROFILE
+from .comm_persona import is_profile_name, profile_files, other_profiles_text
 from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, MENTAL_WORDS, mental_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
 from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
 
@@ -221,6 +221,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         if not self.cfg.get("assistant_seeded"):            # 老版本升级上来: 补一次 Assistant (已有同名文件的不动)
             seed_builtin(self.personas, ASSISTANT_PERSONA)
             self.cfg["assistant_seeded"] = True
+            self.save_cfg()
+        if not self.cfg.get("gemina_seeded"):               # 老版本升级上来: 补一次 Gemina 默认人设 (已有同名文件的不动)
+            for fname in GEMINA_FILES:
+                seed_builtin(self.personas, fname)
+            self.cfg["gemina_seeded"] = True
             self.save_cfg()
         self._upgrade_assistant_prompt()
         self._migrate_claudia()
@@ -1196,6 +1201,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             if force:
                 write_file(os.path.join(self.personas, DEFAULT_EXAMPLE), BUILTIN_PERSONAS[DEFAULT_EXAMPLE])
                 write_file(os.path.join(self.personas, DEFAULT_PROFILE), BUILTIN_PERSONAS[DEFAULT_PROFILE])
+            else:
+                pcur = self._read_persona_raw(DEFAULT_PROFILE)
+                if pcur is None or not pcur.strip():
+                    write_file(os.path.join(self.personas, DEFAULT_PROFILE), BUILTIN_PERSONAS[DEFAULT_PROFILE])
         except (OSError, ValueError):
             pass
 
@@ -1346,6 +1355,9 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             cur = self._read_persona_raw(name)
             if cur is None or cur.replace("\r\n", "\n").strip() != BUILTIN_PERSONAS[name].replace("\r\n", "\n").strip():
                 return True
+        pcur = self._read_persona_raw(DEFAULT_PROFILE)
+        if pcur is None or not pcur.strip():
+            return True
         return False
 
     def restore_claudia(self):
@@ -1401,6 +1413,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             path = os.path.join(self.personas, name)
             try:
                 if text is None:
+                    if profiles and (
+                            (name == DEFAULT_PROFILE and os.path.isfile(self._claudia_path()))
+                            or (name == GEMINA_PROFILE and os.path.isfile(os.path.join(self.personas, GEMINA_PERSONA)))):
+                        continue
                     if os.path.exists(path):
                         os.remove(path)
                         dirty = True

@@ -89,7 +89,11 @@ object PersonaCodec {
         val tmp = File(file.parentFile, "${file.name}.${UUID.randomUUID()}.tmp")
         try {
             tmp.writeText(stored, Charsets.UTF_8)
-            Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            try {
+                Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: UnsupportedOperationException) {
+                Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
         } finally {
             tmp.delete()
         }
