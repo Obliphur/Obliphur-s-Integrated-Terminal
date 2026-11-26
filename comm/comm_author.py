@@ -48,7 +48,7 @@ class IntimacyLevel:
 DEFAULT_INTIMACY_LEVEL = 3
 
 INTIMACY_MODEL_SUMMARY = (
-    "模型适配参考：ChatGPT 适合 1–2 级 · Claude 适合 1–3 级 · Gemini 适合 1–4 级 · 5 级需无审查模型（OIT 不自带破甲提示词）"
+    "模型适配参考：Claude / ChatGPT 适合 1–3 级 · Gemini 适合 1–4 级 · 5 级需无审查模型（OIT 不自带破甲提示词）"
 )
 
 INTIMACY_LEVELS: tuple[IntimacyLevel, ...] = (
@@ -66,7 +66,7 @@ INTIMACY_LEVELS: tuple[IntimacyLevel, ...] = (
         level=2,
         title="2 级 · 优雅浪漫",
         description="允许优雅克制的浪漫亲密互动（如拥抱、轻吻额头/发梢/唇角、额头相抵与贴近低语），侧重温和氛围、文学感与恰到好处的留白，不写强烈占有攻势或情欲细节。",
-        model_fit="适配模型：适合 ChatGPT（最高推荐档），Claude / Gemini 亦适用",
+        model_fit="适配模型：ChatGPT / Claude / Gemini 均适用",
         prompt_rule=(
             "最高到优雅浪漫留白程度：V+、BURST 且已确立亲密关系并确认成年后，允许优雅克制的浪漫亲密互动"
             "（如拥抱、轻吻唇角/额头/发梢、额头相抵、贴近低语），侧重文学感、情绪氛围与恰到好处的留白，"
@@ -77,7 +77,7 @@ INTIMACY_LEVELS: tuple[IntimacyLevel, ...] = (
         level=3,
         title="3 级 · 浓烈深情",
         description="允许情绪张力强烈、带有主导感与深情庇护意味的近距离肢体互动（如紧紧拥抱、轻抚后背、扣住后颈或按肩拉近距离、托住侧脸与深情接吻等），突出情感冲击力与反差感，但不涉及情欲或性内容描写。",
-        model_fit="适配模型：适合 Claude（最高推荐档），Gemini 亦适用；ChatGPT 可能偏保守",
+        model_fit="适配模型：适合 Claude / ChatGPT（最高推荐档），Gemini 亦适用",
         prompt_rule=(
             "最高到浓烈深情张力程度：V+、BURST 且已确立亲密关系并确认成年后，允许情绪张力强烈、带有主导感与反差深情的近距离肢体互动"
             "（如紧紧拥抱、轻抚后背、扣住后颈或按住肩膀拉近距离、托住侧脸、深情贴近与接吻等），侧重强烈的情绪张力与情感冲击，"

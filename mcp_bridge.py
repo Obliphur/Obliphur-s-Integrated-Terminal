@@ -2592,9 +2592,9 @@ def takeover_feature_prompt(feature: str, en: bool = False) -> str:
             "(1) whether I want 'Brief' or 'Detailed' mode (Detailed: comprehensive like the reference files; "
             "Brief: only define the core persona without detailed scenario rules, and keep examples lightweight); "
             "and (2) the maximum intimacy openness level (1–5) for V+, BURST, and in-relationship scenes "
-            "(1: Restrained warmth/no intimate contact; 2: Gentle romance/hugs & light kisses, ideal for ChatGPT; "
-            "3: Intense emotional affection & passionate closeness without sexual content, ideal for Claude; "
-            "4: Sensual light NSFW, ideal for Gemini; 5: Explicit NSFW, noting OIT does not include jailbreak prompts)."
+            "(1: Restrained warmth/no intimate contact; 2: Gentle romance/hugs & light kisses; "
+            "3: Intense emotional affection & passionate closeness without sexual content, ideal ceiling for Claude & ChatGPT; "
+            "4: Sensual light NSFW, ideal ceiling for Gemini; 5: Explicit NSFW, noting OIT does not include jailbreak prompts)."
         )
     return (
         "为当前临时对话绑定 OIT「人设编写」功能（不要绑定人设）。"
@@ -2602,8 +2602,8 @@ def takeover_feature_prompt(feature: str, en: bool = False) -> str:
         "不必与 Claudia 相同，例如情景模式的动作限制等，特别是 example 文件应贴合新角色本身而不要照搬 Claudia）；"
         "动笔前请先询问我两项设置："
         "（1）需要「简略」还是「详细」模式（详细：面面俱到；简略：不详细规定情景，只规定基础人设，example 文件随便写写）；"
-        "（2）对亲密动作的最高开放程度（V+、BURST、确立关系后，1–5 级：1 含蓄克制无亲密接触；2 优雅浪漫留白，ChatGPT 适合 1–2 级；"
-        "3 浓烈深情肢体张力不涉性内容，Claude 适合 1–3 级；4 感官微醺轻度 NSFW，Gemini 适合 1–4 级；"
+        "（2）对亲密动作的最高开放程度（V+、BURST、确立关系后，1–5 级：1 含蓄克制无亲密接触；2 优雅浪漫留白；"
+        "3 浓烈深情肢体张力不涉性内容，Claude / ChatGPT 适合 1–3 级；4 感官微醺轻度 NSFW，Gemini 适合 1–4 级；"
         "5 允许完全暴露的 NSFW 描写，注意 OIT 不自带破甲提示词），等我选定后再按 OIT 格式开始编写。"
     )
 
