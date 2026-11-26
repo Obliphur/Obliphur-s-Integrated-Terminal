@@ -262,8 +262,17 @@ data class CommInteraction(
                 .entries.sortedByDescending { kotlin.math.abs(it.value) }.map { it.key to it.value }
         }
 
-        /** 各条件按基础增量降序分别结算，重复条件只取最大值；旧标记归入其他情绪。 */
-        fun modelEvents(reply: String, index: Int, special: Boolean, cooldowns: Map<String, Long> = emptyMap(), nowMs: Long = 0L, conditions: Set<String>? = null): List<Pair<String, Int>> {
+        /** 各条件按结算增量降序分别结算，重复条件只取最大值；旧标记归入其他情绪。 */
+        fun modelEvents(
+            reply: String,
+            index: Int,
+            special: Boolean,
+            cooldowns: Map<String, Long> = emptyMap(),
+            nowMs: Long = 0L,
+            conditions: Set<String>? = null,
+            related: Boolean = false,
+            relationRules: Map<String, CommRules.TensionRelationRule> = emptyMap(),
+        ): List<Pair<String, Int>> {
             val native = ToolProtocol.unpack(reply) != null
             val events = ToolProtocol.args(reply).optJSONArray("tension") ?: JSONArray()
             val gains = if (native) (0 until events.length()).asSequence().map { events.getJSONObject(it) }
@@ -272,14 +281,27 @@ data class CommInteraction(
                     .map { (it.groupValues[2].lowercase().ifEmpty { "other" }) to it.groupValues[3].toInt() }
             return gains
                 .filter { conditions == null || it.first in conditions }
+                .filter { val rule = relationRules[it.first]; rule == null || !rule.onlyRelated || related }
                 .groupBy({ it.first }, { it.second.coerceIn(0, Cfg.COMM_TENSION_GAIN_MAX) })
                 .mapValues { it.value.max() }
                 .filterValues { it > 0 }
-                .entries.sortedByDescending { it.value }
-                .map { (condition, gain) -> condition to (if (special) gain.toDouble() else gain * Cfg.COMM_TENSION_DAILY_RATE).toInt() }
+                .entries
+                .map { (condition, gain) ->
+                    val relRate = if (related) relationRules[condition]?.rate ?: 1.0 else 1.0
+                    condition to (gain * (if (special) 1.0 else Cfg.COMM_TENSION_DAILY_RATE) * relRate).toInt()
+                }
+                .filter { it.second > 0 }
+                .sortedByDescending { it.second }
         }
 
-        fun modelGain(reply: String, index: Int, special: Boolean, conditions: Set<String>? = null): Int = modelEvents(reply, index, special, conditions = conditions).sumOf { it.second }
+        fun modelGain(
+            reply: String,
+            index: Int,
+            special: Boolean,
+            conditions: Set<String>? = null,
+            related: Boolean = false,
+            relationRules: Map<String, CommRules.TensionRelationRule> = emptyMap(),
+        ): Int = modelEvents(reply, index, special, conditions = conditions, related = related, relationRules = relationRules).sumOf { it.second }
 
     }
 }

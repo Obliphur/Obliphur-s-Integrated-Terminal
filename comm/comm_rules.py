@@ -166,6 +166,21 @@ def tension_event(text, event):
     return out.get(event)
 
 
+def tension_relationship_rules(text):
+    """亲密关系下的张力条件门控与增幅；格式为 条件名:[only,倍率] 或 条件名:[倍率]。"""
+    rules = tension_rules(text)
+    out = {}
+    for line in rule_lines(text, "tension:relationship"):
+        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*\[\s*(?:(only)\s*[,，]\s*)?(\d+(?:\.\d+)?)\s*\]", line)
+        if not m or m[1] not in rules or m[1] in out:
+            return {}
+        rate = float(m[3])
+        if not math.isfinite(rate) or not 0.0 <= rate <= 5.0:
+            return {}
+        out[m[1]] = (bool(m[2]), rate)
+    return out
+
+
 def condition_rules(text, strict=False):
     """按日程的字段:数值/列表格式读取；支持删减条件，非法项使整组无效。"""
     out, enabled = {}, []

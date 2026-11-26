@@ -312,7 +312,8 @@ class CommTest {
         val templates = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE)
         assertTrue(CommRules.tension(main).isEmpty())
         assertNull(CommRules.conditions(main))
-        assertEquals(setOf("rumination", "boundary", "comfort", "violation", "sermon_resistance", "other"), CommRules.tension(templates).keys)
+        assertEquals(setOf("rumination", "boundary", "comfort", "violation", "sermon_resistance", "jealousy", "other"), CommRules.tension(templates).keys)
+        assertEquals(mapOf("jealousy" to CommRules.TensionRelationRule(true, 2.5)), CommRules.tensionRelationship(templates))
         assertTrue(CommRules.valence(templates).containsKey("sermon_resistance"))
         assertTrue(CommRules.valence(templates).containsKey("sermon_willingness"))
         assertNull(CommRules.valence(templates).getValue("sermon_resistance").first)
@@ -348,6 +349,39 @@ class CommTest {
         c.send("又说起那种感受"); wait(c)
         assertEquals(15.0, (c.syncDoc()["interaction:${c.pid}"] as JSONObject).optDouble("tension"), 1e-8)
         assertEquals(0, CommInteraction.modelGain("[tension:1:other:X]", 1, true, rules.keys))
+        c.flush(); c.voice.close()
+    }
+
+    /** [tension:relationship]：未确立亲密关系时隐藏并拦截 only 条件，确立后按倍率放大张力增量。 */
+    @Test
+    fun relationshipTensionRules() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").apply { mkdirs() }, File(td, "p"))
+        val text = "[tension]\njealousy:[40] 亲密关系后的吃醋诱因\ncomfort:[30] 寻求安抚\n[/tension]\n" +
+            "[tension:relationship]\njealousy:[only,2.5]\ncomfort:[1.5]\n[/tension:relationship]\n"
+        val relRules = CommRules.tensionRelationship(text)
+        assertEquals(mapOf(
+            "jealousy" to CommRules.TensionRelationRule(true, 2.5),
+            "comfort" to CommRules.TensionRelationRule(false, 1.5),
+        ), relRules)
+        assertTrue(CommRules.tensionRelationship(text.replace("jealousy:[only,2.5]", "unknown:[only,2.5]")).isEmpty())
+        assertTrue(CommRules.tensionRelationship(text.replace("jealousy:[only,2.5]", "jealousy:[only,5.1]")).isEmpty())
+        val keys = setOf("jealousy", "comfort")
+        assertEquals(listOf("comfort" to 15), CommInteraction.modelEvents("[tension:1:jealousy:40][tension:1:comfort:20]", 1, false, conditions = keys, related = false, relationRules = relRules))
+        assertEquals(listOf("jealousy" to 75, "comfort" to 22), CommInteraction.modelEvents("[tension:1:jealousy:40][tension:1:comfort:20]", 1, false, conditions = keys, related = true, relationRules = relRules))
+        assertEquals(listOf("jealousy" to 100), CommInteraction.modelEvents("[tension:1:jealousy:40]", 1, true, conditions = keys, related = true, relationRules = relRules))
+        File(c.personas, "亲密张力.txt").writeText(text)
+        c.set(persona = "亲密张力.txt", splitSend = false)
+        script.add("知道了.[tension:1:jealousy:40]")
+        c.send("刚和别人聊得很开心"); wait(c)
+        assertFalse("jealousy:[40]" in calls.last().second.last().second)
+        assertEquals(0.0, (c.syncDoc()["interaction:${c.pid}"] as JSONObject).optDouble("tension"), 1e-8)
+        c.applyDoc(mapOf("love:${c.pid}" to Love(ts = 1L, rel = 1L, by = "user").json()))
+        assertTrue(c.related())
+        script.add("这笔账今晚再算.[tension:1:jealousy:40]")
+        c.send("感觉和她聊天不用端着"); wait(c)
+        assertTrue("jealousy:[40]" in calls.last().second.last().second)
+        assertEquals(75.0, (c.syncDoc()["interaction:${c.pid}"] as JSONObject).optDouble("tension"), 1e-8)
         c.flush(); c.voice.close()
     }
 

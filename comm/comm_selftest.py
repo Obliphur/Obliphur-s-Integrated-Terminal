@@ -4072,7 +4072,9 @@ def _selftest():
     assert read_persona(builtin_folder, DEFAULT_PERSONA) == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
     assert read_persona(builtin_folder, DEFAULT_ROUTINE) == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip()
     builtin_full = read_persona_full(builtin_folder, DEFAULT_PERSONA)
-    assert set(tension_rules(builtin_full)) == {"rumination", "boundary", "comfort", "violation", "sermon_resistance", "other"}
+    from comm.comm_rules import tension_relationship_rules
+    assert set(tension_rules(builtin_full)) == {"rumination", "boundary", "comfort", "violation", "sermon_resistance", "jealousy", "other"}
+    assert tension_relationship_rules(builtin_full) == {"jealousy": (True, 2.5)}
     assert valence_rules(builtin_full)["sermon_resistance"][0] is None
     assert valence_rules(builtin_full)["sermon_willingness"][0] is None
     assert upgraded.check_persona_changes() is None
@@ -4133,4 +4135,29 @@ def _selftest():
     assert variable.cfg["interaction"]["tension"] == 15, "重复自定义条件仍按递增冷却倍率加值"
     assert tension_model_gain("[tension:1:other:X]", 1, True, variable_rules) == 0
     variable.flush()
+
+    # [tension:relationship]: 仅亲密关系生效门控与倍率放大（未确立关系时拦截并不注入提示词，确立后按倍率结算）。
+    rel_text = ("[tension]\njealousy:[40] 亲密关系后的吃醋诱因\ncomfort:[30] 寻求安抚\n[/tension]\n"
+                "[tension:relationship]\njealousy:[only,2.5]\ncomfort:[1.5]\n[/tension:relationship]\n")
+    rel_parsed = tension_relationship_rules(rel_text)
+    assert rel_parsed == {"jealousy": (True, 2.5), "comfort": (False, 1.5)}
+    assert not tension_relationship_rules(rel_text.replace("jealousy:[only,2.5]", "unknown:[only,2.5]"))
+    assert not tension_relationship_rules(rel_text.replace("jealousy:[only,2.5]", "jealousy:[only,5.1]"))
+    assert tension_model_events("[tension:1:jealousy:40][tension:1:comfort:20]", 1, False, conditions={"jealousy", "comfort"}, related=False, relation_rules=rel_parsed) == [("comfort", 15)]
+    assert tension_model_events("[tension:1:jealousy:40][tension:1:comfort:20]", 1, False, conditions={"jealousy", "comfort"}, related=True, relation_rules=rel_parsed) == [("jealousy", 75), ("comfort", 22)]
+    assert tension_model_events("[tension:1:jealousy:40]", 1, True, conditions={"jealousy", "comfort"}, related=True, relation_rules=rel_parsed) == [("jealousy", 100)]
+    open(os.path.join(folder, "亲密张力.txt"), "w", encoding="utf-8").write(rel_text)
+    rel_comm = Comm(os.path.join(td, "rel_tension"), folder, now=lambda: clock[0], chat_fn=fake)
+    rel_comm.ai.set_profile("deepseek", api_key="k")
+    rel_comm.set_cfg(persona="亲密张力.txt", split_send=False)
+    script.append("知道了.[tension:1:jealousy:40]")
+    rel_comm.send("刚和别人聊得很开心"); wait(rel_comm)
+    prompt_before = "\n".join(str(m.get("content") or "") for m in calls[-1][1])
+    assert "jealousy:[40]" not in prompt_before and rel_comm.cfg["interaction"]["tension"] == 0
+    rel_comm._love_confirm("user")
+    script.append("这笔账今晚再算.[tension:1:jealousy:40]")
+    rel_comm.send("感觉和她聊天不用端着"); wait(rel_comm)
+    prompt_after = "\n".join(str(m.get("content") or "") for m in calls[-1][1])
+    assert "jealousy:[40]" in prompt_after and rel_comm.cfg["interaction"]["tension"] == 75
+    rel_comm.flush()
     return "comm selftest OK"

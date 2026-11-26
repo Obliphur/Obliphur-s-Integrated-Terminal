@@ -138,6 +138,24 @@ object CommRules {
         return out[event]
     }
 
+    data class TensionRelationRule(val onlyRelated: Boolean, val rate: Double)
+
+    /** 亲密关系下的张力条件门控与增幅；格式为 条件名:[only,倍率] 或 条件名:[倍率]。 */
+    fun tensionRelationship(text: String): Map<String, TensionRelationRule> {
+        val rules = tension(text)
+        val out = linkedMapOf<String, TensionRelationRule>()
+        val pattern = Regex("""([a-z_]{1,32})\s*[:：]\s*\[\s*(?:(only)\s*[,，]\s*)?(\d+(?:\.\d+)?)\s*\]""")
+        for (line in lines(text, "tension:relationship")) {
+            val m = pattern.matchEntire(line) ?: return emptyMap()
+            val id = m.groupValues[1]
+            val onlyRelated = m.groupValues[2].isNotEmpty()
+            val rate = m.groupValues[3].toDoubleOrNull()?.takeIf { it.isFinite() && it in 0.0..5.0 } ?: return emptyMap()
+            if (id !in rules || id in out) return emptyMap()
+            out[id] = TensionRelationRule(onlyRelated, rate)
+        }
+        return out
+    }
+
     /** 缺省允许全天；起点大于终点表示跨午夜，错误区块不接受新请求。 */
     fun shiftRange(text: String): Pair<Int, Int>? {
         if (!Regex("""^\s*\[/?shift\]\s*$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)).containsMatchIn(text)) return 0 to 1439

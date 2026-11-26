@@ -130,7 +130,7 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
     """精简版状态行与按需情绪判定提示：无待评消息时不注入长篇模板说明，有待评消息时不重复输出规则全文。"""
     from comm.comm_interaction import interaction_valence_baseline, offenses_active, offenses_rate
     from comm.comm_persona import read_persona_full
-    from comm.comm_rules import tension_rules, valence_rules, valence_burst_rules
+    from comm.comm_rules import tension_rules, tension_relationship_rules, valence_rules, valence_burst_rules
 
     d = comm_obj._interaction_prepare(pid, status)
     special = comm_obj._interaction_special(status) if hasattr(comm_obj, "_interaction_special") else False
@@ -171,20 +171,24 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
 
     persona_text = read_persona_full(comm_obj.personas, comm_obj.persona_name())
     rules = tension_rules(persona_text)
+    rel_rules = tension_relationship_rules(persona_text)
+    is_related = bool(comm_obj.related()) if hasattr(comm_obj, "related") else False
+    active_rules = {k: v for k, v in rules.items() if not (k in rel_rules and rel_rules[k][0] and not is_related)}
     e_rules = valence_rules(persona_text)
     burst_rules = valence_burst_rules(persona_text)
-    comm_obj._interaction_rules = rules
+    comm_obj._interaction_rules = active_rules
+    comm_obj._interaction_relation_rules = rel_rules
     comm_obj._interaction_valence_rules = e_rules
     comm_obj._interaction_burst_rules = burst_rules
 
-    if rules or e_rules:
+    if active_rules or e_rules:
         lines.append(
             f"[OIT情绪判断] 按条件为待评消息填 oit_reply.tension=[{{index,condition,gain}}](0~{config.COMM_TENSION_GAIN_MAX})、"
             f"valence=[{{index,condition,shift}}](-40~40)及offenses，普通交流省略；报原始整数，系统结算倍率与冷却（X为不定量，不返回X）。"
         )
-        if rules:
+        if active_rules:
             lines.append("[tension] " + " | ".join(
-                f"{k}:[{g if g is not None else 'X'}] {desc}" for k, (g, desc) in rules.items()
+                f"{k}:[{g if g is not None else 'X'}] {desc}" for k, (g, desc) in active_rules.items()
             ))
         if e_rules:
             lines.append("[valence] " + " | ".join(

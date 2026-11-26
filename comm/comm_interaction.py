@@ -7,7 +7,8 @@ import math
 from datetime import datetime
 
 import config
-from comm.comm_rules import tension_rules, tension_event, valence_rules, valence_initial, valence_event, valence_burst_rules, scenario_rules
+from comm.comm_rules import (tension_rules, tension_event, tension_relationship_rules,
+                             valence_rules, valence_initial, valence_event, valence_burst_rules, scenario_rules)
 import routine
 from i18n import tr
 from .comm_const import KEEP
@@ -138,23 +139,36 @@ def valence_model_events(reply, index, conditions=None):
     return sorted(shifts.items(), key=lambda item: -abs(item[1]))
 
 
-def tension_model_events(reply, index, special, cooldowns=None, now_ms=0, conditions=None):
-    """各条件按基础增量降序分别结算，重复条件只取最大值；旧标记归入其他情绪。"""
+def tension_model_events(reply, index, special, cooldowns=None, now_ms=0, conditions=None, related=False, relation_rules=None):
+    """各条件按结算增量降序分别结算，重复条件只取最大值；旧标记归入其他情绪。"""
     gains = {}
+    rel_map = relation_rules or {}
     from ai_assist.ai_tools import unpack, args_of
     events = [(e["index"], e["condition"], e["gain"]) for e in args_of(reply).get("tension", [])] if unpack(reply) is not None else [(int(m[1]), m[2] or "other", int(m[3])) for m in _TENSION_GAIN.finditer(reply)]
     for event_index, condition, amount in events:
         condition = condition.lower()
         if event_index != index or (conditions is not None and condition not in conditions):
             continue
+        rel_rule = rel_map.get(condition)
+        if rel_rule and rel_rule[0] and not related:
+            continue
         gain = max(0, min(config.COMM_TENSION_GAIN_MAX, amount))
         gains[condition] = max(gains.get(condition, 0), gain)
-    return [(condition, int(gain if special else gain * config.COMM_TENSION_DAILY_RATE))
-            for condition, gain in sorted(gains.items(), key=lambda item: -item[1]) if gain > 0]
+    scaled = []
+    for condition, gain in gains.items():
+        if gain <= 0:
+            continue
+        rel_rule = rel_map.get(condition)
+        rel_rate = rel_rule[1] if (related and rel_rule) else 1.0
+        amount = int(gain * (1.0 if special else config.COMM_TENSION_DAILY_RATE) * rel_rate)
+        if amount > 0:
+            scaled.append((condition, amount))
+    return sorted(scaled, key=lambda item: -item[1])
 
 
-def tension_model_gain(reply, index, special, conditions=None):
-    return sum(gain for _condition, gain in tension_model_events(reply, index, special, conditions=conditions))
+def tension_model_gain(reply, index, special, conditions=None, related=False, relation_rules=None):
+    return sum(gain for _condition, gain in tension_model_events(
+        reply, index, special, conditions=conditions, related=related, relation_rules=relation_rules))
 
 
 def condition_repeat_rate(cooldowns, condition, now_ms):
@@ -497,17 +511,21 @@ class InteractionMixin:
         items = [{"序号": i, "用户消息": text, "发送时处于睡眠": sleep}
                  for i, (_uid, _special, text, sleep) in enumerate(self._interaction_candidates, 1)]
         from comm.comm_persona import read_persona_full
-        rules = tension_rules(read_persona_full(self.personas, self.persona_name()))
         persona_text = read_persona_full(self.personas, self.persona_name())
+        rules = tension_rules(persona_text)
+        rel_rules = tension_relationship_rules(persona_text)
+        is_related = bool(self.related()) if hasattr(self, "related") else False
+        active_rules = {k: v for k, v in rules.items() if not (k in rel_rules and rel_rules[k][0] and not is_related)}
         e_rules = valence_rules(persona_text)
         burst_rules = valence_burst_rules(persona_text)
-        self._interaction_rules = rules
+        self._interaction_rules = active_rules
+        self._interaction_relation_rules = rel_rules
         self._interaction_valence_rules = e_rules
         self._interaction_burst_rules = burst_rules
         tension_note = (tr("请按人设文件的[tension]模板和上下文判断以下用户消息。只报告已定义的条件，普通交流不增加；方括号数字为参考基础增量，X表示不定量、没有固定参考值，由你结合条件语义与上下文决定。仍须返回范围内的整数增量，不返回X；相同条件不得改名规避冷却。")
                 + tr("基础增量范围0至{maximum}，在oit_reply.tension数组填写index、condition和gain，0可省略。有效条件：", maximum=config.COMM_TENSION_GAIN_MAX)
                 + "\n".join(f"{key}:[{gain if gain is not None else 'X'}] {description}"
-                            for key, (gain, description) in rules.items())
+                            for key, (gain, description) in active_rules.items())
                 + tr("系统按发送时段将非特殊空闲的增量乘0.75，并处理爆发后24小时的增长减半，请返回未经倍率调整的基础增量。") +
                 tr("每次触发都会增加2小时冷却，最多4小时；触发前冷却为0时倍率100%，剩余0至2小时为40%，超过2至4小时为16%。冷却只降低增量，不阻止条件结算；系统事件与模型使用相同规则。")
                 + tr("同一条消息可以同时触发多个条件；各条件分别应用倍率并取整后累加，各自进入冷却；重复的同一条件只取最大增量。请报告所有满足的条件，不得给其他历史消息加值，不要向用户解释标记。")
@@ -527,7 +545,9 @@ class InteractionMixin:
             if uid in d["pending"]:
                 sent = next((int(m["ts"]) for m in self.messages if m["uid"] == uid), -1)
                 offenses_apply(d, reply, i, uid, sent, self._ms())
-                positive = tension_model_gain(reply, i, True, getattr(self, "_interaction_rules", {})) > 0
+                is_related = bool(self.related()) if hasattr(self, "related") else False
+                rel_rules = getattr(self, "_interaction_relation_rules", None)
+                positive = tension_model_gain(reply, i, True, getattr(self, "_interaction_rules", {}), related=is_related, relation_rules=rel_rules) > 0
                 begin = d["last_special_begin"]
                 if special and positive and begin and begin <= sent <= begin + config.COMM_SPECIAL_LURE_DELAY_SECONDS * 1000:
                     d["special_7m_gain_count"] += 1
@@ -535,7 +555,7 @@ class InteractionMixin:
                 if special and d["tension"] > config.COMM_TENSION_CAP and positive:
                     burst = True
                 now_ms = self._ms()
-                for condition, gain in tension_model_events(reply, i, special, d["gain_cooldowns"], now_ms, getattr(self, "_interaction_rules", {})):
+                for condition, gain in tension_model_events(reply, i, special, d["gain_cooldowns"], now_ms, getattr(self, "_interaction_rules", {}), related=is_related, relation_rules=rel_rules):
                     interaction_add(d, condition, gain, now_ms)
                     if special and d["tension"] > config.COMM_TENSION_CAP and gain > 0:
                         burst = True
