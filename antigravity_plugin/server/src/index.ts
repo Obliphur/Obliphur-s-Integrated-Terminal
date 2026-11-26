@@ -132,7 +132,6 @@ function buildTools(): ToolSpec[] {
             type: "boolean",
             description: "仅当 USER_ADULT=UNKNOWN 且用户在当前对话中明确确认自己已成年(18+)时填 true，否则省略。",
           },
-          end_burst: { type: "boolean" },
           offenses: {
             type: "array",
             description: "本轮待判断用户消息引起的冒犯或已决定的原谅。",

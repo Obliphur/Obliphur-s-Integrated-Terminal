@@ -100,7 +100,6 @@ class SchedMixin:
             msgs[-1]["content"] += "\n\n" + outgoing
         else:
             msgs.append({"role": "user", "content": outgoing})
-        burst = self._interaction_prepare(pid)["burst_until"]
         clear0 = int(st["clear_ts"])
         self._bg_busy = pid
         self._bg_last = self._ms()
@@ -126,17 +125,16 @@ class SchedMixin:
                 err = type(e).__name__
             self.log(f"REQ bg-{kind} {'FAIL ' + err if err else 'ok'} {time.monotonic() - started:.1f}s")
             with self._lock:
-                self._bg_results.append((pid, kind, (body, api), reply, err, clear0, burst))
+                self._bg_results.append((pid, kind, (body, api), reply, err, clear0))
         threading.Thread(target=work, daemon=True).start()
 
-    def _bg_finish(self, pid, kind, extra, reply, err, clear0, burst=0):
+    def _bg_finish(self, pid, kind, extra, reply, err, clear0):
         self._bg_busy = None
         if self.hard_block() or not self.leader():
             return
         st = self._state_of(pid)
         if int(st["clear_ts"]) != clear0 or err:
             return
-        raw_reply = reply
         reply = tension_clean(reply)
         text, wait_min = clean_reply(reply)
         name = next((n for n in list_personas(self.personas) if pid_of(n) == pid), "")
@@ -145,8 +143,6 @@ class SchedMixin:
         if is_refusal(reply) or not text or info_tags(reply):
             self.log(f"REPLY bg-{kind}: 对方不想发 / 什么也没剩, 不显示")
             return
-        self._interaction_end(raw_reply, burst, pid)
-        st["interaction"] = self._state_of(pid)["interaction"]
         sysm = self._mk("sys", extra[0], extra[1])
         from .comm_delivery import reply_parts
         parts = [self._mk("ai", part, persona=name) for part in reply_parts(text)]

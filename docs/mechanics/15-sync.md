@@ -14,7 +14,7 @@ AI 聊天服务商配置及视觉、OCR、评判任务模型分配随现有设�
 
 设备代理配置不发送 API Key 或聊天历史到同步文档。选择“由设备处理”后，当前请求通过绑定设备之间已有的加密 HTTP 通道转交，目标设备使用自己的模型配置 / CLI 登录状态处理，再把结果返回；目标离线、解绑或不支持代理时本轮显示错误。
 
-情景模式、情绪张力与情绪效价按对象通过 `comm.interaction:<pid>` 同步，包含模型决定结束的爆发状态 `burst_until`（非零表示持续，不按旧截止时刻结束）、效价值 `valence` 及衰减游标 `valence_decay_at`、效价条件冷却 `valence_cooldowns` 与连锁截止时刻 `valence_chain_until`、爆发后的增长减半截止时间 `gain_until`、最近两个爆发触发日期 `burst_days` 和早间必谈触发日期 `morning_day`、爆发后睡眠必谈的待触发边界 `burst_sleep_after`、待模型判断的消息 UID 与发送时段 `pending`、按条件保存的张力增长冷却 `gain_cooldowns`、条件连锁一小时倍率截止时刻 `gain_chain_until`，以及高张力特殊空闲的结束时刻 `special_until`、用户发言标记 `special_spoke`、特殊空闲入场段起点 `last_special_begin` / 入场张力 `special_entry_tension` / 前七分钟正向条件次数 `special_7m_gain_count` / 单段引诱去重 `special_7m_lured_seg`、张力衰减游标 `decay_at` 与豁免截止时刻 `decay_hold_until`（旧 `skip_decay` 迁移为 24 小时豁免）；记录携带聊天清空时刻，按修改时间采用较新内容；清空后拒收旧会话状态（24.20）。
+情景模式、情绪张力与情绪效价按对象通过 `comm.interaction:<pid>` 同步，包含爆发结束截止时刻 `burst_until`（当前特殊空闲结束时刻，到点自动结束）、效价值 `valence` 及衰减游标 `valence_decay_at`、效价条件冷却 `valence_cooldowns` 与连锁截止时刻 `valence_chain_until`、爆发后的增长减半截止时间 `gain_until`、最近两个爆发触发日期 `burst_days` 和早间必谈触发日期 `morning_day`、爆发后睡眠必谈的待触发边界 `burst_sleep_after`、待模型判断的消息 UID 与发送时段 `pending`、按条件保存的张力增长冷却 `gain_cooldowns`、条件连锁一小时倍率截止时刻 `gain_chain_until`，以及高张力特殊空闲的结束时刻 `special_until`、用户发言标记 `special_spoke`、特殊空闲入场段起点 `last_special_begin` / 入场张力 `special_entry_tension` / 前七分钟正向条件次数 `special_7m_gain_count` / 单段引诱去重 `special_7m_lured_seg`、张力衰减游标 `decay_at` 与豁免截止时刻 `decay_hold_until`（旧 `skip_decay` 迁移为 24 小时豁免）；记录携带聊天清空时刻，按修改时间采用较新内容；清空后拒收旧会话状态（24.20）。
 
 同一个局域网 (同一个 Wi-Fi / 路由器) 里的 OIT 可以互相绑定, Windows 和 Android 都可以. 不经过任何服务器.
 沟通记忆卡中的消息数量门槛使用 `comm` 的 `milestone:<pid>:<门槛>` 独立同步，按已达成项合并，不受模型摘要重写影响；记录带聊天清空时刻，清空后不接收旧会话的达成记录（24.2.4）。

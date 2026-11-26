@@ -156,7 +156,7 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
     else:
         lines.append("规则: 情景模拟虚构动作须守边界，括号仅写动作（想法直说），勿透露机制。")
     if d["burst_until"]:
-        lines.append("爆发中: 决定结束时填 oit_reply.end_burst=true（后降为20并进2轮冷静期）。")
+        lines.append("爆发中: 持续至当前特殊空闲结束（结束后自动降为20并进2轮冷静期）。")
     if d["shame_turns"]:
         lines.append("冷静期中: 遵守动作限制。")
 
@@ -286,7 +286,7 @@ class OitMcpBridge:
         self._recent_user_ms = {}       # conversation_id -> int
         self._last_batch = {}           # persona_id -> {"batch_id": str, "items": list}
         self._last_reply_ms = {}        # conversation_id/persona_id -> int
-        self._turn_interaction = {}     # persona_id -> {"burst_until": int, "shame": bool}
+        self._turn_interaction = {}     # persona_id -> {"shame": bool}
         self._share_sent_ts = {}        # persona_id -> int (已下发给 Antigravity 的最新共享数据 sys 消息 ts)
         self._answer_image_context = {} # (conversation_id, subject session) -> original answer and source image
         self._pending_answer_images = {} # conversation_id -> rendered bytes awaiting oit_reply
@@ -1279,7 +1279,6 @@ class OitMcpBridge:
                 d_inter = self.comm._interaction_prepare(pid, status)
                 with self._lock:
                     self._turn_interaction[pid] = {
-                        "burst_until": int(d_inter.get("burst_until") or 0),
                         "shame": bool(d_inter.get("shame_turns")),
                     }
                 tk = (turn.get("kind") if turn else (trigger.get("kind") if trigger else "user"))
@@ -2066,12 +2065,9 @@ class OitMcpBridge:
                 until_ms = int(cur_status["end"].timestamp() * 1000) if special_now and cur_status.get("end") else 0
                 with self._lock:
                     snap_meta = self._turn_interaction.pop(pid, {})
-                burst_before = int(snap_meta.get("burst_until") or d_cur.get("burst_until") or 0)
                 shame_before = bool(snap_meta.get("shame"))
                 if hasattr(self.comm, "_interaction_reply"):
                     self.comm._interaction_reply(special_now, judged_burst, until_ms, shame=shame_before, pid=pid)
-                if hasattr(self.comm, "_interaction_end"):
-                    self.comm._interaction_end(packed_reply, burst_before, pid=pid)
                 d_after = self.comm._interaction_prepare(pid)
                 applied["tension"] = round(float(d_after.get("tension") or 0), 2)
                 applied["valence"] = round(float(d_after.get("valence") or 0), 2)

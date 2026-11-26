@@ -23,8 +23,11 @@ class CommOffensesTest {
             valenceCooldowns = mapOf("joy" to now + 1), valenceChainUntil = now + 1)
             .addValence(listOf("joy" to 40), now, 0.5)
         assertEquals(4.0, d.valence, 0.0)
-        val reply = ToolProtocol.pack("平静下来", "oit_reply", JSONObject().put("end_burst", true))
-        assertEquals(20.0, d.endBurst(reply, 1, now, 20).valence, 0.0)
+        val settled = d.settle(now, 20)
+        assertEquals(20.0, settled.valence, 0.0)
+        assertEquals(20.0, settled.tension, 0.0)
+        assertEquals(2, settled.shameTurns)
+        assertEquals(0L, settled.burstUntil)
     }
 
     @Test fun claudiaSleepValenceRates() {

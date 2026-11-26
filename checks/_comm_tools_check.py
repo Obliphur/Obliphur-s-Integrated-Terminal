@@ -543,7 +543,7 @@ def memory_tool_checks():
 def offense_checks():
     from copy import deepcopy
     from comm.comm_offenses import offenses_norm, offenses_active, offenses_rate, offenses_apply
-    from comm.comm_interaction import interaction_norm, interaction_prompt, interaction_valence_add, interaction_roll, interaction_end
+    from comm.comm_interaction import interaction_norm, interaction_prompt, interaction_valence_add, interaction_roll, interaction_settle
     now = 1805491140000
     record = {"id": "user:1", "at": now, "reason": "无视拒绝，继续纠缠", "ts": now, "forgiven": False}
     for count in range(7):
@@ -565,9 +565,8 @@ def offense_checks():
                           "valence_chain_until": now + 1, "burst_until": 1})
     interaction_valence_add(d, [("joy", 40)], 0.5, now)
     assert d["valence"] == 4, "冷却、连锁、爆发和冒犯倍率依次取整"
-    end = interaction_end(d, tools.pack(name="oit_reply", arguments={"text": "平静下来", "end_burst": True}),
-                          1, now, {"burst_end_shift": 20})
-    assert end["valence"] == 20
+    end = interaction_settle(d, now, {"burst_end_shift": 20})
+    assert end["valence"] == 20 and end["tension"] == 20 and end["shame_turns"] == 2 and end["burst_until"] == 0
     assert interaction_norm(d)["offenses"] == d["offenses"]
     rolled = interaction_roll(d, now + 86400000, 10)
     assert rolled["offenses"] == d["offenses"], "跨天与自然回归不清冒犯"

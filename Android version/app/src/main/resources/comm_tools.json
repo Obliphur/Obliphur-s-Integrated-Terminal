@@ -337,9 +337,6 @@
           "minItems": 0,
           "maxItems": 100
         },
-        "end_burst": {
-          "type": "boolean"
-        },
         "kb_citations": {"type":"array","items":{"type":"string"},"maxItems":20,"description":"OIT技巧库中的已引用卡片 ID；OIT 会转换为可点击的结论溯源胶囊。"},
         "tension": {
           "type": "array",

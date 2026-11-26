@@ -1664,7 +1664,6 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 burst = self._interaction_judged(tension_reply)
                 special, until, shame = getattr(self, "_interaction_turn", (False, 0, False))
                 self._interaction_reply(special, burst, until, shame)
-            self._interaction_end(tension_reply, getattr(self, "_interaction_burst", 0))
             if kind in ("user", "retry", "followup") and args_of(tension_reply).get("user_adult") is True:
                 self._adult_confirm()
             if accept and self.offense_blocked():

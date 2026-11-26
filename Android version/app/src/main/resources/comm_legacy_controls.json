@@ -25,7 +25,6 @@
   ["[No]", "oit_reply(answer=\"no\")"],
   ["[share data]", "oit_reply(share_data=true,text=邀请正文)"],
   ["[operation]", "oit_joint_offer()，取得候选后调用oit_joint_select(terms=编号数组)，再调用oit_reply(text=邀请正文)"],
-  ["[burst:end]", "oit_reply(end_burst=true)"],
   ["[waiting for reply]", "在oit_reply中填写wait_minutes；这是内部控制字段，不会显示，面向用户的正文仍写入text"],
   ["[apply for network]", "oit_reply的network_minutes字段"],
   ["[cut off]", "oit_reply的cut_minutes字段"],

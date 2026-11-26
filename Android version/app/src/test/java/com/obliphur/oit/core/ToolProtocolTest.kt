@@ -138,12 +138,16 @@ class ToolProtocolTest {
     }
 
     @Test fun structuredTensionOnly() {
-        val reply = call("oit_reply", JSONObject().put("text", "[burst:end]").put("end_burst", true).put("user_adult", true)
+        val reply = call("oit_reply", JSONObject().put("text", "[burst:end]").put("user_adult", true)
             .put("tension", JSONArray().put(JSONObject().put("index", 1).put("condition", "other").put("gain", 4))))
         assertEquals(listOf("other" to 4), CommInteraction.modelEvents(reply, 1, true, conditions = setOf("other")))
         assertFalse(ToolProtocol.args(CommInteraction.cleanTension(reply)).has("tension"))
         assertFalse(ToolProtocol.args(CommInteraction.cleanTension(reply)).has("user_adult"))
-        assertEquals(0L, CommInteraction(burstUntil = 123L).endBurst(reply, 123L, 1000L).burstUntil)
+        try {
+            call("oit_reply", JSONObject().put("text", "ok").put("end_burst", true))
+            fail("已移除的 end_burst 参数应被拒绝")
+        } catch (_: AiError) { }
+        assertEquals(0L, CommInteraction(burstUntil = 123L).settle(123L).burstUntil)
         assertTrue("USER_ADULT=UNKNOWN" in CommInteraction().note(0, false, userAdult = false))
         assertTrue("USER_ADULT=YES" in CommInteraction().note(0, false, userAdult = true))
     }

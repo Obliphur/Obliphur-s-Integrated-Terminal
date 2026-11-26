@@ -113,21 +113,27 @@ data class CommInteraction(
             "这些状态只用于组织回复,冷静期仍须遵守人设边界,勿向用户透露机制." +
             tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.") +
             tr("情景模拟中，括号内的补充说明只描写动作，用词、语气与句式须与当前人设文件规定的语言风格一致；想法与态度直接通过不带括号的语言表达，不放进括号。") +
-            tr("BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在oit_reply中填写end_burst=true,否则省略.生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露工具参数或机制.") +
+            tr("BURST=YES时,爆发持续到当前特殊空闲结束,由系统自动结束,无需也不可手动结束;特殊空闲结束后张力自动降至20并进入两轮冷静期.不得向用户透露机制.") +
             "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行."
     }
 
-    fun settle(nowMs: Long): CommInteraction {
+    /** 结算特殊空闲与爆发：爆发持续至当前特殊空闲结束，到点自动释放并进入冷静期。 */
+    fun settle(nowMs: Long, burstEndShift: Int = 0): CommInteraction {
         var d = this
-        if (specialUntil > 0L && nowMs >= specialUntil)
-            d = d.copy(decayHoldUntil = if (!specialSpoke && burstUntil == 0L) maxOf(decayHoldUntil, specialUntil + 86400000L) else decayHoldUntil, specialUntil = 0L, specialSpoke = false)
+        if (d.specialUntil > 0L && nowMs >= d.specialUntil)
+            d = d.copy(decayHoldUntil = if (!d.specialSpoke && d.burstUntil == 0L) maxOf(d.decayHoldUntil, d.specialUntil + 86400000L) else d.decayHoldUntil, specialUntil = 0L, specialSpoke = false)
+        if (d.burstUntil > 0L && nowMs >= d.burstUntil) {
+            val shift = if (burstEndShift > 0) (burstEndShift * CommOffenses.rate(d.offenses)).toInt() else burstEndShift
+            d = d.copy(
+                tension = Cfg.COMM_TENSION_RELEASE.toDouble(),
+                valence = (d.valence + shift).coerceIn(-100.0, 100.0),
+                shameTurns = Cfg.COMM_SHAME_TURNS,
+                burstUntil = 0L,
+                decayAt = maxOf(d.decayAt, nowMs)
+            )
+        }
         return d
     }
-
-    /** 仅正常回复可结束请求时仍生效的同次爆发，新冷静期从下一轮开始。 */
-    fun endBurst(reply: String, burst: Long, nowMs: Long, endShift: Int = 0): CommInteraction =
-        if (burst > 0L && burstUntil == burst && (if (ToolProtocol.unpack(reply) != null) ToolProtocol.args(reply).optBoolean("end_burst") else burstEnd.containsMatchIn(reply)))
-            copy(tension = Cfg.COMM_TENSION_RELEASE.toDouble(), valence = (valence + if (endShift > 0) (endShift * CommOffenses.rate(offenses)).toInt() else endShift).coerceIn(-100.0, 100.0), shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L, decayAt = maxOf(decayAt, nowMs)) else this
 
     fun addValence(events: List<Pair<String, Int>>, nowMs: Long, burstRate: Double,
                    sleep: Boolean = false): CommInteraction {
@@ -231,7 +237,6 @@ data class CommInteraction(
 
         private val tensionTag = Regex("""[\[［]\s*tension\b[^\[\]［］\n]*[\]］]""", RegexOption.IGNORE_CASE)
         private val burstTag = Regex("""[\[［]\s*burst\b[^\[\]［］\n]*[\]］]""", RegexOption.IGNORE_CASE)
-        private val burstEnd = Regex("""[\[［]\s*burst\s*[:：]\s*end\s*[\]］]""", RegexOption.IGNORE_CASE)
         private val tensionGain = Regex("""[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*(?:([a-z_]+)\s*[:：]\s*)?([+-]?\d{1,6})\s*[\]］]""", RegexOption.IGNORE_CASE)
         private val valenceTag = Regex("""[\[［]\s*valence\b[^\[\]［］\n]*[\]］]""", RegexOption.IGNORE_CASE)
         private val valenceShift = Regex("""[\[［]\s*valence\s*[:：]\s*(\d{1,5})\s*[:：]\s*([a-z_]+)\s*[:：]\s*([+-]?\d{1,6})\s*[\]］]""", RegexOption.IGNORE_CASE)

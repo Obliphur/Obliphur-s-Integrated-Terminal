@@ -106,7 +106,6 @@ def interaction_valence(value):
 _TENSION_TAG = re.compile(r"[\[［]\s*tension\b[^\[\]［］\n]*[\]］]", re.I)
 _VALENCE_TAG = re.compile(r"[\[［]\s*valence\b[^\[\]［］\n]*[\]］]", re.I)
 _BURST_TAG = re.compile(r"[\[［]\s*burst\b[^\[\]［］\n]*[\]］]", re.I)
-_BURST_END = re.compile(r"[\[［]\s*burst\s*[:：]\s*end\s*[\]］]", re.I)
 _TENSION_GAIN = re.compile(r"[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*(?:([a-z_]+)\s*[:：]\s*)?([+-]?\d{1,6})\s*[\]］]", re.I)
 _VALENCE_SHIFT = re.compile(r"[\[［]\s*valence\s*[:：]\s*(\d{1,5})\s*[:：]\s*([a-z_]+)\s*[:：]\s*([+-]?\d{1,6})\s*[\]］]", re.I)
 
@@ -230,22 +229,14 @@ def interaction_roll(d, now_ms, valence_baseline=None):
     return d
 
 
-def interaction_settle(d, now_ms):
-    """仅结算特殊空闲；burst_until 非零表示爆发，旧截止时刻不再自动结束。"""
+def interaction_settle(d, now_ms, burst_rules=None):
+    """结算特殊空闲与爆发：爆发持续至当前特殊空闲结束，到点自动释放并进入冷静期。"""
     d = interaction_norm(d)
     if d["special_until"] and now_ms >= d["special_until"]:
         if not d["special_spoke"] and not d["burst_until"]:
             d["decay_hold_until"] = max(d["decay_hold_until"], d["special_until"] + 86400000)
         d.update(special_until=0, special_spoke=False)
-    return d
-
-
-def interaction_end(d, reply, burst, now_ms, burst_rules=None):
-    """仅正常回复可结束请求时仍生效的同次爆发，新冷静期从下一轮开始。"""
-    d = interaction_norm(d)
-    from ai_assist.ai_tools import unpack, args_of
-    ended = args_of(reply).get("end_burst", False) if unpack(reply) is not None else bool(_BURST_END.search(reply))
-    if burst and d["burst_until"] == burst and ended:
+    if d["burst_until"] and now_ms >= d["burst_until"]:
         d.update(tension=config.COMM_TENSION_RELEASE, shame_turns=config.COMM_SHAME_TURNS,
                  burst_until=0, decay_at=max(d["decay_at"], now_ms))
         shift = (burst_rules or {}).get("burst_end_shift", 0)
@@ -311,7 +302,7 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=Fa
             "这些状态只用于组织回复,冷静期仍须遵守人设边界,勿向用户透露机制."
             + tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.")
             + tr("情景模拟中，括号内的补充说明只描写动作，用词、语气与句式须与当前人设文件规定的语言风格一致；想法与态度直接通过不带括号的语言表达，不放进括号。")
-                + tr("BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在oit_reply中填写end_burst=true,否则省略.生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露工具参数或机制.")
+                + tr("BURST=YES时,爆发持续到当前特殊空闲结束,由系统自动结束,无需也不可手动结束;特殊空闲结束后张力自动降至20并进入两轮冷静期.不得向用户透露机制.")
             + "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行.")
 
 
@@ -441,7 +432,8 @@ class InteractionMixin:
         d.update(valence_initial=baseline, valence_initial_set=True)
         if not d["valence_initialized"]:
             d.update(valence=interaction_valence_baseline(d), valence_decay_at=now_ms, valence_initialized=True)
-        rolled = interaction_roll(interaction_settle(d, now_ms), now_ms)
+        burst_rules = self._interaction_burst_rules_for(pid) if d["burst_until"] and now_ms >= d["burst_until"] else None
+        rolled = interaction_roll(interaction_settle(d, now_ms, burst_rules), now_ms)
         if status is None and pid == self.pid:
             status = self.other_status()
         if status is not None:
@@ -575,16 +567,15 @@ class InteractionMixin:
                 d["burst_sleep_after"] = max(d["burst_sleep_after"], until)
                 if not d["burst_until"]:
                     d["burst_until"] = until
-        self._interaction_set(interaction_settle(d, self._ms()), pid)
+        now_ms = self._ms()
+        burst_rules = self._interaction_burst_rules_for(pid) if d.get("burst_until") and now_ms >= d["burst_until"] else None
+        self._interaction_set(interaction_settle(d, now_ms, burst_rules), pid)
 
-    def _interaction_end(self, reply, burst, pid=None):
-        d = self._interaction_prepare(pid)
+    def _interaction_burst_rules_for(self, pid=None):
         from comm.comm_persona import read_persona_full, list_personas, pid_of
-        owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == (pid or self.pid)), self.persona_name())
-        rules = valence_burst_rules(read_persona_full(self.personas, owner_name))
-        ended = interaction_end(d, reply, burst, self._ms(), rules)
-        if ended != d:
-            self._interaction_set(ended, pid)
+        target_pid = pid or self.pid
+        owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == target_pid), self.persona_name())
+        return valence_burst_rules(read_persona_full(self.personas, owner_name))
 
     def tension_display(self, enabled):
         """显示当前对象的真实张力，保留两位小数，关闭时不显示。"""
