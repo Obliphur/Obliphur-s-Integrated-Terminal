@@ -1867,12 +1867,17 @@ class CommTest {
         assertEquals("备用", ac.configName(cid))
         assertTrue(ac.renameConfig(cid, "备用2"))
         ac.save()
+        val defaultCid = ac.provider
         a.setConfig(cid)
         assertEquals(cid, a.currentConfig())
         assertEquals("备用2", a.currentConfigName())
-        assertEquals(cid, AiConfig(File(td, "a/ai_config.json")).configFor(a.personaName()))
+        val reloaded = AiConfig(File(td, "a/ai_config.json"))
+        assertEquals(defaultCid, reloaded.provider)
+        assertEquals(cid, reloaded.configFor(a.personaName()))
+        assertEquals(defaultCid, reloaded.configFor("其他.txt"))
         a.setConfig("custom")
         assertEquals("custom", a.currentConfig())
+        assertEquals(defaultCid, AiConfig(File(td, "a/ai_config.json")).provider)
         while (ac.addConfig("x").isNotEmpty()) {}
         assertEquals("最多 10 份配置", com.obliphur.oit.ai.Ai.MAX_CONFIGS.toLong(), ac.order.size.toLong())
         assertEquals(1, b.unread)

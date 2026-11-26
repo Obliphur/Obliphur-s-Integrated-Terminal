@@ -386,12 +386,13 @@ def _selftest():
     cid = c.ai.add_config("备用")
     assert cid and c.ai.config_name(cid) == "备用" and c.ai.profile(cid)["provider"] == "custom"
     assert c.ai.rename_config(cid, "备用2") and c.ai.config_name(cid) == "备用2"
-    c.set_config(cid)                                     # 沟通页切换模型直接联动主模型设置
-    assert c.current_config() == cid and c.profile()["config_id"] == cid and c.ai.provider == cid
+    default_cid = c.ai.provider
+    c.set_config(cid)                                     # 沟通页切换模型只作用于当前聊天对象，不改默认模型
+    assert c.current_config() == cid and c.profile()["config_id"] == cid and c.ai.provider == default_cid
     reloaded = ai_assist.AIConfig(c.ai.path)
-    assert reloaded.provider == cid and reloaded.config_for("小夏.txt") == cid, "主模型与当前人设配置同步存盘了"
+    assert reloaded.provider == default_cid and reloaded.config_for("小夏.txt") == cid and reloaded.config_for("其他.txt") == default_cid, "只保存当前人设配置，不改动默认模型"
     c.set_config("deepseek")
-    assert c.current_config() == "deepseek" and c.ai.provider == "deepseek"
+    assert c.current_config() == "deepseek" and c.ai.provider == default_cid
     while c.ai.add_config("x"):
         pass
     assert len(c.ai.order) == ai_assist.MAX_CONFIGS, "最多 10 份配置"

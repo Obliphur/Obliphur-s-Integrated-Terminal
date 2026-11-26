@@ -3751,8 +3751,8 @@ class Comm(
     fun setConfig(id: String) {
         if (id.isEmpty()) return
         val cfg = aiConfig()
-        if (id == cfg.configFor(personaName()) && id == cfg.provider && cfg.assign.isEmpty()) return
-        if (cfg.setActive(id)) cfg.assign.clear() else cfg.assignConfig(personaName(), id)
+        if (id == cfg.configFor(personaName())) return
+        cfg.assignConfig(personaName(), id)
         cfg.save()
         problemAt = 0L
         changed()
