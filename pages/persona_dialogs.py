@@ -40,7 +40,7 @@ def create_persona(parent, comm):
         ai_dialogs.open_takeover_feature_help(parent, "persona")
         return
     dlg = Modal(parent, tr("创建人设"), min(780, parent.winfo_screenwidth() - 40),
-                min(680, parent.winfo_screenheight() - 80))
+                min(740, parent.winfo_screenheight() - 80))
     area = ScrollArea(dlg.body)
     area.pack(fill="both", expand=True)
     body = area.inner
@@ -72,6 +72,53 @@ def create_persona(parent, comm):
     rb_det.pack(side="left", padx=(0, 14))
     rb_bri.pack(side="left")
 
+    label(body, "亲密动作最高开放程度（V+ / BURST / 确立关系后）")
+    intimacy_var = tk.IntVar(value=comm_author.DEFAULT_INTIMACY_LEVEL)
+    intimacy_card = tk.Frame(body, bg=COLORS["bg_card"], padx=10, pady=8)
+    intimacy_card.pack(fill="x", pady=(2, 8))
+
+    slider_row = tk.Frame(intimacy_card, bg=COLORS["bg_card"])
+    slider_row.pack(fill="x")
+    intimacy_title = tk.Label(slider_row, text="", bg=COLORS["bg_card"], fg=COLORS["accent"],
+                              font=config.font("body", bold=True), anchor="w")
+    intimacy_title.pack(side="left")
+
+    intimacy_desc = tk.Label(intimacy_card, text="", bg=COLORS["bg_card"], fg=COLORS["text"],
+                             font=config.font("small"), justify="left", anchor="w")
+    wrap_label(intimacy_desc)
+    intimacy_fit = tk.Label(intimacy_card, text="", bg=COLORS["bg_card"], fg=COLORS["text_dim"],
+                            font=config.font("small"), justify="left", anchor="w")
+    wrap_label(intimacy_fit)
+    intimacy_summary = tk.Label(intimacy_card, text=tr(comm_author.INTIMACY_MODEL_SUMMARY),
+                                bg=COLORS["bg_card"], fg=COLORS["text_dim"],
+                                font=config.font("small"), justify="left", anchor="w")
+    wrap_label(intimacy_summary)
+
+    def _sync_intimacy(_val=None):
+        info = comm_author.intimacy_level_info(intimacy_var.get())
+        intimacy_title.configure(text=tr(info.title))
+        intimacy_desc.configure(text=tr(info.description))
+        intimacy_fit.configure(text=tr(info.model_fit))
+
+    intimacy_scale = tk.Scale(
+        intimacy_card, from_=1, to=len(comm_author.INTIMACY_LEVELS), resolution=1,
+        orient="horizontal", variable=intimacy_var, showvalue=False,
+        bg=COLORS["bg_card"], fg=COLORS["text"], troughcolor=COLORS["bg"],
+        highlightthickness=0, activebackground=COLORS["accent"], command=_sync_intimacy,
+    )
+    intimacy_scale.pack(fill="x", pady=(4, 2))
+    ticks = tk.Frame(intimacy_card, bg=COLORS["bg_card"])
+    ticks.pack(fill="x", pady=(0, 6))
+    for i, item in enumerate(comm_author.INTIMACY_LEVELS):
+        ticks.columnconfigure(i, weight=1)
+        anchor = "w" if i == 0 else ("e" if i == len(comm_author.INTIMACY_LEVELS) - 1 else "center")
+        tk.Label(ticks, text=str(item.level), bg=COLORS["bg_card"], fg=COLORS["text_dim"],
+                 font=config.font("small"), anchor=anchor).grid(row=0, column=i, sticky="ew")
+    intimacy_desc.pack(fill="x")
+    intimacy_fit.pack(fill="x", pady=(4, 0))
+    intimacy_summary.pack(fill="x", pady=(4, 0))
+    _sync_intimacy()
+
     label(body, "创作要求")
     requirements = _text(body, 6)
     label(body, "人设简介（可手写，留空由 AI 生成）")
@@ -90,6 +137,7 @@ def create_persona(parent, comm):
     def generate():
         title, request, profile = name.get().strip(), value(requirements).strip(), value(manual)
         mode = mode_var.get()
+        intimacy_level = intimacy_var.get()
         try:
             comm_author.all_file_names(comm.personas, title)
             if not request:
@@ -99,13 +147,16 @@ def create_persona(parent, comm):
         except (OSError, ValueError, ai_assist.AIError) as exc:
             status.configure(text=tr(str(exc)))
             return
-        for widget in (name, rb_det, rb_bri, requirements, manual, submit):
+        for widget in (name, rb_det, rb_bri, intimacy_scale, requirements, manual, submit):
             widget.configure(state="disabled")
         status.configure(text=tr("正在参考 Claudia 生成 5 份人设文件…"))
 
         def work():
             try:
-                drafts.put((comm_author.generate(model, title, request, profile, mode=mode, folder=comm.personas), ""))
+                drafts.put((comm_author.generate(
+                    model, title, request, profile, mode=mode, folder=comm.personas,
+                    intimacy_level=intimacy_level,
+                ), ""))
             except (OSError, ValueError, ai_assist.AIError) as exc:
                 drafts.put((None, str(exc)))
 
@@ -116,7 +167,7 @@ def create_persona(parent, comm):
                 dlg.after(100, poll)
                 return
             if draft is None:
-                for widget in (name, rb_det, rb_bri, requirements, manual, submit):
+                for widget in (name, rb_det, rb_bri, intimacy_scale, requirements, manual, submit):
                     widget.configure(state="normal")
                 status.configure(text=tr(error))
                 return
@@ -174,7 +225,10 @@ def create_persona(parent, comm):
 
                 def rwork():
                     try:
-                        updated = comm_author.revise(model, title, cur, instr, mode=mode, folder=comm.personas)
+                        updated = comm_author.revise(
+                            model, title, cur, instr, mode=mode, folder=comm.personas,
+                            intimacy_level=intimacy_level,
+                        )
                         rev_q.put((updated, ""))
                     except (OSError, ValueError, ai_assist.AIError) as exc:
                         rev_q.put((None, str(exc)))

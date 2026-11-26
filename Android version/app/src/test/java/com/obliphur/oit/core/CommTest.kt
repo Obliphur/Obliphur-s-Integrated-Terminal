@@ -1516,6 +1516,15 @@ class CommTest {
     fun personaDraftKeepsTheProfileSeparate() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        assertEquals(5, PersonaAuthor.INTIMACY_LEVELS.size)
+        assertEquals(1, PersonaAuthor.intimacyLevelInfo(0).level)
+        assertEquals(5, PersonaAuthor.intimacyLevelInfo(99).level)
+        assertTrue(PersonaAuthor.intimacyLevelInfo(5).description.contains("破甲提示词"))
+        PersonaAuthor.INTIMACY_LEVELS.forEach { lv ->
+            listOf("Claudia", "Charlotte", "Gemina").forEach { name ->
+                assertFalse(lv.title.contains(name) || lv.description.contains(name) || lv.modelFit.contains(name))
+            }
+        }
         val response = """{"persona":"你是乙","templates":"配套规则","profile":"AI 简介"}"""
         assertEquals("AI 简介", PersonaAuthor.parse(response, "").profile)
         val draft = PersonaAuthor.parse(response, "手写简介")

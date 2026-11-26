@@ -2,21 +2,28 @@ package com.obliphur.oit.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.obliphur.oit.core.Comm
 import com.obliphur.oit.core.PersonaAuthor
@@ -25,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import kotlin.math.roundToInt
 
 @Composable
 internal fun PersonaProfileDialog(profile: String, onDismiss: () -> Unit) {
@@ -43,16 +51,63 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
     var title by remember { mutableStateOf("") }
     var request by remember { mutableStateOf("") }
     var profile by remember { mutableStateOf("") }
+    var intimacyLevel by remember { mutableIntStateOf(PersonaAuthor.DEFAULT_INTIMACY_LEVEL) }
     var draft by remember { mutableStateOf<PersonaAuthor.Draft?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val preview = draft
+    val intimacyInfo = PersonaAuthor.intimacyLevelInfo(intimacyLevel)
     AlertDialog(onDismissRequest = onDismiss, title = { Text(tr("创建人设")) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (preview == null) {
                     OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(),
                         label = { Text(tr("人设名称")) }, singleLine = true, enabled = !busy)
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                tr("亲密动作最高开放程度（V+ / BURST / 确立关系后）"),
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Text(
+                                tr(intimacyInfo.title),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Slider(
+                                value = intimacyLevel.toFloat(),
+                                onValueChange = { intimacyLevel = it.roundToInt().coerceIn(1, PersonaAuthor.INTIMACY_LEVELS.size) },
+                                valueRange = 1f..PersonaAuthor.INTIMACY_LEVELS.size.toFloat(),
+                                steps = PersonaAuthor.INTIMACY_LEVELS.size - 2,
+                                enabled = !busy,
+                            )
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                PersonaAuthor.INTIMACY_LEVELS.forEach { item ->
+                                    Text(
+                                        item.level.toString(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            Text(tr(intimacyInfo.description), style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                tr(intimacyInfo.modelFit),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                tr(PersonaAuthor.INTIMACY_MODEL_SUMMARY),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     OutlinedTextField(request, { request = it }, Modifier.fillMaxWidth(),
                         label = { Text(tr("创作要求")) }, minLines = 3, maxLines = 6, enabled = !busy)
                     OutlinedTextField(profile, { profile = it }, Modifier.fillMaxWidth(),
@@ -80,6 +135,7 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
                     val name = title.trim()
                     val requirements = request.trim()
                     val manualProfile = profile
+                    val chosenIntimacy = intimacyLevel
                     val problem = runCatching {
                         comm.checkNewPersonaName(name)
                         require(requirements.isNotEmpty()) { "请填写创作要求。" }
@@ -89,7 +145,7 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
                         busy = true
                         scope.launch {
                             val result = withContext(Dispatchers.IO) {
-                                runCatching { PersonaAuthor.generate(comm.aiConfig().profile(), name, requirements, manualProfile) }
+                                runCatching { PersonaAuthor.generate(comm.aiConfig().profile(), name, requirements, manualProfile, chosenIntimacy) }
                             }
                             busy = false
                             result.onSuccess { draft = it }.onFailure { error = it.message.orEmpty() }

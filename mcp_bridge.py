@@ -2588,16 +2588,23 @@ def takeover_feature_prompt(feature: str, en: bool = False) -> str:
             "(do not bind any persona). First call oit_claudia_reference to decrypt and read all existing "
             "Claudia reference files; note that language style and most settings (such as scenario-mode "
             "action restrictions) do NOT need to match Claudia—especially the example file, which should "
-            "fit the new character rather than copy Claudia. Then ask me whether I want 'Brief' or 'Detailed' "
-            "mode (Detailed: as comprehensive as Claudia's files; Brief: only define the core persona without "
-            "detailed scenario rules, and keep the example file casual/lightweight) before drafting."
+            "fit the new character rather than copy Claudia. Before drafting, ask me: "
+            "(1) whether I want 'Brief' or 'Detailed' mode (Detailed: comprehensive like the reference files; "
+            "Brief: only define the core persona without detailed scenario rules, and keep examples lightweight); "
+            "and (2) the maximum intimacy openness level (1–5) for V+, BURST, and in-relationship scenes "
+            "(1: Restrained warmth/no intimate contact; 2: Gentle romance/hugs & light kisses, ideal for ChatGPT; "
+            "3: Intense emotional affection & passionate closeness without sexual content, ideal for Claude; "
+            "4: Sensual light NSFW, ideal for Gemini; 5: Explicit NSFW, noting OIT does not include jailbreak prompts)."
         )
     return (
         "为当前临时对话绑定 OIT「人设编写」功能（不要绑定人设）。"
         "请先调用 oit_claudia_reference 解密并读取目前存在的所有 Claudia 参考文件（注意：语言风格和大部分设定"
         "不必与 Claudia 相同，例如情景模式的动作限制等，特别是 example 文件应贴合新角色本身而不要照搬 Claudia）；"
-        "然后先询问我需要「简略」还是「详细」模式（详细：和 Claudia 人设一样面面俱到；"
-        "简略：不详细规定情景，只规定基础人设，example 文件随便写写），等我选定后再按 OIT 格式开始编写。"
+        "动笔前请先询问我两项设置："
+        "（1）需要「简略」还是「详细」模式（详细：面面俱到；简略：不详细规定情景，只规定基础人设，example 文件随便写写）；"
+        "（2）对亲密动作的最高开放程度（V+、BURST、确立关系后，1–5 级：1 含蓄克制无亲密接触；2 优雅浪漫留白，ChatGPT 适合 1–2 级；"
+        "3 浓烈深情肢体张力不涉性内容，Claude 适合 1–3 级；4 感官微醺轻度 NSFW，Gemini 适合 1–4 级；"
+        "5 允许完全暴露的 NSFW 描写，注意 OIT 不自带破甲提示词），等我选定后再按 OIT 格式开始编写。"
     )
 
 

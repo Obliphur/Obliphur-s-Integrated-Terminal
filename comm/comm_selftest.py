@@ -1981,17 +1981,26 @@ def _selftest():
     assert read_profile(psf, "甲.txt") == ""
 
     from comm import comm_author
+    assert len(comm_author.INTIMACY_LEVELS) == 5
+    for lv_idx, lv in enumerate(comm_author.INTIMACY_LEVELS, start=1):
+        assert lv.level == lv_idx
+        for forbidden in ("Claudia", "Charlotte", "Gemina"):
+            assert forbidden not in lv.title and forbidden not in lv.description and forbidden not in lv.model_fit
+    assert "破甲提示词" in comm_author.intimacy_level_info(5).description
+    assert all(m in comm_author.INTIMACY_MODEL_SUMMARY for m in ("Claude", "ChatGPT", "Gemini"))
+
     def fake_author(_profile, system, messages, **_kw):
-        assert "编写助手" in system
+        assert "编写助手" in system and "intimacy_level" in system
         body = messages[0]["content"]
         assert BUILTIN_PERSONAS[DEFAULT_PERSONA] in body and prefix_prompt() in body
         assert "学习大提琴" in body and "手写标记" not in body
+        assert '"intimacy_level": 4' in body and "轻度 NSFW" in body
         return '{"persona":"你是乙","templates":"生效规则","profile":"AI 简介"}'
 
     model = {"base_url": "https://example.com", "model": "test", "api_key": "k"}
-    auto = comm_author.generate(model, "丙", "学习大提琴", "", chat=fake_author)
+    auto = comm_author.generate(model, "丙", "学习大提琴", "", chat=fake_author, intimacy_level=4)
     assert auto.profile == "AI 简介"
-    manual = comm_author.generate(model, "丁", "学习大提琴", "手写标记", chat=fake_author)
+    manual = comm_author.generate(model, "丁", "学习大提琴", "手写标记", chat=fake_author, intimacy_level=4)
     saved = comm_author.save(psf, "丁", manual)
     assert saved in list_personas(psf) and read_profile(psf, saved) == "手写标记"
     packed = persona_system(psf, saved)

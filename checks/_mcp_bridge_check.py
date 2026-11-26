@@ -1063,15 +1063,20 @@ def main():
         assert "oit_claudia_reference" in takeover_feature_prompt("persona", en=False)
         assert "简略" in takeover_feature_prompt("persona", en=False) and "详细" in takeover_feature_prompt("persona", en=False)
         assert "Brief" in takeover_feature_prompt("persona", en=True) and "Detailed" in takeover_feature_prompt("persona", en=True)
+        assert "破甲提示词" in takeover_feature_prompt("persona", en=False)
+        assert "jailbreak prompts" in takeover_feature_prompt("persona", en=True)
         assert "萌娘百科" in takeover_feature_help_text("persona", en=False)
         assert "Moegirlpedia" in takeover_feature_help_text("persona", en=True)
 
-        # 10a. API 版 5 文件人设生成、修改与保存验证
+        # 10a. API 版 5 文件人设生成、修改与保存验证（含 5 级亲密动作开放度）
         from comm import comm_author
+        assert len(comm_author.INTIMACY_LEVELS) == 5
+        assert comm_author.intimacy_level_info(0).level == 1 and comm_author.intimacy_level_info(99).level == 5
         fake_prof = {"provider": "openai", "protocol": "openai", "api_key": "sk-test", "base_url": "https://api.example.com/v1", "model": "gpt-4o"}
         def _fake_chat(_prof, _sys, msgs, **_kw):
             payload = msgs[-1]["content"]
             assert "OIT-PERSONA-ENC:" not in payload, "发给 API 的 Claudia 参考必须已解密"
+            assert '"intimacy_level": 2' in payload and "优雅浪漫" in payload
             if "revision_instruction" in payload:
                 return json.dumps({
                     "persona": "修改后的主人设", "background": "修改后的背景",
@@ -1083,9 +1088,9 @@ def main():
                 "example": "用户：你好\n角色：你好呀。", "templates": "",
                 "profile": "初始简介",
             }, ensure_ascii=False)
-        d0 = comm_author.generate(fake_prof, "测试角色五件套", "轻松温柔", "", chat=_fake_chat, mode="brief", folder=personas_dir)
+        d0 = comm_author.generate(fake_prof, "测试角色五件套", "轻松温柔", "", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=2)
         assert d0.persona == "初始主人设" and d0.background == "初始背景" and d0.example
-        d1 = comm_author.revise(fake_prof, "测试角色五件套", d0, "把语气改得更活泼", chat=_fake_chat, mode="brief", folder=personas_dir)
+        d1 = comm_author.revise(fake_prof, "测试角色五件套", d0, "把语气改得更活泼", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=2)
         assert d1.persona == "修改后的主人设" and d1.templates
         saved_base = comm_author.save(personas_dir, "测试角色五件套", d1)
         assert saved_base == "测试角色五件套.txt"

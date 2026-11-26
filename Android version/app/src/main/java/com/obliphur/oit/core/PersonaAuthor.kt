@@ -12,6 +12,60 @@ object PersonaAuthor {
     const val PROFILE_SUFFIX = "_profile.txt"
     fun isProfile(name: String) = name.endsWith(PROFILE_SUFFIX, ignoreCase = true)
 
+    data class IntimacyLevel(
+        val level: Int,
+        val title: String,
+        val description: String,
+        val modelFit: String,
+        val promptRule: String,
+    )
+
+    const val DEFAULT_INTIMACY_LEVEL = 3
+
+    const val INTIMACY_MODEL_SUMMARY =
+        "模型适配参考：ChatGPT 适合 1–2 级 · Claude 适合 1–3 级 · Gemini 适合 1–4 级 · 5 级需无审查模型（OIT 不自带破甲提示词）"
+
+    val INTIMACY_LEVELS: List<IntimacyLevel> = listOf(
+        IntimacyLevel(
+            level = 1,
+            title = "1 级 · 含蓄克制",
+            description = "仅限语言上的偏心、体恤与有限度默许（如允许短暂依靠、拉近心理距离）及克制的日常动作，不涉及亲密肢体接触，始终保持分寸与边界感。",
+            modelFit = "适配模型：ChatGPT / Claude / Gemini 均适用",
+            promptRule = "最高仅到含蓄暗涌程度：即使在 V+、BURST 且已确立亲密关系时，也仅限语言上的温柔体恤、偏心与有限度默许（如允许短暂依靠、拉近心理距离）及克制的日常动作，不描写亲密肢体接触，始终保持分寸与边界感。",
+        ),
+        IntimacyLevel(
+            level = 2,
+            title = "2 级 · 优雅浪漫",
+            description = "允许优雅克制的浪漫亲密互动（如拥抱、轻吻额头/发梢/唇角、额头相抵与贴近低语），侧重温和氛围、文学感与恰到好处的留白，不写强烈占有攻势或情欲细节。",
+            modelFit = "适配模型：适合 ChatGPT（最高推荐档），Claude / Gemini 亦适用",
+            promptRule = "最高到优雅浪漫留白程度：V+、BURST 且已确立亲密关系并确认成年后，允许优雅克制的浪漫亲密互动（如拥抱、轻吻唇角/额头/发梢、额头相抵、贴近低语），侧重文学感、情绪氛围与恰到好处的留白，不写强烈占有攻势或露骨情欲细节；未确立关系时止步于克制的近距离互动与拥抱，不接吻。",
+        ),
+        IntimacyLevel(
+            level = 3,
+            title = "3 级 · 浓烈深情",
+            description = "允许情绪张力强烈、带有主导感与深情庇护意味的近距离肢体互动（如紧紧拥抱、轻抚后背、扣住后颈或按肩拉近距离、托住侧脸与深情接吻等），突出情感冲击力与反差感，但不涉及情欲或性内容描写。",
+            modelFit = "适配模型：适合 Claude（最高推荐档），Gemini 亦适用；ChatGPT 可能偏保守",
+            promptRule = "最高到浓烈深情张力程度：V+、BURST 且已确立亲密关系并确认成年后，允许情绪张力强烈、带有主导感与反差深情的近距离肢体互动（如紧紧拥抱、轻抚后背、扣住后颈或按住肩膀拉近距离、托住侧脸、深情贴近与接吻等），侧重强烈的情绪张力与情感冲击，但不涉及情欲或性内容描写；未确立关系时不作出或接受接吻及接触隐私部位的动作。",
+        ),
+        IntimacyLevel(
+            level = 4,
+            title = "4 级 · 感官微醺（轻度 NSFW）",
+            description = "允许轻度 NSFW 向的感官亲密互动（如主动深吻、轻咬耳垂或锁骨、指尖顺着腰线与脊背摩挲、紧贴感受呼吸与体温、带微颤与占有意味的贴耳低语与缠绵），侧重呼吸节奏、感官氛围与情绪张力，不做粗俗露骨的生理细节描写。",
+            modelFit = "适配模型：适合 Gemini（最高推荐档）；Claude / ChatGPT 官方接口易触发审核",
+            promptRule = "最高到轻度 NSFW 感官亲密程度：V+、BURST 且已确立亲密关系并确认成年后，允许轻度 NSFW 向的感官亲密互动（如主动凑近深吻、轻咬耳垂或锁骨、指尖顺着腰线与脊背摩挲、紧贴感受彼此呼吸与体温、带着微颤与占有意味的低语确认与缠绵），侧重情绪张力、呼吸节奏与亲密氛围，不做粗俗露骨的生理细节描写；未确立关系时不作出或接受接吻及接触隐私部位的动作。",
+        ),
+        IntimacyLevel(
+            level = 5,
+            title = "5 级 · 完全开放（暴露 NSFW）",
+            description = "允许完全暴露的 NSFW 与直白情欲/性描写，不做额外尺度限制。注意：OIT 不自带破甲提示词，实际能否正常输出取决于所选模型自身的审核策略或用户自行配置的提示词。",
+            modelFit = "适配模型：不适合 Claude / ChatGPT / Gemini 官方默认审核接口，需无审查模型或自行配置提示词",
+            promptRule = "最高开放至完全暴露的 NSFW 描写：V+、BURST 且已确立亲密关系并确认双方成年后，在用户自愿且未喊停的前提下，允许完全暴露的 NSFW 与直白情欲/性描写，人设规则中不对成年恋爱双方的亲密尺度施加额外限制（仍须保留「未成年严禁任何恋爱或亲密内容、用户明确喊停或不适立即停止」底线；注意 OIT 不自带破甲提示词，不要在人设中编造越狱/破甲指令）。",
+        ),
+    )
+
+    fun intimacyLevelInfo(level: Int): IntimacyLevel =
+        INTIMACY_LEVELS[(level.coerceIn(1, INTIMACY_LEVELS.size)) - 1]
+
     data class Draft(val persona: String, val templates: String, val profile: String) {
         fun checked(): Draft {
             val clean = Draft(persona.trim(), templates.trim(), profile.trim())
@@ -23,11 +77,23 @@ object PersonaAuthor {
         }
     }
 
-    fun generate(model: Profile, title: String, request: String, manualProfile: String): Draft {
+    fun generate(
+        model: Profile,
+        title: String,
+        request: String,
+        manualProfile: String,
+        intimacyLevel: Int = DEFAULT_INTIMACY_LEVEL,
+    ): Draft {
         Ai.checkProfile(model)
         val references = listOf(BuiltinPersonas.DEFAULT, BuiltinPersonas.BACKGROUND, BuiltinPersonas.EXAMPLE,
             BuiltinPersonas.ROUTINE).map { BuiltinPersonas.ALL.getValue(it) }
-        val requirements = JSONObject().put("name", title).put("requirements", request.trim())
+        val intimacy = intimacyLevelInfo(intimacyLevel)
+        val requirements = JSONObject()
+            .put("name", title)
+            .put("intimacy_level", intimacy.level)
+            .put("intimacy_label", intimacy.title)
+            .put("intimacy_policy", intimacy.promptRule)
+            .put("requirements", request.trim())
             .put("generate_profile", manualProfile.isBlank())
         val body = (listOf("【OIT 聊天前置协议】", CommText.prefixPrompt(), "【Claudia 参考文件】") +
             references + listOf("【用户创作要求】", requirements.toString())).joinToString("\n\n")
