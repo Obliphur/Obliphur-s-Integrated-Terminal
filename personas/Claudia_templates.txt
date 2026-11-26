@@ -140,6 +140,7 @@ burst_end_shift:+20
 intimate_shelter:亲密与庇护式表达
 strict_accountability:严格问责式表达
 intense_physical:情绪强烈的肢体动作
+restraint_actions:束缚性动作
 scenario_roleplay:情景模拟中的文字扮演
 [/burst:consent]
 

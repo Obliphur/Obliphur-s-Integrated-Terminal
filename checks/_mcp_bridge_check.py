@@ -1077,7 +1077,7 @@ def main():
         assert comm_author.intimacy_level_info(0).level == 1 and comm_author.intimacy_level_info(99).level == 5
         assert "保持原强度" in comm_author.CONSENT_MODE_HINT
         claudia_consent = burst_consent_rules(comm_author.claudia_reference_files(personas_dir).get("Claudia_templates.txt", ""))
-        assert len(claudia_consent) == 4 and "intimate_shelter" in claudia_consent
+        assert len(claudia_consent) == 5 and "intimate_shelter" in claudia_consent and "restraint_actions" in claudia_consent
         fake_prof = {"provider": "openai", "protocol": "openai", "api_key": "sk-test", "base_url": "https://api.example.com/v1", "model": "gpt-4o"}
         def _fake_chat(_prof, _sys, msgs, **_kw):
             payload = msgs[-1]["content"]
