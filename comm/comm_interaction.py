@@ -510,6 +510,57 @@ class InteractionMixin:
         if special and (burst or d["tension"] > config.COMM_TENSION_CAP):
             self._interaction_reply(True, True, int(status["end"].timestamp() * 1000))
 
+    def apply_room_action_vt(self, actor_id: str, actions: list[dict]) -> tuple[float, float]:
+        """小屋动作结算 Valence(V) 与 Tension(T)，复用冷却/连锁/时段/爆发倍率并自动持久化同步。"""
+        if not actor_id or not actions:
+            return 0.0, 0.0
+        from comm.comm_persona import pid_of
+        from comm.comm_room import room_action_vt
+
+        pid = pid_of(actor_id)
+        d = self._interaction_prepare(pid)
+        now_ms = self._ms()
+        before_v = float(d["valence"])
+        before_t = float(d["tension"])
+
+        status = self.other_status() if pid == self.pid else None
+        special = self._interaction_special(status) if status is not None else False
+        burst_before = d["tension"] > config.COMM_TENSION_CAP
+        burst_rate = self._interaction_burst_rules_for(pid).get("burst_rate", 1.0)
+
+        # 同一回合相同条件取最大基础增量，避免重复刷同一条件
+        t_by_cond: dict[str, int] = {}
+        v_by_cond: dict[str, int] = {}
+        for act in actions:
+            cond, v_base, t_base = room_action_vt(act.get("part", ""), bool(act.get("secret", False)))
+            if not cond:
+                continue
+            if t_base > t_by_cond.get(cond, 0):
+                t_by_cond[cond] = t_base
+            if v_base > v_by_cond.get(cond, 0):
+                v_by_cond[cond] = v_base
+
+        if not t_by_cond and not v_by_cond:
+            return 0.0, 0.0
+
+        for cond, base in sorted(t_by_cond.items(), key=lambda kv: -kv[1]):
+            repeat, until = condition_repeat_rate(d["gain_cooldowns"], cond, now_ms)
+            gain = int(base * repeat * (1.0 if special else config.COMM_TENSION_DAILY_RATE))
+            d["gain_cooldowns"][cond] = until
+            if gain > 0:
+                interaction_add(d, cond, gain, now_ms)
+
+        if v_by_cond:
+            v_events = sorted(v_by_cond.items(), key=lambda kv: -kv[1])
+            interaction_valence_add(d, v_events, burst_rate, now_ms, sleep=False)
+
+        self._interaction_set(d, pid)
+        if special and status and (burst_before or d["tension"] > config.COMM_TENSION_CAP):
+            end_dt = status.get("end")
+            if end_dt is not None:
+                self._interaction_reply(True, True, int(end_dt.timestamp() * 1000), pid=pid)
+        return round(float(d["valence"]) - before_v, 2), round(float(d["tension"]) - before_t, 2)
+
     def _interaction_judge_note(self, kind):
         d = self._interaction_prepare()
         self._interaction_candidates = [(m["uid"], d["pending"][m["uid"]], m["text"], m["uid"] in d["pending_sleep"])

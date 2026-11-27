@@ -509,6 +509,8 @@ class RoomPage(tk.Frame):
             err = self.store.hold_hand(free[0], actor_id, actor_name, msg_count=self.total_msgs_with(actor_id))
             if err:
                 return {"ok": False, "toast": tr(err), "warn": True}
+            if self.comm and hasattr(self.comm, "apply_room_action_vt"):
+                self.comm.apply_room_action_vt(actor_id, [{"part": "牵手带走", "secret": False}])
             self._notify_room_action_change()
             return {
                 "ok": True,
@@ -1510,6 +1512,14 @@ class RoomPage(tk.Frame):
                               "action" if actions and not text else "say", text,
                               actions=actions, volume=volume, pos=self.store.position_of("user"))
         self.store.reset_turn_hands(save=True)
+        if actions and self.comm and hasattr(self.comm, "apply_room_action_vt"):
+            by_target: dict[str, list[dict]] = {}
+            for a in actions:
+                tid = str(a.get("target_id") or "")
+                if tid and tid != "user" and a.get("part") != "设施":
+                    by_target.setdefault(tid, []).append(a)
+            for tid, t_acts in by_target.items():
+                self.comm.apply_room_action_vt(tid, t_acts)
         self.refresh()
 
         occ_npcs = [aid for aid in self.store.occupants_in(room_id) if aid != "user"]

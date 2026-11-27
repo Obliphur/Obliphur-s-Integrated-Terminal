@@ -56,6 +56,38 @@ BODY_PARTS = (
 )
 
 
+# 小屋互动动作对应的基础 (Valence 效价, Tension 张力) 数值与冷却条件键
+# 实际结算时会走 OIT 原生的冷却递减、连锁倍率、时段倍率与爆发倍率
+ROOM_ACTION_VT: dict[str, tuple[str, int, int]] = {
+    "目光注视": ("room_gaze", 2, 2),
+    "衣袖 / 衣角": ("room_sleeve", 3, 3),
+    "肩膀": ("room_shoulder", 3, 4),
+    "手掌 / 指尖": ("room_hand", 5, 6),
+    "牵手带走": ("room_hold", 5, 6),
+    "手臂 / 手腕": ("room_wrist", 4, 6),
+    "头顶 / 发丝": ("room_head", 6, 5),
+    "脸颊": ("room_cheek", 7, 9),
+    "耳畔": ("room_ear", 6, 12),
+    "后背 / 腰侧": ("room_waist", 7, 11),
+    "拥抱 / 拉近": ("room_hug", 9, 10),
+    "靠在墙边拉近距离": ("room_lean_wall", 5, 10),
+    "按在墙上 / 抵在墙边": ("room_pin_wall", 4, 15),
+    "坐到身旁 / 腿上": ("room_sit_close", 8, 12),
+    "按在椅子上": ("room_pin_chair", 4, 14),
+}
+
+
+def room_action_vt(part: str, secret: bool = False) -> tuple[str, int, int]:
+    """返回小屋动作的 (条件键, 基础 V 增量, 基础 T 增量)；设施互动不产生 V/T。"""
+    clean = str(part or "").strip()
+    if not clean or clean == "设施":
+        return "", 0, 0
+    cond, v, t = ROOM_ACTION_VT.get(clean, ("room_custom", 6, 10))
+    if secret:
+        t += 3
+    return cond, v, t
+
+
 def display_width(text: str) -> int:
     """按 Windows 等宽字体 (NSimSun) 规则计算显示列宽：W/F/A（含汉字与框线）占 2 列，其余占 1 列。"""
     w = 0
@@ -1054,8 +1086,6 @@ class RoomStore:
             if not ok:
                 return tr("「{part}」暂未解锁，再多聊一些吧。", part=clean_part)
         clean_text = str(text or "").strip()[:300]
-        if not clean_text:
-            return "请输入互动内容"
 
         # 自由或握住状态的手安排新动作时自动脱离原握持；左手、右手、目光各自独立且可同时共存
         if channel == "gaze":

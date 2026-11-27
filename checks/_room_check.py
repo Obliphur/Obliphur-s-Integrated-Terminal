@@ -123,6 +123,7 @@ def main():
         assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "脸颊", "轻碰", msg_count=30) != ""
         assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "肩膀", "轻轻拍了拍", msg_count=30) == ""
         assert store.queue_hand_action("right", "Claudia.txt", "Claudia", "衣袖 / 衣角", "拉一下", msg_count=30) == ""
+        assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "目光注视", "", msg_count=0) == "", "动作互动内容允许留空"
         assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "目光注视", "安静地看着她", msg_count=0) == ""
         assert [a["hand"] for a in store.pending_actions] == ["left", "right", "gaze"], "左手、右手、目光注视应各自独立并可同时共存"
         assert store.queue_hand_action("both", "Claudia.txt", "Claudia", "肩膀", "双手", msg_count=30) != "", "已移除双手选项"
@@ -199,6 +200,15 @@ def main():
         g_acts = [a["text"] for e in store.visible_logs_for("Gemina.txt", c_rid) for a in e.get("actions") or []]
         assert "公开拍拍肩" in c_acts and "桌下偷偷勾手指" in c_acts
         assert "公开拍拍肩" in g_acts and "桌下偷偷勾手指" not in g_acts, "公开动作应全房可见，隐秘接触旁人不可见"
+
+        # 动作产生 V / T 数值（设施不产生，隐秘接触张力更高）
+        from comm.comm_room import room_action_vt
+        assert room_action_vt("设施") == ("", 0, 0)
+        c_gaze, v_gaze, t_gaze = room_action_vt("目光注视")
+        c_ear, v_ear, t_ear = room_action_vt("耳畔", secret=False)
+        _, _, t_ear_sec = room_action_vt("耳畔", secret=True)
+        assert c_gaze and v_gaze > 0 and t_gaze > 0
+        assert t_ear > t_gaze and t_ear_sec > t_ear
 
         # 6. AI 建房与自主行动 / silent 回复解析
         gen = parse_generated_room('{"name":"旧书店","ascii_map":["┌──[书架]──┐","└──[门]──┘"]}', "书店")

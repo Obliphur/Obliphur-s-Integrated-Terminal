@@ -1244,9 +1244,10 @@ async function openActorModal(actorId, actorName) {
 
     const tLbl = document.createElement("div");
     tLbl.className = "field-label";
-    tLbl.textContent = "输入具体互动文本：";
+    tLbl.textContent = "输入具体互动文本（可留空）：";
     textArea = document.createElement("textarea");
     textArea.className = "textarea";
+    textArea.placeholder = "可留空，直接按所选部位互动…";
     body.append(tLbl, textArea);
     setTimeout(() => textArea.focus(), 30);
   }, [
@@ -1328,7 +1329,7 @@ function openFacilityModal(hs) {
 
     textArea = document.createElement("textarea");
     textArea.className = "textarea";
-    textArea.placeholder = "输入互动动作…";
+    textArea.placeholder = "输入互动动作（可留空）…";
     body.appendChild(textArea);
     setTimeout(() => textArea.focus(), 30);
   }, [
