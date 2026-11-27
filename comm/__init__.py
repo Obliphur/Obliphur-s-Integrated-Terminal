@@ -51,7 +51,7 @@ from .comm_builtin import (
 )
 from .comm_persona import is_profile_name, profile_files, other_profiles_text
 from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, MENTAL_WORDS, mental_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
-from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
+from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, read_persona_rules, read_persona_prompt, import_persona
 
 from .comm_const import *
 from .comm_rules import typing_delay_rules
@@ -1505,7 +1505,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
 
     # ---- 发消息 ----
     def _typing_delay(self, text: str, persona: str = None) -> float:
-        ov_char, ov_cjk = typing_delay_rules(read_persona_full(self.personas, persona or self.persona_name()))
+        ov_char, ov_cjk = typing_delay_rules(read_persona_rules(self.personas, persona or self.persona_name()))
         return char_delay(text, CHAR_DELAY if ov_char is None else ov_char, CHAR_DELAY_CJK if ov_cjk is None else ov_cjk)
 
     def _mk(self, role: str, text: str, api: str = "", delay: bool = False, persona=None) -> dict:

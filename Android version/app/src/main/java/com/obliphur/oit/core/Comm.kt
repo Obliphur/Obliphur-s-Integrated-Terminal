@@ -3287,9 +3287,9 @@ class Comm(
     }
     private fun musicDiscourtesy(): Boolean {
         if (!com.obliphur.oit.OitApp.isInitialized() || !personaTitle(personaName()).equals("Claudia", true) || !musicPlayback.playing) return false
-        val rule = CommRules.valence(readPersonaFull(personaName()))["music_discourtesy"] ?: return false
+        val rule = CommRules.valence(readPersonaRules(personaName()))["music_discourtesy"] ?: return false
         interactionSet(interactionPrepare().addValence(listOf("music_discourtesy" to (rule.first ?: -40)), nowMs(),
-            CommRules.valenceBurst(readPersonaFull(personaName())).rate))
+            CommRules.valenceBurst(readPersonaRules(personaName())).rate))
         return true
     }
     companion object {
@@ -4619,7 +4619,7 @@ class Comm(
         val batch = memDelta().take(MEM_EVERY)
         val memory = memoryBlock(includeLive = false).trim().ifEmpty { "(空)" }
         val zone = java.time.ZoneId.systemDefault()
-        val personaText = clipMessage(CommText.nativePersonaText(readPersonaFull(personaName())), 8000)
+        val personaText = clipMessage(CommText.nativePersonaText(readPersona(personaName())), 8000)
         val body = "当前时间: ${CommText.stamp(now())}\n\n对方的人设 (只用来判断哪些内容该长期保留 / 不能清除, 不要抄进记忆卡):\n$personaText\n\n现有记忆卡:\n$memory\n\n最近一段对话 (每条前面是发送时间):\n" + batch.joinToString("\n") {
             "[${CommText.stamp(java.time.Instant.ofEpochMilli(it.ts).atZone(zone).toLocalDateTime())}] " +
                 (if (it.role == "me") "用户: " else "对方: ") + clipMessage(it.api.ifEmpty { it.text }, 1500)
@@ -4725,7 +4725,51 @@ class Comm(
 
     fun readRoutine(name: String): String = routineNameOf(name).let { if (it.isEmpty()) "" else readPersona(it) }
 
-    /** 发给模型的人设: 人设本体 + 它所有的配套文件 (背景 / 日程 ...), 按文件名顺序合并成一份. */
+    private fun isTemplateCompanion(baseName: String, companionName: String): Boolean {
+        if (companionName.isEmpty()) return false
+        val rn = routineNameOf(baseName)
+        if (rn.isNotEmpty() && companionName.equals(rn, ignoreCase = true)) return true
+        val stem = companionName.substringBeforeLast('.').lowercase()
+        val baseStem = baseName.substringBeforeLast('.').lowercase()
+        return stem == baseStem + ROUTINE_SUFFIX || stem == baseStem + "_routine"
+    }
+
+    /** 发给模型的人设正文：主人设 + 非模板配套文件（背景 / 范例等），排除 _templates/_routine 并剥离单文件机读块。 */
+    fun readPersonaPrompt(name: String): String {
+        if (PersonaAuthor.isProfile(name)) return ""
+        val comps = companionsOf(name).filterNot { isTemplateCompanion(name, it) }
+        val merged = (listOf(readPersona(name)) + comps.map { readPersona(it) }).filter { it.isNotEmpty() }.joinToString("\n\n")
+        return stripMachineTemplateBlocks(merged)
+    }
+
+    private val rulesCache = HashMap<String, Pair<String, String>>()
+
+    private fun fileSig(fname: String): String {
+        if (fname.isEmpty()) return ""
+        val f = File(personas, fname)
+        return if (f.isFile) "$fname:${f.lastModified()}:${f.length()}" else "$fname:0:0"
+    }
+
+    /** 供 OIT 程序解析声明式规则的专用读取（带 mtime/size 缓存）：只读主人设与 _templates/_routine，跳过范例与背景文件。 */
+    fun readPersonaRules(name: String): String {
+        if (name.isEmpty() || name != File(name).name || PersonaAuthor.isProfile(name)) return ""
+        val rn = routineNameOf(name)
+        val sig = "${fileSig(name)}|${fileSig(rn)}"
+        synchronized(rulesCache) {
+            rulesCache[name]?.let { if (it.first == sig) return it.second }
+        }
+        val parts = ArrayList<String>(2)
+        readPersona(name).takeIf { it.isNotEmpty() }?.let { parts += it }
+        if (rn.isNotEmpty()) readPersona(rn).takeIf { it.isNotEmpty() }?.let { parts += it }
+        val merged = parts.joinToString("\n\n")
+        synchronized(rulesCache) {
+            if (rulesCache.size > 64) rulesCache.clear()
+            rulesCache[name] = sig to merged
+        }
+        return merged
+    }
+
+    /** 完整人设合集: 人设本体 + 它所有的配套文件 (背景 / 范例 / 模板 ...), 按文件名顺序合并. */
     fun readPersonaFull(name: String): String =
         if (PersonaAuthor.isProfile(name)) "" else
             (listOf(readPersona(name)) + companionsOf(name).map { readPersona(it) }).filter { it.isNotEmpty() }.joinToString("\n\n")
@@ -4767,18 +4811,18 @@ class Comm(
     private fun stripMachineTemplateBlocks(text: String): String {
         if (text.isEmpty()) return ""
         val blocks = listOf(
-            "shift", "condition", "condition:strict", "valence:events", "valence:initial",
-            "scenario", "valence:burst", "burst:consent", "tension:events", "tension:relationship",
-            "life:arcs", "trend", "callback", "anti_repeat", "typing"
+            "shift", "condition", "condition:strict", "tension", "valence",
+            "valence:events", "valence:initial", "scenario", "valence:burst", "burst:consent",
+            "tension:events", "tension:relationship", "life:arcs", "trend", "callback", "anti_repeat", "typing"
         ).joinToString("|") { Regex.escape(it) }
         val re = Regex("(?ms)^\\[(?:$blocks)\\][^\\n]*\\n.*?^\\[/(?:$blocks)\\][^\\n]*\\n?")
         return re.replace(text, "").replace(Regex("\\n{3,}"), "\n\n").trim()
     }
 
-    /** 发给模型的system：公共工具协议、人设文件前固定说明、剥离纯机读模板块后的人设正文与其他人设的公开简介。 */
+    /** 发给模型的system：公共工具协议、人设文件前固定说明、排除模板文件并剥离机读块后的人设正文与其他人设的公开简介。 */
     private fun systemFor(name: String): String {
         val head = systemHead(name)
-        var body = stripMachineTemplateBlocks(CommText.nativePersonaText(readPersonaFull(name)))
+        var body = CommText.nativePersonaText(readPersonaPrompt(name))
         val others = otherProfilesText(name)
         if (others.isNotEmpty()) body = if (body.isNotEmpty()) "$body\n\n$others" else others
         return (if (head.isEmpty()) "" else head + "\n") + CommText.PERSONA_HEAD + body
@@ -5338,7 +5382,7 @@ class Comm(
 
     fun shiftAsking(): Boolean = shiftAskPid.isNotEmpty() && shiftAskPid == pid
 
-    fun shiftRange(): Pair<Int, Int>? = CommRules.shiftRange(readPersonaFull(personaName()))
+    fun shiftRange(): Pair<Int, Int>? = CommRules.shiftRange(readPersonaRules(personaName()))
 
     /** 用户请求把对方的日程起点平移到 minutes (从 0:00 起的分钟). 返回 "" = 已发出请求 (等对方回复), 否则是原因. */
     @Synchronized
@@ -5927,7 +5971,7 @@ class Comm(
 
     /** 结算真实完成奖励，按联合行动对象入账，不走模型条件冷却。 */
     private fun interactionJointCompleted(owner: String, name: String) {
-        val gain = CommRules.valenceEvent(readPersonaFull(name), "joint_completed")
+        val gain = CommRules.valenceEvent(readPersonaRules(name), "joint_completed")
         if (gain == 0) return
         val d = interactionPrepare(owner)
         interactionSet(d.copy(valence = (d.valence + (gain * CommOffenses.rate(d.offenses)).toInt())
@@ -5936,7 +5980,7 @@ class Comm(
 
     private fun interactionBurstEndShift(owner: String = pid): Int {
         val ownerName = listPersonas().firstOrNull { pidOf(it) == owner } ?: personaName()
-        return CommRules.valenceBurst(readPersonaFull(ownerName)).endShift
+        return CommRules.valenceBurst(readPersonaRules(ownerName)).endShift
     }
 
     private fun interactionPrepare(owner: String = pid, status: Pair<SegEntry, LocalDateTime>? = null, statusKnown: Boolean = status != null): CommInteraction {
@@ -5944,7 +5988,7 @@ class Comm(
         val now = nowMs()
         val baseline = if (old.valenceInitialSet) old.valenceInitial else {
             val ownerName = listPersonas().firstOrNull { pidOf(it) == owner } ?: ""
-            CommRules.valenceInitial(readPersonaFull(ownerName))
+            CommRules.valenceInitial(readPersonaRules(ownerName))
         }
         val initialized = old.copy(
             valence = if (old.valenceInitialized) old.valence else old.effectiveValenceBaseline(baseline),
@@ -5974,7 +6018,7 @@ class Comm(
 
     fun burstConsentItemsFor(owner: String = pid): LinkedHashMap<String, CommRules.ConsentRule> {
         val ownerName = listPersonas().firstOrNull { pidOf(it) == owner } ?: personaName()
-        return if (ownerName.isBlank()) linkedMapOf() else CommRules.burstConsentItems(readPersonaFull(ownerName))
+        return if (ownerName.isBlank()) linkedMapOf() else CommRules.burstConsentItems(readPersonaRules(ownerName))
     }
 
     fun burstConsentRulesFor(owner: String = pid): LinkedHashMap<String, String> =
@@ -6034,7 +6078,7 @@ class Comm(
         val items = JSONArray(interactionCandidates.mapIndexed { i, (uid, _, text) ->
             JSONObject().put("序号", i + 1).put("用户消息", text).put("发送时处于睡眠", uid in d.pendingSleep)
         })
-        val personaText = readPersonaFull(personaName())
+        val personaText = readPersonaRules(personaName())
         val rules = CommRules.tension(personaText)
         val relRules = CommRules.tensionRelationship(personaText)
         val isRelated = related()
@@ -6082,7 +6126,7 @@ class Comm(
                 d = d.addValence(CommInteraction.valenceEvents(reply, i + 1, interactionValenceRules), at, interactionValenceBurst.rate,
                     sleep = uid in d.pendingSleep)
                 if (uid in musicDiscourtesyUids) {
-                    val rule = CommRules.valence(readPersonaFull(personaName()))["music_discourtesy"]
+                    val rule = CommRules.valence(readPersonaRules(personaName()))["music_discourtesy"]
                     if (rule != null) d = d.addValence(listOf("music_discourtesy" to (rule.first ?: -40)), at, interactionValenceBurst.rate)
                     musicDiscourtesyUids.remove(uid)
                 }
@@ -6096,7 +6140,7 @@ class Comm(
 
     /** 按文件声明的条件与用户真实数据判定。 */
     fun conditionState(strict: Boolean = false): List<CondRow> {
-        val p = CommRules.conditions(readPersonaFull(personaName()), strict)
+        val p = CommRules.conditions(readPersonaRules(personaName()), strict)
             ?: return listOf(CondRow("!", tr("条件模板缺失或格式错误"), "", "", false))
         val t = now()
         val today = t.toLocalDate()
@@ -6599,7 +6643,7 @@ class Comm(
     @Synchronized
     fun jointHpLost(text: String): Boolean {
         val j = curJoint()?.takeIf { it.state == "run" } ?: return false
-        val event = CommRules.event(readPersonaFull(personaName()), "joint_hp_loss")
+        val event = CommRules.event(readPersonaRules(personaName()), "joint_hp_loss")
         if (event != null) {
             val d = interactionPrepare()
             val base = event.second
@@ -7141,7 +7185,7 @@ class Comm(
     private fun add(role: String, text: String, api: String = ""): ChatMsg = mk(role, text, api, true).also { messages.add(it) }
 
     private fun typingDelayOf(text: String, persona: String = personaName()): Double {
-        val ov = CommRules.typingDelay(readPersonaFull(persona))
+        val ov = CommRules.typingDelay(readPersonaRules(persona))
         return charDelayOf(text, ov.char ?: charDelay, ov.cjk ?: charDelayCjk)
     }
 
@@ -7987,7 +8031,7 @@ class Comm(
         val d = interactionPrepare()
         interactionTurn = InteractionTurn(specialPeriod(status),
             status?.second?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L, d.shameTurns > 0)
-        val personaText = readPersonaFull(personaName())
+        val personaText = readPersonaRules(personaName())
         val rNote = CommRealism.realismNote(
             personaText, personaName(), now().toLocalDate(),
             messages.filter { it.role == "ai" && !it.hold && it.pendingReply == null }.map { it.text },
@@ -8739,7 +8783,7 @@ class Comm(
         val status = statusFor(now(), ctx)
         val d = interactionPrepare(ctx.pid)
         val ctxOwnerName = listPersonas().firstOrNull { pidOf(it) == ctx.pid } ?: personaName()
-        val ctxPersonaText = readPersonaFull(ctxOwnerName)
+        val ctxPersonaText = readPersonaRules(ctxOwnerName)
         val ctxRNote = CommRealism.realismNote(
             ctxPersonaText, ctxOwnerName, now().toLocalDate(),
             ctx.st.messages.filter { it.role == "ai" && !it.hold && it.pendingReply == null }.map { it.text },

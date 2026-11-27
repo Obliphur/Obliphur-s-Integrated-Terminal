@@ -213,7 +213,7 @@ class FlowMixin:
             who = "用户" if m.get("role") == "me" else "对方"
             when = stamp(datetime.fromtimestamp(int(m.get("ts") or 0) / 1000))
             lines.append(f"[{when}] {who}: {clip_message(str(m.get('api') or m.get('text') or ''), 1500)}")
-        persona = clip_message(native_persona_text(read_persona_full(self.personas, self.persona_name())), 8000)
+        persona = clip_message(native_persona_text(read_persona(self.personas, self.persona_name())), 8000)
         body = (f"当前时间: {stamp(self.now())}\n\n对方的人设 (只用来判断哪些内容该长期保留 / 不能清除, 不要抄进记忆卡):\n{persona}\n\n现有记忆卡:\n" + memory + "\n\n最近一段对话 (每条前面是发送时间):\n" + "\n".join(lines))
         upto = int(batch[-1].get("ts") or 0)
         pid = self.pid
@@ -310,7 +310,7 @@ class FlowMixin:
             who = "用户" if m.get("role") == "me" else "对方"
             when = stamp(datetime.fromtimestamp(int(m.get("ts") or 0) / 1000))
             lines.append(f"[{when}] {who}: {clip_message(str(m.get('text') or ''), 800)}")
-        persona = clip_message(native_persona_text(read_persona_full(self.personas, self.persona_name())), 6000)
+        persona = clip_message(native_persona_text(read_persona(self.personas, self.persona_name())), 6000)
         auto = str(self.cfg.get("mem_auto") or "").strip() or "(空)"
         live = str(self.cfg.get("mem_live") or "").strip() or "(空)"
         body = (

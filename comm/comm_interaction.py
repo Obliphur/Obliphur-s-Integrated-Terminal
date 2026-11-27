@@ -350,8 +350,8 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=Fa
 class InteractionMixin:
     def _interaction_joint_completed(self, pid, name):
         """结算真实完成奖励，按联合行动对象入账，不走模型条件冷却。"""
-        from comm.comm_persona import read_persona_full
-        gain = valence_event(read_persona_full(self.personas, name), "joint_completed")
+        from comm.comm_persona import read_persona_rules
+        gain = valence_event(read_persona_rules(self.personas, name), "joint_completed")
         if not gain:
             return
         d = self._interaction_prepare(pid)
@@ -362,8 +362,8 @@ class InteractionMixin:
         from .comm_util import is_claudia
         if not is_claudia(self.persona_name()) or not self.music_player.is_playing:
             return False
-        from comm.comm_persona import read_persona_full
-        persona = read_persona_full(self.personas, self.persona_name())
+        from comm.comm_persona import read_persona_rules
+        persona = read_persona_rules(self.personas, self.persona_name())
         condition = "music_discourtesy"
         rules = valence_rules(persona)
         if condition not in rules:
@@ -465,9 +465,9 @@ class InteractionMixin:
         original = dict(d)
         now_ms = self._ms()
         if not d["valence_initial_set"] or not d["valence_initialized"]:
-            from comm.comm_persona import list_personas, pid_of, read_persona_full
+            from comm.comm_persona import list_personas, pid_of, read_persona_rules
             owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == pid), "")
-            baseline = valence_initial(read_persona_full(self.personas, owner_name))
+            baseline = valence_initial(read_persona_rules(self.personas, owner_name))
         else:
             baseline = d["valence_initial"]
         d.update(valence_initial=baseline, valence_initial_set=True)
@@ -512,8 +512,8 @@ class InteractionMixin:
 
     def _interaction_violation(self):
         """真实联合行动违规直接结算，不从聊天文本推断。"""
-        from comm.comm_persona import read_persona_full
-        event = tension_event(read_persona_full(self.personas, self.persona_name()), "joint_hp_loss")
+        from comm.comm_persona import read_persona_rules
+        event = tension_event(read_persona_rules(self.personas, self.persona_name()), "joint_hp_loss")
         if event is None:
             return
         condition, base = event
@@ -537,8 +537,8 @@ class InteractionMixin:
             return "本次无需判断张力增量，不要填写oit_reply.tension。"
         items = [{"序号": i, "用户消息": text, "发送时处于睡眠": sleep}
                  for i, (_uid, _special, text, sleep) in enumerate(self._interaction_candidates, 1)]
-        from comm.comm_persona import read_persona_full
-        persona_text = read_persona_full(self.personas, self.persona_name())
+        from comm.comm_persona import read_persona_rules
+        persona_text = read_persona_rules(self.personas, self.persona_name())
         rules = tension_rules(persona_text)
         rel_rules = tension_relationship_rules(persona_text)
         is_related = bool(self.related()) if hasattr(self, "related") else False
@@ -602,10 +602,10 @@ class InteractionMixin:
         return bool(s) and not s.get("joint") and routine.seg_class(s) == "special"
 
     def burst_consent_items_for(self, pid=None):
-        from comm.comm_persona import read_persona_full, list_personas, pid_of
+        from comm.comm_persona import read_persona_rules, list_personas, pid_of
         target_pid = pid or self.pid
         owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == target_pid), self.persona_name())
-        return burst_consent_items(read_persona_full(self.personas, owner_name)) if owner_name else {}
+        return burst_consent_items(read_persona_rules(self.personas, owner_name)) if owner_name else {}
 
     def burst_consent_rules_for(self, pid=None):
         return {cid: label for cid, (_, label) in self.burst_consent_items_for(pid).items()}
@@ -675,10 +675,10 @@ class InteractionMixin:
         self._interaction_set(interaction_settle(d, now_ms, burst_rules), pid)
 
     def _interaction_burst_rules_for(self, pid=None):
-        from comm.comm_persona import read_persona_full, list_personas, pid_of
+        from comm.comm_persona import read_persona_rules, list_personas, pid_of
         target_pid = pid or self.pid
         owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == target_pid), self.persona_name())
-        return valence_burst_rules(read_persona_full(self.personas, owner_name))
+        return valence_burst_rules(read_persona_rules(self.personas, owner_name))
 
     def tension_display(self, enabled):
         """显示当前对象的真实张力，保留两位小数，关闭时不显示。"""
@@ -706,9 +706,9 @@ class InteractionMixin:
         d = self._interaction_prepare(pid)
         st = self._state_of(pid or self.pid)
         total = max(message_milestones(st) or [0])
-        from comm.comm_persona import read_persona_full, list_personas, pid_of
+        from comm.comm_persona import read_persona_rules, list_personas, pid_of
         owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == (pid or self.pid)), self.persona_name())
-        text = read_persona_full(self.personas, owner_name)
+        text = read_persona_rules(self.personas, owner_name)
         if status is None and (pid is None or pid == self.pid):
             status = self.other_status()
         from .comm_util import is_claudia
@@ -720,13 +720,13 @@ class InteractionMixin:
 
     def realism_note(self, pid=None):
         """拼装角色慢变量生活线、延迟回调、跨周趋势与工程层防复读提醒。"""
-        from comm.comm_persona import read_persona_full, list_personas, pid_of
+        from comm.comm_persona import read_persona_rules, list_personas, pid_of
         from comm.comm_realism import realism_note as build_realism_note
         target_pid = pid or self.pid
         owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == target_pid), self.persona_name())
         if not owner_name:
             return ""
-        text = read_persona_full(self.personas, owner_name)
+        text = read_persona_rules(self.personas, owner_name)
         st = self._state_of(target_pid)
         msgs = self.messages if target_pid == self.pid else st.get("messages", [])
         mem_live = str(self.cfg.get("mem_live") if target_pid == self.pid else st.get("mem_live") or "")

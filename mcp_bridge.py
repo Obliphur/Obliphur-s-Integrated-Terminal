@@ -131,7 +131,7 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
     from comm.comm_interaction import (
         interaction_valence_baseline, offenses_active, offenses_rate, burst_consent_status_fields,
     )
-    from comm.comm_persona import read_persona_full
+    from comm.comm_persona import read_persona_rules
     from comm.comm_rules import (
         tension_rules, tension_relationship_rules, valence_rules, valence_burst_rules, burst_consent_rules,
     )
@@ -144,7 +144,7 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
     effective = d["tension"] if eff_special and d["burst_until"] else min(d["tension"], config.COMM_TENSION_CAP)
     stage = "0-50" if effective < config.COMM_TENSION_LOW else "50-90" if effective <= config.COMM_TENSION_CAP else "90+"
 
-    persona_text = read_persona_full(comm_obj.personas, comm_obj.persona_name())
+    persona_text = read_persona_rules(comm_obj.personas, comm_obj.persona_name())
     consent_tag, consent_note = burst_consent_status_fields(d, burst_consent_rules(persona_text))
 
     user_adult = bool(comm_obj.user_adult()) if hasattr(comm_obj, "user_adult") else bool(comm_obj.cfg.get("user_adult"))
@@ -178,7 +178,7 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
     if not candidates:
         return lines
 
-    persona_text = read_persona_full(comm_obj.personas, comm_obj.persona_name())
+    persona_text = read_persona_rules(comm_obj.personas, comm_obj.persona_name())
     rules = tension_rules(persona_text)
     rel_rules = tension_relationship_rules(persona_text)
     is_related = bool(comm_obj.related()) if hasattr(comm_obj, "related") else False

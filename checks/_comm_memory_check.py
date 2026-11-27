@@ -38,30 +38,39 @@ def main():
     personas_dir = os.path.join(tmp, "personas")
     os.makedirs(personas_dir, exist_ok=True)
     try:
-        # 1. 纯机读模板块剥离：不破坏 read_persona_full，仅精简发给模型的 persona_system
+        # 1. templates 读取机制：persona_system 彻底排除 _templates 文件并剥离单文件机读块，read_persona_rules 带缓存读取规则
+        from comm.comm_persona import read_persona_prompt, read_persona_rules
         sample_tpl = (
             "08:00-09:00 idle 晨间阅读\n"
             "[life:arcs]\narc1:[3,5] 阶段A | 阶段B\n[/life:arcs]\n"
             "[anti_repeat]\nwindow=10\nmin_hits=3\nforbid=秘密禁词\n[/anti_repeat]\n"
-            "[callback]\nlookahead_days=0\nexpire_days=2\nmax_due=2\n[/callback]\n"
-            "[tension]\ncond_a: 张力说明保留\n[/tension]\n"
-            "[valence]\nval_a: 效价说明保留\n[/valence]\n"
+            "[callback]\nlookahead_days: 0\nexpire_days: 2\nmax_due: 2\n[/callback]\n"
+            "[tension]\ncond_a:[20] 张力说明\n[/tension]\n"
+            "[valence]\nval_a:[10] 效价说明\n[/valence]\n"
         )
         stripped = strip_machine_template_blocks(sample_tpl)
-        assert "晨间阅读" in stripped and "张力说明保留" in stripped and "效价说明保留" in stripped
+        assert "晨间阅读" in stripped
         assert "[life:arcs]" not in stripped and "阶段A" not in stripped
         assert "[anti_repeat]" not in stripped and "秘密禁词" not in stripped
         assert "[callback]" not in stripped
+        assert "[tension]" not in stripped and "张力说明" not in stripped
+        assert "[valence]" not in stripped and "效价说明" not in stripped
 
         with open(os.path.join(personas_dir, "TestP.txt"), "w", encoding="utf-8") as f:
             f.write("你是测试角色。\n")
+        with open(os.path.join(personas_dir, "TestP_background.txt"), "w", encoding="utf-8") as f:
+            f.write("这是角色背景。\n")
         with open(os.path.join(personas_dir, "TestP_templates.txt"), "w", encoding="utf-8") as f:
             f.write(sample_tpl)
         raw_full = read_persona_full(personas_dir, "TestP.txt")
+        rules_txt = read_persona_rules(personas_dir, "TestP.txt")
+        prompt_txt = read_persona_prompt(personas_dir, "TestP.txt")
         sys_prompt = persona_system(personas_dir, "TestP.txt")
         assert "[life:arcs]" in raw_full and "秘密禁词" in raw_full
-        assert "[life:arcs]" not in sys_prompt and "秘密禁词" not in sys_prompt
-        assert "张力说明保留" in sys_prompt and "效价说明保留" in sys_prompt
+        assert "[life:arcs]" in rules_txt and "张力说明" in rules_txt and "这是角色背景" not in rules_txt
+        assert "你是测试角色" in prompt_txt and "这是角色背景" in prompt_txt
+        assert "晨间阅读" not in prompt_txt and "[life:arcs]" not in prompt_txt and "张力说明" not in prompt_txt
+        assert "晨间阅读" not in sys_prompt and "[life:arcs]" not in sys_prompt and "秘密禁词" not in sys_prompt and "张力说明" not in sys_prompt
 
         # 2. mem_live 短 ID 分配、ID/正文兼容定位与 callback_note 兼容
         ok, live, disp, err = apply_live_edit("", "add", "", "[回访:2026-11-27] 物理期末考")

@@ -223,10 +223,9 @@ def other_profiles_text(folder: str, name: str) -> str:
 
 
 def persona_system(personas: str, name: str, split: bool = True) -> str:
-    """发给模型的 system：公共工具协议、人设文件前的固定一句、剥离纯机读模板块后的人设正文与其他人设的公开简介。"""
-    from comm.comm_memory import strip_machine_template_blocks
+    """发给模型的 system：公共工具协议、人设文件前的固定一句、排除模板文件并剥离机读块后的人设正文与其他人设的公开简介。"""
     head = system_head(name, split)
-    body = strip_machine_template_blocks(native_persona_text(read_persona_full(personas, name)))
+    body = native_persona_text(read_persona_prompt(personas, name))
     others = other_profiles_text(personas, name)
     if others:
         body = (body + "\n\n" + others) if body else others
@@ -333,8 +332,65 @@ def read_routine(folder: str, name: str) -> str:
     return read_persona(folder, rn) if rn else ""
 
 
+def is_template_companion(folder: str, base_name: str, companion_name: str) -> bool:
+    """判断 companion_name 是否为 base_name 的程序模板文件（_templates / _routine）。"""
+    if not companion_name:
+        return False
+    rn = routine_name_of(folder, base_name)
+    if rn and companion_name.casefold() == rn.casefold():
+        return True
+    stem = os.path.splitext(companion_name)[0].casefold()
+    base_stem = os.path.splitext(base_name)[0].casefold()
+    return stem in (base_stem + ROUTINE_SUFFIX, base_stem + ROUTINE_OLD_SUFFIX)
+
+
+def read_persona_prompt(folder: str, name: str) -> str:
+    """发给模型的人设正文：主人设 + 非模板配套文件（背景 / 范例等），排除 _templates/_routine 并剥离单文件人设中的机读块。"""
+    if is_profile_name(name):
+        return ""
+    from comm.comm_memory import strip_machine_template_blocks
+    comps = [n for n in companions_of(folder, name) if not is_template_companion(folder, name, n)]
+    parts = [read_persona(folder, name)] + [read_persona(folder, n) for n in comps]
+    merged = "\n\n".join(x for x in parts if x)
+    return strip_machine_template_blocks(merged)
+
+
+_RULES_CACHE: dict[tuple[str, str], tuple[tuple, str]] = {}
+
+
+def _file_sig(folder: str, fname: str) -> tuple:
+    if not folder or not fname:
+        return ("", 0, 0)
+    path = os.path.join(folder, fname)
+    try:
+        st = os.stat(path)
+        return (fname, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (fname, 0, 0)
+
+
+def read_persona_rules(folder: str, name: str) -> str:
+    """供 OIT 程序解析声明式规则的专用读取（带 mtime/size 缓存）：只读主人设与 _templates/_routine，跳过范例与背景文件。"""
+    if not folder or not name or name != os.path.basename(name) or is_profile_name(name):
+        return ""
+    rn = routine_name_of(folder, name)
+    sig = (_file_sig(folder, name), _file_sig(folder, rn))
+    key = (folder, name)
+    cached = _RULES_CACHE.get(key)
+    if cached is not None and cached[0] == sig:
+        return cached[1]
+    parts = [read_persona(folder, name)]
+    if rn:
+        parts.append(read_persona(folder, rn))
+    merged = "\n\n".join(x for x in parts if x)
+    if len(_RULES_CACHE) > 64:
+        _RULES_CACHE.clear()
+    _RULES_CACHE[key] = (sig, merged)
+    return merged
+
+
 def read_persona_full(folder: str, name: str) -> str:
-    """发给模型的人设: 人设本体 + 它所有的配套文件 (背景 / 日程 ...), 按文件名顺序合并成一份."""
+    """完整人设合集: 人设本体 + 它所有的配套文件 (背景 / 范例 / 模板 ...), 按文件名顺序合并."""
     if is_profile_name(name):
         return ""
     parts = [read_persona(folder, name)] + [read_persona(folder, n) for n in companions_of(folder, name)]

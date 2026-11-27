@@ -17,6 +17,8 @@ MACHINE_TEMPLATE_BLOCKS = (
     "shift",
     "condition",
     "condition:strict",
+    "tension",
+    "valence",
     "valence:events",
     "valence:initial",
     "scenario",

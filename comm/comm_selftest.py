@@ -3285,7 +3285,7 @@ def _selftest():
     cr.send("在吗")
     wait(cr)
     sysmsg, msgs0 = calls[n0]
-    assert "初始起点:6:30" in sysmsg and "联网时间理由列表" in sysmsg
+    assert "初始起点:6:30" not in sysmsg and "联网时间理由列表" not in sysmsg, "templates 文件仅供程序解析，不直接拼入 system prompt"
     assert "你此刻的状态" in msgs0[-1]["content"] and "休息中" in msgs0[-1]["content"], msgs0[-1]["content"]
     assert "你此刻的状态" not in " ".join(m.get("api") or m.get("text") or "" for m in cr.messages), "状态只贴在请求里, 不写进聊天记录"
     # 专注开始前 5 分钟内提前说一声
