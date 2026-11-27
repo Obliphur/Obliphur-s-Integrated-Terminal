@@ -39,7 +39,6 @@ FACILITY_ACTIONS = {
 ACTION_CHANNEL_LABELS = {
     "left": "左手",
     "right": "右手",
-    "both": "双手",
     "gaze": "目光",
 }
 
@@ -1038,13 +1037,12 @@ class RoomStore:
     def queue_hand_action(self, hand: str, target_id: str, target_name: str, part: str, text: str,
                           msg_count: int | None = None, secret: bool = False) -> str:
         clean_part = str(part or "").strip()[:30]
-        if hand not in ("left", "right", "both", "gaze"):
-            return "请指定左手、右手、双手或目光"
-        if hand == "both":
-            if self.hands["left"]["state"] == "bound" or self.hands["right"]["state"] == "bound":
-                return "有手正被束缚着，暂时无法使用双手动作"
-        elif hand in ("left", "right"):
-            if self.hands[hand]["state"] == "bound":
+        is_gaze = (clean_part in ("gaze", "目光注视") or hand == "gaze")
+        channel = "gaze" if is_gaze else hand
+        if channel not in ("left", "right", "gaze"):
+            return "请指定左手或右手"
+        if channel in ("left", "right"):
+            if self.hands[channel]["state"] == "bound":
                 return "这只手正被束缚着，暂时无法行动"
         if msg_count is not None and clean_part != "设施":
             ok, req = part_allowed(clean_part, msg_count)
@@ -1055,23 +1053,17 @@ class RoomStore:
         if not clean_text:
             return "请输入互动内容"
 
-        # 自由或握住状态的手安排新动作时自动脱离原握持，并替换同通道旧待发动作
-        if hand == "gaze":
+        # 自由或握住状态的手安排新动作时自动脱离原握持；左手、右手、目光各自独立且可同时共存
+        if channel == "gaze":
             self.pending_actions = [a for a in self.pending_actions if a.get("hand") != "gaze"]
-        elif hand == "both":
-            for s in ("left", "right"):
-                if self.hands[s]["state"] == "holding":
-                    self.holding_hands[s] = ""
-                    self.hands[s] = {"state": "free", "note": ""}
-            self.pending_actions = [a for a in self.pending_actions if a.get("hand") not in ("left", "right", "both")]
         else:
-            if self.hands[hand]["state"] == "holding":
-                self.holding_hands[hand] = ""
-                self.hands[hand] = {"state": "free", "note": ""}
-            self.pending_actions = [a for a in self.pending_actions if a.get("hand") not in (hand, "both")]
+            if self.hands[channel]["state"] == "holding":
+                self.holding_hands[channel] = ""
+                self.hands[channel] = {"state": "free", "note": ""}
+            self.pending_actions = [a for a in self.pending_actions if a.get("hand") != channel]
 
         self.pending_actions.append({
-            "hand": hand,
+            "hand": channel,
             "target_id": target_id,
             "target_name": target_name,
             "part": clean_part,

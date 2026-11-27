@@ -552,11 +552,11 @@ class RoomPage(tk.Frame):
             }
         if atype == "queue_action":
             hand = str(body.get("hand") or "")
-            if not hand:
-                return {"ok": False, "toast": tr("请先选择动作通道（左手 / 右手 / 双手 / 目光）。"), "warn": True}
+            part = str(body.get("part") or "")
+            if not hand and part not in ("gaze", "目光注视"):
+                return {"ok": False, "toast": tr("请先选择左手或右手。"), "warn": True}
             target_id = str(body.get("target_id") or "")
             target_name = str(body.get("target_name") or "")
-            part = str(body.get("part") or "")
             text = str(body.get("text") or "").strip()
             secret = bool(body.get("secret", False))
             if body.get("is_facility"):

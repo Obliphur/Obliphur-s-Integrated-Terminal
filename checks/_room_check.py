@@ -120,10 +120,9 @@ def main():
         assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "脸颊", "轻碰", msg_count=30) != ""
         assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "肩膀", "轻轻拍了拍", msg_count=30) == ""
         assert store.queue_hand_action("right", "Claudia.txt", "Claudia", "衣袖 / 衣角", "拉一下", msg_count=30) == ""
-        assert store.queue_hand_action("gaze", "Claudia.txt", "Claudia", "目光注视", "安静地看着她", msg_count=0) == ""
-        assert len(store.pending_actions) == 3, "左手、右手、目光应可各自独立安排待发动作"
-        assert store.queue_hand_action("both", "Claudia.txt", "Claudia", "肩膀", "双手搭上她的肩", msg_count=30) == ""
-        assert [a["hand"] for a in store.pending_actions] == ["gaze", "both"], "双手动作应替换左右手动作，但不影响独立目光"
+        assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "目光注视", "安静地看着她", msg_count=0) == ""
+        assert [a["hand"] for a in store.pending_actions] == ["left", "right", "gaze"], "左手、右手、目光注视应各自独立并可同时共存"
+        assert store.queue_hand_action("both", "Claudia.txt", "Claudia", "肩膀", "双手", msg_count=30) != "", "已移除双手选项"
 
         # 握住状态的手仍可脱离当前动作作出新动作
         assert store.hold_hand("left", "Claudia.txt", "Claudia", msg_count=100) == ""

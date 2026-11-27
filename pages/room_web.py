@@ -727,7 +727,6 @@ function renderOccupants(occupants) {
 function channelLabel(ch) {
   if (ch === "left") return "左手";
   if (ch === "right") return "右手";
-  if (ch === "both") return "双手";
   if (ch === "gaze") return "目光";
   return "手部";
 }
@@ -1012,24 +1011,19 @@ async function openActorModal(actorId, actorName) {
     top.append(meta, btns);
     body.appendChild(top);
 
-    // 选动作通道（左手 / 右手 / 双手 / 目光）
+    // 选左右手（独立且可同时作出；目光注视不占手，可共存）
     const handRow = document.createElement("div");
     handRow.style.cssText = "display:flex;align-items:center;gap:12px;flex-wrap:wrap;";
-    handRow.innerHTML = `<span class="field-label" style="margin:0;">动作方式：</span>`;
+    handRow.innerHTML = `<span class="field-label" style="margin:0;">使用哪只手：</span>`;
     const leftBound = info.hands.left.state === "bound";
     const rightBound = info.hands.right.state === "bound";
-    const bothAvail = !leftBound && !rightBound;
-    if (selectedPart === "目光注视") {
-      selectedHand = "gaze";
-    } else if (!selectedHand) {
-      selectedHand = !leftBound ? "left" : (!rightBound ? "right" : "gaze");
+    if (!selectedHand || (selectedHand === "left" && leftBound) || (selectedHand === "right" && rightBound)) {
+      selectedHand = !leftBound ? "left" : (!rightBound ? "right" : "");
     }
-    const chRadios = {};
+    const handInputs = [];
     const channels = [
       { id: "left", label: "左手" + (info.hands.left.state === "holding" ? " (握住)" : (leftBound ? " (被束缚)" : "")), disabled: leftBound },
       { id: "right", label: "右手" + (info.hands.right.state === "holding" ? " (握住)" : (rightBound ? " (被束缚)" : "")), disabled: rightBound },
-      { id: "both", label: "双手" + (bothAvail ? "" : " (有手被束缚)"), disabled: !bothAvail },
-      { id: "gaze", label: "目光 (独立)", disabled: false },
     ];
     for (const ch of channels) {
       const lbl = document.createElement("label");
@@ -1039,18 +1033,30 @@ async function openActorModal(actorId, actorName) {
       inp.disabled = ch.disabled;
       inp.checked = selectedHand === ch.id;
       inp.addEventListener("change", () => { selectedHand = ch.id; });
-      chRadios[ch.id] = inp;
+      handInputs.push({ inp, lbl, baseDisabled: ch.disabled });
       lbl.append(inp, document.createTextNode(ch.label));
       handRow.appendChild(lbl);
     }
+    const gazeHint = document.createElement("span");
+    gazeHint.className = "dim-tip";
+    gazeHint.textContent = "（目光注视不占手，可与左右手动作共存）";
+    handRow.appendChild(gazeHint);
     body.appendChild(handRow);
 
-    if (leftBound && rightBound) {
-      const warn = document.createElement("div");
-      warn.style.cssText = "color:var(--danger);font-size:12px;";
-      warn.textContent = "双手正被束缚，仅可使用独立的「目光」动作。";
-      body.appendChild(warn);
-    }
+    const warn = document.createElement("div");
+    warn.style.cssText = "color:var(--danger);font-size:12px;display:none;";
+    warn.textContent = "双手正被束缚，当前仅可选择「目光注视」。";
+    body.appendChild(warn);
+
+    const syncHandState = () => {
+      const customVal = customPartInput ? customPartInput.value.trim() : "";
+      const isGaze = !customVal && selectedPart === "目光注视";
+      for (const h of handInputs) {
+        h.inp.disabled = h.baseDisabled || isGaze;
+        h.lbl.className = "radio-opt" + (h.inp.disabled ? " disabled" : "");
+      }
+      warn.style.display = (leftBound && rightBound && !isGaze) ? "block" : "none";
+    };
 
     // 部位列表
     const pTitle = document.createElement("div");
@@ -1068,14 +1074,7 @@ async function openActorModal(actorId, actorName) {
       inp.checked = selectedPart === p.label;
       inp.addEventListener("change", () => {
         selectedPart = p.label;
-        if (p.label === "目光注视" && chRadios.gaze) {
-          selectedHand = "gaze";
-          chRadios.gaze.checked = true;
-        } else if (p.label !== "目光注视" && selectedHand === "gaze") {
-          const fallback = !leftBound ? "left" : (!rightBound ? "right" : "gaze");
-          selectedHand = fallback;
-          if (chRadios[fallback]) chRadios[fallback].checked = true;
-        }
+        syncHandState();
       });
       lbl.append(inp, document.createTextNode(p.allowed ? p.label : `${p.label} (需${p.req}条)`));
       grid.appendChild(lbl);
@@ -1096,7 +1095,7 @@ async function openActorModal(actorId, actorName) {
         const inp = document.createElement("input");
         inp.type = "radio"; inp.name = "m_part"; inp.value = p.label;
         inp.disabled = !p.allowed;
-        inp.addEventListener("change", () => { selectedPart = p.label; });
+        inp.addEventListener("change", () => { selectedPart = p.label; syncHandState(); });
         lbl.append(inp, document.createTextNode(p.allowed ? p.label : `${p.label} (需${p.req}条)`));
         pg.appendChild(lbl);
       }
@@ -1112,8 +1111,10 @@ async function openActorModal(actorId, actorName) {
     customPartInput.className = "input";
     customPartInput.style.flex = "1";
     customPartInput.disabled = !info.custom_ok;
+    customPartInput.addEventListener("input", syncHandState);
     cRow.append(cLbl, customPartInput);
     body.appendChild(cRow);
+    syncHandState();
 
     const secLbl = document.createElement("label");
     secLbl.className = "radio-opt";
@@ -1136,9 +1137,10 @@ async function openActorModal(actorId, actorName) {
       label: "加入待发动作", accent: true,
       onClick: async () => {
         const part = (info.custom_ok && customPartInput.value.trim()) ? customPartInput.value.trim() : selectedPart;
+        const handToSend = (part === "目光注视") ? "gaze" : selectedHand;
         const r = await doAction({
           type: "queue_action",
-          hand: selectedHand,
+          hand: handToSend,
           target_id: actorId,
           target_name: actorName,
           part,
@@ -1156,8 +1158,7 @@ function openFacilityModal(hs) {
   const hands = STATE ? STATE.hands : { left: { state: "free" }, right: { state: "free" } };
   const leftBound = hands.left.state === "bound";
   const rightBound = hands.right.state === "bound";
-  const bothAvail = !leftBound && !rightBound;
-  let selectedHand = !leftBound ? "left" : (!rightBound ? "right" : "gaze");
+  let selectedHand = !leftBound ? "left" : (!rightBound ? "right" : "");
   let textArea = null;
 
   openModal(`互动设施：${hs.label}`, (body) => {
@@ -1169,12 +1170,10 @@ function openFacilityModal(hs) {
     }
     const hRow = document.createElement("div");
     hRow.style.cssText = "display:flex;align-items:center;gap:12px;flex-wrap:wrap;";
-    hRow.innerHTML = `<span class="field-label" style="margin:0;">动作方式：</span>`;
+    hRow.innerHTML = `<span class="field-label" style="margin:0;">使用手部：</span>`;
     const channels = [
       { id: "left", label: "左手" + (hands.left.state === "holding" ? " (握住)" : (leftBound ? " (被束缚)" : "")), disabled: leftBound },
       { id: "right", label: "右手" + (hands.right.state === "holding" ? " (握住)" : (rightBound ? " (被束缚)" : "")), disabled: rightBound },
-      { id: "both", label: "双手" + (bothAvail ? "" : " (有手被束缚)"), disabled: !bothAvail },
-      { id: "gaze", label: "目光", disabled: false },
     ];
     for (const ch of channels) {
       const lbl = document.createElement("label");
@@ -1196,7 +1195,7 @@ function openFacilityModal(hs) {
   }, [
     { label: "取消", onClick: closeModal },
     {
-      label: "加入待发动作", accent: true,
+      label: "加入待发动作", accent: true, disabled: leftBound && rightBound,
       onClick: async () => {
         const r = await doAction({
           type: "queue_action",
