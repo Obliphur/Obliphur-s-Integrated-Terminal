@@ -183,7 +183,6 @@ fun CommScreen(go: (String) -> Unit) {
     var loveInv by remember { mutableStateOf(comm.loveInvite()) }                  // 对方告白了: 等用户点 接受 / 拒绝
     var coreadInv by remember { mutableStateOf(comm.coreadInvite()) }
     var hasConsentRules by remember { mutableStateOf(comm.burstConsentRulesFor().isNotEmpty()) }
-    var userAdult by remember { mutableStateOf(comm.userAdult) }
     var consentPending by remember { mutableStateOf(comm.burstConsentPending()) }
     var consentDlg by remember { mutableStateOf(false) }
     var consentPrompted by remember { mutableStateOf<Pair<String, Long>?>(null) }
@@ -298,7 +297,6 @@ fun CommScreen(go: (String) -> Unit) {
             comm.scenarioInvite().let { if (it != scenarioInv) scenarioInv = it }
             comm.loveInvite().let { if (it != loveInv) loveInv = it }
             comm.burstConsentRulesFor().isNotEmpty().let { if (it != hasConsentRules) hasConsentRules = it }
-            comm.userAdult.let { if (it != userAdult) userAdult = it }
             comm.burstConsentPending().let { pending ->
                 if (pending != consentPending) consentPending = pending
                 if (pending > 0L) {
@@ -394,14 +392,6 @@ fun CommScreen(go: (String) -> Unit) {
             // ❓ 帮助 (最左边): 解释每个按钮的作用
             TextButton({ help = true }, contentPadding = tight) { Text("❓", fontSize = 18.sp) }
             TextButton({ readingChoice = true }, contentPadding = tight) { Text("📚", fontSize = 18.sp) }
-            TextButton({
-                val next = !userAdult
-                comm.setUserAdult(next)
-                userAdult = comm.userAdult
-                core.toast(if (next) tr("已确认成年 (USER_ADULT=YES).") else tr("已设为未确认成年 (USER_ADULT=UNKNOWN)."))
-            }, contentPadding = tight) {
-                Text(if (userAdult) "18+" else "18?", fontSize = 14.sp, color = if (userAdult) o.accent else o.dim)
-            }
             if (hasConsentRules) {
                 TextButton({ consentDlg = true }, contentPadding = tight) { Text("🛡", fontSize = 18.sp) }
             }
@@ -702,7 +692,6 @@ private fun HelpDialog(onDismiss: () -> Unit) {
     val rows = listOf(
         Triple("❓", tr("帮助"), tr("打开这个说明.")),
         Triple("📚", tr("阅读"), tr("选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送，待对方明确同意后才打开共读室。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。")),
-        Triple("18? / 18+", tr("成年状态"), tr("手动切换成年确认状态（18? = 未确认，18+ = 已确认满 18 岁，同步至所有聊天对象与已绑定设备），不再由模型自行判断。")),
         Triple("🛡", tr("同意声明"), tr("当且仅当当前人设有同意声明时在工具栏显示。可随时点击逐项勾选或撤回同意（未勾选的项目将被严格禁止）；若首次触发 BURST 时仍未设置，系统也会自动弹窗提示确认。")),
         Triple("💬", tr("说教"), tr("你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。")),
         Triple("📱 / 🎭", tr("聊天模式"), tr("输入框上方的 📱 / 🎭 按钮用于情景模拟。开启情景模拟采用申请制（📱 会把申请作为附件随下一条消息发出，或点「接受」同意对方申请），开启后显示 🎭，双方均可随时结束。模式按聊天对象保存。")),
@@ -942,6 +931,11 @@ fun CommSettings() {
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp), minLines = 3, maxLines = 8)
         Text(tr("只在这段对话的第一轮发送, 改动在下一段对话生效."), color = o.dim, fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp))
+        var adult by remember(comm.userAdult) { mutableStateOf(comm.userAdult) }
+        SwitchRow(tr("我已满 18 岁（成年状态，同步至已绑定设备）"), adult) {
+            comm.setUserAdult(it)
+            adult = comm.userAdult
+        }
     }
 
     OitCard {

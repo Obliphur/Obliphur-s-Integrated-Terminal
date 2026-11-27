@@ -107,7 +107,14 @@ class CommSettingsMixin:
         self.txt_profile.bind("<KeyRelease>", lambda _e: self._comm_profile_later())
         self.txt_profile.bind("<FocusOut>", lambda _e: self._comm_profile_save())
         tk.Label(fr, text=tr("只在这段对话的第一轮发送, 改动在下一段对话生效."), bg=card, fg=COLORS["text_dim"],
-                 font=small, anchor="w").pack(fill="x", padx=12, pady=(0, 8))
+                 font=small, anchor="w").pack(fill="x", padx=12, pady=(0, 6))
+        v_adult = tk.BooleanVar(value=c.user_adult())
+        self.comm_vars["user_adult"] = v_adult
+        self._track(tk.Checkbutton(fr, text=tr("我已满 18 岁（成年状态，同步至已绑定设备）"), variable=v_adult, bg=card, fg=COLORS["text"],
+                                   selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
+                                   font=config.font("body"), anchor="w",
+                                   command=lambda: self.comm.set_user_adult(bool(self.comm_vars["user_adult"].get()))),
+                    "我已满 18 岁（成年状态，同步至已绑定设备）").pack(fill="x", padx=12, pady=(0, 8))
 
         fr, _head = self._card(body, "🧾  解答图片")
         v = tk.BooleanVar(value=c.answer_images_on())
@@ -331,6 +338,8 @@ class CommSettingsMixin:
             self.comm_vars["sched_follow"].set(c.sf_on())
         if self.comm_vars["answer_images"].get() != c.answer_images_on():
             self.comm_vars["answer_images"].set(c.answer_images_on())
+        if "user_adult" in self.comm_vars and self.comm_vars["user_adult"].get() != c.user_adult():
+            self.comm_vars["user_adult"].set(c.user_adult())
         if focus_name(self.cb_pro_lang) not in (str(self.cb_pro_lang), "popdown"):          # 不在输入时: 别的设备同步来了新的语言
             want = c.pro_lang() or tr("不指定")
             if self.var_pro_lang.get() != want:
