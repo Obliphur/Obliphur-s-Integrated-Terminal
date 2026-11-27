@@ -47,6 +47,8 @@ BODY_PARTS = (
     ("sleeve", "衣袖 / 衣角", 0),
     ("shoulder", "肩膀", 0),
     ("hand", "手掌 / 指尖", 50),
+    ("target_left_hand", "对方的左手", 50),
+    ("target_right_hand", "对方的右手", 50),
     ("wrist", "手臂 / 手腕", 50),
     ("head", "头顶 / 发丝", 50),
     ("cheek", "脸颊", 120),
@@ -63,6 +65,8 @@ ROOM_ACTION_VT: dict[str, tuple[str, int, int]] = {
     "衣袖 / 衣角": ("room_sleeve", 3, 3),
     "肩膀": ("room_shoulder", 3, 4),
     "手掌 / 指尖": ("room_hand", 5, 6),
+    "对方的左手": ("room_target_left_hand", 5, 6),
+    "对方的右手": ("room_target_right_hand", 5, 6),
     "牵手带走": ("room_hold", 5, 6),
     "手臂 / 手腕": ("room_wrist", 4, 6),
     "头顶 / 发丝": ("room_head", 6, 5),
@@ -1340,10 +1344,11 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
         "4. 你可以结合当前位置（如墙边、椅子、沙发、钢琴旁）做位置相关互动，并用 position 字段更新你的室内位置。\n"
         "5. 如果用户言语请求你跟随同行，同意可将 follow 设为 \"user\"（取消跟随设为 \"none\"，不变为 null）。\n"
         "6. 你可以自行移动去公共房间或有钥匙且未反锁的房间（move_to 填房间 id）；若想把用户一起带去那个房间，可将 bring_user 设为 true。\n"
-        "7. 若不想被打扰可将 lock_door 设为 true 从内部反锁（false 解锁，null 不变）；分钥匙可填 give_key: {\"room_id\": \"...\", \"to\": \"user\"}。\n"
-        "8. 请严格只输出一个 JSON 对象，保持你原本的人设语气：\n"
+        "7. 当用户明确提出牵手、拉着一起走/带走，或你按当前关系与情境自然决定牵住用户时，用 hold_hand 填 left 或 right；按用户要求松开时填 release；没有牵手意图时必须为 null。只能选择用户当前可用且未被束缚的手，且需同室同位置、互动累计达到牵手门槛。这个字段就是牵手带走的唯一触发方式，不要要求用户点击按钮。\n"
+        "8. 若不想被打扰可将 lock_door 设为 true 从内部反锁（false 解锁，null 不变）；分钥匙可填 give_key: {\"room_id\": \"...\", \"to\": \"user\"}。\n"
+        "9. 请严格只输出一个 JSON 对象，保持你原本的人设语气：\n"
         '{"silent": false, "volume": "normal", "action": "简短动作描写(可为空)", "speech": "你的台词(可为空)", '
-        '"position": null, "bind_hands": null, "follow": null, "move_to": null, "bring_user": false, "lock_door": null, "give_key": null}'
+        '"position": null, "bind_hands": null, "hold_hand": null, "follow": null, "move_to": null, "bring_user": false, "lock_door": null, "give_key": null}'
     )
     system = (persona_sys or f"你正在扮演 {actor_name}。") + (memory_block or "") + room_guide
 
@@ -1398,6 +1403,9 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
         bind = obj.get("bind_hands")
         if bind not in ("left", "right", "both", "release"):
             bind = None
+        hold_hand = obj.get("hold_hand")
+        if hold_hand not in ("left", "right", "release"):
+            hold_hand = None
         move_to = str(obj.get("move_to") or "").strip() or None
         if move_to and valid_rooms is not None and move_to not in valid_rooms:
             move_to = None
@@ -1420,6 +1428,7 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
             "speech": "" if silent else str(obj.get("speech") or "").strip()[:1200],
             "position": position,
             "bind_hands": bind,
+            "hold_hand": hold_hand,
             "follow": follow,
             "move_to": move_to,
             "bring_user": bool(obj.get("bring_user", False)),
@@ -1433,6 +1442,7 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
         "speech": str(reply_text or "").strip()[:1200],
         "position": None,
         "bind_hands": None,
+        "hold_hand": None,
         "follow": None,
         "move_to": None,
         "bring_user": False,

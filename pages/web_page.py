@@ -1,0 +1,591 @@
+# -*- coding: utf-8 -*-
+"""通用页面 WebView2 外壳。
+
+现有页面的业务逻辑仍由 Tk 页面对象持有；这里把它的控件树投影到本地
+HTML，并把网页操作安全地调度回 Tk 主线程。这样页面可以统一使用计时器 /
+沟通页的 WebView2 体验，同时在没有 WebView2 时保留原来的界面。
+"""
+
+from __future__ import annotations
+
+import json
+import queue
+import threading
+import tkinter as tk
+from tkinter import ttk
+from typing import Callable
+
+import config
+import contract as C
+from config import COLORS
+from i18n import tr
+from .contract_page import marks, term_desc, term_name, term_short
+from .webview2_host import LocalWebServer, WebView2Host, is_webview2_available
+
+
+def _text(widget) -> str:
+    for key in ("text", "label"):
+        try:
+            value = widget.cget(key)
+            if value is not None:
+                return str(value)
+        except Exception:
+            pass
+    return ""
+
+
+class WebPageAdapter(tk.Frame):
+    """把一个已有页面适配成 WebView2 页面。
+
+    ``builder`` 接收一个隐藏的 Tk 容器并返回原页面对象。所有原页面方法
+    和属性通过代理继续暴露给 app，避免迁移期间破坏状态机和自检。
+    """
+
+    def __init__(self, master, builder: Callable[[tk.Frame], object], title: str = ""):
+        super().__init__(master, bg=COLORS["bg"])
+        object.__setattr__(self, "_web_adapter_ready", False)
+        self._destroyed = False
+        self._visible = False
+        self._title = title
+        self._use_webview = is_webview2_available()
+        self._native_host = tk.Frame(self, bg=COLORS["bg"])
+        self._native_host.pack(fill="both", expand=True)
+        self._delegate = builder(self._native_host)
+        try:
+            self._delegate.pack(fill="both", expand=True)
+        except Exception:
+            try:
+                self._delegate.grid(row=0, column=0, sticky="nsew")
+            except Exception:
+                pass
+        self._native_host.pack_forget()
+        self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._ui_poll_job = None
+        self._wv_show_job = None
+        self._wv_host: WebView2Host | None = None
+        self._wv_loading: tk.Label | None = None
+        self._web_server: LocalWebServer | None = None
+        self._control_map: dict[str, object] = {}
+        self._last_state = None
+        self.bind("<Destroy>", self._on_destroy, add="+")
+        if self._use_webview:
+            self._build_webview()
+        else:
+            self._native_host.pack(fill="both", expand=True)
+        object.__setattr__(self, "_web_adapter_ready", True)
+
+    def __getattr__(self, name):
+        delegate = self.__dict__.get("_delegate")
+        if delegate is not None:
+            return getattr(delegate, name)
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        if name.startswith("_") or not self.__dict__.get("_web_adapter_ready"):
+            object.__setattr__(self, name, value)
+            return
+        delegate = self.__dict__.get("_delegate")
+        if delegate is not None and hasattr(delegate, name):
+            setattr(delegate, name, value)
+        else:
+            object.__setattr__(self, name, value)
+
+    @staticmethod
+    def _colors():
+        return {k: COLORS.get(k, "") for k in (
+            "bg", "bg_card", "border", "text", "text_dim", "accent", "accent_hover",
+            "accent_fill", "on_accent_fill", "danger", "warn", "success", "danger_bg")}
+
+    def _build_webview(self):
+        self._web_server = LocalWebServer(
+            html_provider=lambda tok: _GENERIC_HTML.replace("__TOKEN__", json.dumps(tok)),
+            get_state=lambda: self._call_on_ui(self._build_state),
+            handle_action=lambda body: self._call_on_ui(lambda: self._handle_action(body)),
+            thread_name="oit-page-web",
+        )
+        self._schedule_ui_poll()
+        self._wv_host = WebView2Host(self, bg=COLORS["bg"], on_ready=self._on_webview_ready,
+                                     on_error=self._fallback_to_tk)
+        self._wv_host.pack(fill="both", expand=True)
+        self._wv_loading = tk.Label(self, text=tr("正在加载网页界面…"), bg=COLORS["bg"],
+                                    fg=COLORS["text_dim"], font=config.font("body"))
+        self._wv_loading.place(relx=0.5, rely=0.5, anchor="center")
+
+    def _start_webview_after_show(self):
+        self._wv_show_job = None
+        if self._destroyed or not self._visible or not self._use_webview:
+            return
+        if self._wv_host is None or self._web_server is None:
+            return
+        self._web_server.start()
+        self._wv_host.lift()
+        self._wv_host.start(self._web_server.url)
+        self._wv_host.set_visible(True)
+        self.after(120, self._sync_webview_visible)
+        self._web_server.notify("update")
+
+    def _on_webview_ready(self):
+        if self._wv_loading is not None:
+            try:
+                self._wv_loading.place_forget()
+            except tk.TclError:
+                pass
+        if self._wv_host is not None:
+            self._wv_host.set_visible(self._visible)
+            if self._visible:
+                self.after_idle(self._sync_webview_visible)
+
+    def _sync_webview_visible(self):
+        if self._destroyed or not self._use_webview or self._wv_host is None:
+            return
+        self._wv_host.sync_bounds()
+        self._wv_host.set_visible(self._visible)
+        if self._visible:
+            self._wv_host.notify_parent_moved()
+
+    def _fallback_to_tk(self, _reason=""):
+        if self._destroyed or not self._use_webview:
+            return
+        self._use_webview = False
+        if self._wv_host is not None:
+            try:
+                self._wv_host.close()
+                self._wv_host.destroy()
+            except Exception:
+                pass
+            self._wv_host = None
+        if self._wv_loading is not None:
+            try:
+                self._wv_loading.destroy()
+            except Exception:
+                pass
+            self._wv_loading = None
+        if self._web_server is not None:
+            self._web_server.stop()
+
+
+class ContractWebPageAdapter(WebPageAdapter):
+    """合约专用网页：保留起源 / 都市之意两套词条板视觉和交互。"""
+
+    def _build_webview(self):
+        self._web_server = LocalWebServer(
+            html_provider=lambda tok: _CONTRACT_HTML.replace("__TOKEN__", json.dumps(tok)),
+            get_state=lambda: self._call_on_ui(self._build_state),
+            handle_action=lambda body: self._call_on_ui(lambda: self._handle_action(body)),
+            thread_name="oit-contract-web",
+        )
+        self._schedule_ui_poll()
+        self._wv_host = WebView2Host(self, bg=COLORS["bg"], on_ready=self._on_webview_ready,
+                                     on_error=self._fallback_to_tk)
+        self._wv_host.pack(fill="both", expand=True)
+        self._wv_loading = tk.Label(self, text=tr("正在加载合约界面…"), bg=COLORS["bg"],
+                                    fg=COLORS["text_dim"], font=config.contract_font("body"))
+        self._wv_loading.place(relx=0.5, rely=0.5, anchor="center")
+
+    @staticmethod
+    def _label(widget, default=""):
+        try:
+            return str(widget.cget("text") or default)
+        except Exception:
+            return default
+
+    def _build_state(self):
+        d = self._delegate
+        p = d.P
+        state = {
+            "theme": d.theme,
+            "colors": {k: p.get(k, COLORS.get(k, "")) for k in (
+                "bg", "text", "dim", "line", "board", "band", "band_text", "band_dim",
+                "tile", "tile_text", "tile_rim", "tile_on", "tile_on_text", "tile_on_rim",
+                "tile_off", "tile_off_text", "tile_off_rim", "tile_rand", "tile_rand_text",
+                "tile_rand_rim", "tile_ban", "tile_ban_text", "tile_ban_rim", "sel", "sel_text",
+                "sel_dim", "bar", "start", "start_hover", "start_text", "start_off",
+                "start_off_text", "clear", "clear_hover", "clear_text", "danger", "idle",
+                "live", "live_rim", "hint", "nav", "nav_off", "badge_hi", "badge_hi_text",
+                "badge_lo", "badge_lo_text")},
+            "title": tr("⚔  合约"), "brand": p.get("brand", ""),
+            "tag": tr(p.get("tag_name", "")), "page": d.page + 1, "page_count": d._page_count(),
+            "combo_page": d._on_combo_page(), "tiles": [], "combos": [], "selected": [],
+            "level": self._label(d.lbl_level, "0"), "info": self._label(d.lbl_info),
+            "state": self._label(d.lbl_state), "left": self._label(d.lbl_left),
+            "viol": self._label(d.lbl_viol), "live": self._label(d.lbl_live),
+            "idle": self._label(d.lbl_idle), "last": self._label(d.lbl_last),
+            "block": self._label(d.lbl_block), "rules": [self._label(x) for x in d.lbl_rules],
+            "active": bool(d.c.active), "button": self._label(d.btn_end if d.c.active else d.btn_start),
+            "button_disabled": bool(getattr(d, "_start_off", False)) and not d.c.active,
+        }
+        if d._on_combo_page():
+            for combo, st in d._combos():
+                state["combos"].append({
+                    "id": combo["id"], "name": tr(combo["name"]), "state": st,
+                    "need": " · ".join(tr(C.req_name(r)) for r in combo["reqs"]),
+                    "desc": d._combo_desc(combo), "color": d._combo_color(combo),
+                })
+        else:
+            a, b = d.pages[d.page]
+            for tid, _g, lv, _n, _desc, _x in C.TERMS:
+                if not a <= C.LAYOUT[tid][0] < b:
+                    continue
+                st = d._tile_state.get(tid, (("tile", "tile_text", "tile_rim"), ""))[0]
+                state["tiles"].append({
+                    "id": tid, "level": lv, "mark": marks(lv), "name": term_short(tid),
+                    "desc": term_desc(tid), "fill": p.get(st[0], p["tile"]),
+                    "fg": p.get(st[1], p["tile_text"]), "rim": p.get(st[2], p["tile_rim"]),
+                })
+        for lv, text, void, rand, tid in d._rows(d._selected()):
+            state["selected"].append({
+                "level": lv, "mark": marks(lv) or "—", "text": text, "void": void,
+                "rand": bool(rand), "tid": tid,
+            })
+        return state
+
+    def _handle_action(self, body):
+        d = self._delegate
+        typ = str(body.get("type") or "")
+        try:
+            if typ == "tile":
+                d._click(str(body.get("id") or ""))
+            elif typ == "flip":
+                d._flip(int(body.get("step") or 0))
+            elif typ == "clear":
+                d._clear()
+            elif typ == "start":
+                d._start()
+            elif typ == "end" and d.on_abandon:
+                d.on_abandon()
+            elif typ == "respond":
+                d._respond(bool(body.get("accept")))
+            elif typ == "selected" and body.get("tid"):
+                if d.on_close_rand and body.get("rand"):
+                    d.on_close_rand(body["tid"])
+                elif d.on_lift_ban:
+                    d.on_lift_ban(body["tid"])
+            else:
+                return {"ok": False, "error": "unknown_action"}
+            self.after_idle(self._notify)
+            return {"ok": True, "state": self._build_state()}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "state": self._build_state()}
+
+
+class WebSidebar:
+    """左侧导航的 WebView2 版本，Tk 导航保留为无运行时降级。"""
+
+    def __init__(self, master, labels: dict[str, str], order_get: Callable[[], list[str]],
+                 current_get: Callable[[], str], on_select: Callable[[str], None]):
+        self.master = master
+        self.labels = labels
+        self.order_get = order_get
+        self.current_get = current_get
+        self.on_select = on_select
+        self._destroyed = False
+        self._visible = False
+        self._host = None
+        self._server = None
+        self._poll = None
+        self._queue = queue.SimpleQueue()
+        self._use_webview = is_webview2_available()
+        if self._use_webview:
+            self._server = LocalWebServer(
+                html_provider=lambda tok: _SIDEBAR_HTML.replace("__TOKEN__", json.dumps(tok)),
+                get_state=lambda: self._state(),
+                handle_action=lambda body: self._action(body),
+                thread_name="oit-sidebar-web",
+            )
+            self._host = WebView2Host(master, bg=COLORS["bg_card"], on_ready=self._ready,
+                                      on_error=lambda _reason: self.fallback())
+            self._host.place(x=0, y=0, relwidth=1, relheight=1)
+            self._poll_queue()
+
+    @property
+    def enabled(self):
+        return self._use_webview
+
+    def start(self):
+        if not self.enabled or self._host is None or self._server is None:
+            return
+        self._server.start()
+        self._host.start(self._server.url)
+        self._host.set_visible(self._visible)
+        self._server.notify("update")
+
+    def show(self):
+        self._visible = True
+        if self._host:
+            self._host.set_visible(True)
+        if self._server:
+            self._server.notify("update")
+
+    def hide(self):
+        self._visible = False
+        if self._host:
+            self._host.set_visible(False)
+
+    def notify(self):
+        if self._server:
+            self._server.notify("update")
+
+    def _state(self):
+        order = [x for x in self.order_get() if x != "__divider__" and x in self.labels]
+        divider_at = next((i for i, x in enumerate(self.order_get()) if x == "__divider__"), len(order))
+        return {"colors": {k: COLORS.get(k, "") for k in ("bg_card", "bg", "border", "text", "text_dim", "accent", "accent_fill", "on_accent_fill")},
+                "divider_at": divider_at,
+                "items": [{"key": k, "label": self.labels[k], "dim": i >= divider_at} for i, k in enumerate(order)],
+                "current": self.current_get()}
+
+    def _action(self, body):
+        key = str(body.get("key") or "")
+        if key not in self.labels:
+            return {"ok": False, "error": "unknown_page"}
+        self.on_select(key)
+        return {"ok": True, "state": self._state()}
+
+    def _ready(self):
+        if self._host:
+            self._host.set_visible(self._visible)
+
+    def fallback(self):
+        self._use_webview = False
+        if self._host:
+            try:
+                self._host.close()
+                self._host.destroy()
+            except Exception:
+                pass
+            self._host = None
+        if self._server:
+            self._server.stop()
+            self._server = None
+
+    def _poll_queue(self):
+        if self._destroyed:
+            return
+        try:
+            self._poll = self.master.after(30, self._poll_queue)
+        except tk.TclError:
+            self._poll = None
+
+    def destroy(self):
+        self._destroyed = True
+        if self._poll:
+            try:
+                self.master.after_cancel(self._poll)
+            except tk.TclError:
+                pass
+        if self._host:
+            self._host.close()
+        if self._server:
+            self._server.stop()
+            self._web_server = None
+        self._native_host.pack(fill="both", expand=True)
+        try:
+            self._delegate.show()
+        except Exception:
+            pass
+
+    def show(self):
+        self._visible = True
+        try:
+            self._delegate.show()
+        except AttributeError:
+            try:
+                self._delegate.refresh()
+            except Exception:
+                pass
+        if self._use_webview:
+            if self._wv_show_job:
+                try:
+                    self.after_cancel(self._wv_show_job)
+                except tk.TclError:
+                    pass
+            self._wv_show_job = self.after(40, self._start_webview_after_show)
+            self._notify()
+
+    def hide(self):
+        self._visible = False
+        if self._wv_show_job:
+            try:
+                self.after_cancel(self._wv_show_job)
+            except tk.TclError:
+                pass
+            self._wv_show_job = None
+        if self._wv_host is not None:
+            self._wv_host.set_visible(False)
+
+    def refresh(self, *args, **kwargs):
+        result = self._delegate.refresh(*args, **kwargs)
+        self._notify()
+        return result
+
+    def _notify(self):
+        if self._web_server is not None and not self._destroyed:
+            self._web_server.notify("update")
+
+    def _schedule_ui_poll(self):
+        if self._destroyed or not self._use_webview:
+            return
+        self._drain_ui_queue()
+        try:
+            self._ui_poll_job = self.after(30, self._schedule_ui_poll)
+        except tk.TclError:
+            self._ui_poll_job = None
+
+    def _drain_ui_queue(self):
+        while not self._destroyed:
+            try:
+                fn, done, box = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                box["val"] = fn()
+            except Exception as exc:
+                box["err"] = exc
+            finally:
+                done.set()
+
+    def _call_on_ui(self, fn):
+        if self._destroyed:
+            return {"ok": False, "error": "closed"}
+        if threading.current_thread() is threading.main_thread():
+            return fn()
+        done = threading.Event()
+        box = {}
+        self._ui_queue.put((fn, done, box))
+        try:
+            self.after(0, self._drain_ui_queue)
+        except (tk.TclError, RuntimeError):
+            return {"ok": False, "error": "closed"}
+        if not done.wait(5.0):
+            return {"ok": False, "error": "timeout"}
+        if "err" in box:
+            raise box["err"]
+        return box.get("val")
+
+    def _walk(self, widget, path="0"):
+        self._control_map[path] = widget
+        kind = widget.winfo_class().lower()
+        try:
+            # 设置页和部分旧页面使用带 Button-1 绑定的 Label 作为按钮。
+            if kind == "label" and widget.bind("<Button-1>"):
+                kind = "button"
+        except Exception:
+            pass
+        node = {"id": path, "kind": kind, "text": _text(widget), "children": []}
+        if kind in ("entry", "spinbox", "combobox"):
+            try:
+                node["value"] = widget.get()
+            except Exception:
+                node["value"] = ""
+            if kind == "combobox":
+                try:
+                    node["options"] = list(widget.cget("values"))
+                except Exception:
+                    node["options"] = []
+        if kind == "treeview":
+            try:
+                node["rows"] = self._tree_rows(widget)
+            except Exception:
+                node["rows"] = []
+        if kind in ("button", "checkbutton", "radiobutton", "entry", "spinbox", "combobox", "scale"):
+            try:
+                node["disabled"] = "disabled" in widget.state()
+            except Exception:
+                try:
+                    node["disabled"] = str(widget.cget("state")) == "disabled"
+                except Exception:
+                    node["disabled"] = False
+        try:
+            children = widget.winfo_children()
+        except Exception:
+            children = []
+        for i, child in enumerate(children):
+            child_node = self._walk(child, f"{path}/{i}")
+            if child_node.get("text") or child_node.get("children") or child_node.get("kind") in (
+                    "button", "checkbutton", "radiobutton", "entry", "spinbox", "combobox", "treeview"):
+                node["children"].append(child_node)
+        return node
+
+    def _tree_rows(self, tree):
+        out = []
+        for iid in tree.get_children(""):
+            vals = tree.item(iid)
+            out.append({"text": vals.get("text", ""), "values": list(vals.get("values", ()))})
+        return out[:200]
+
+    def _build_state(self):
+        self._control_map = {}
+        root = self._walk(self._delegate)
+        return {"title": self._title, "colors": self._colors(), "tree": root}
+
+    def _handle_action(self, body):
+        path = str(body.get("id") or "")
+        widget = self._control_map.get(path)
+        if widget is None:
+            return {"ok": False, "error": "unknown_control"}
+        kind = widget.winfo_class().lower()
+        try:
+            if body.get("type") == "set" and kind in ("entry", "spinbox", "combobox"):
+                value = str(body.get("value") or "")
+                if kind == "combobox":
+                    widget.set(value)
+                    widget.event_generate("<<ComboboxSelected>>")
+                else:
+                    widget.delete(0, "end")
+                    widget.insert(0, value)
+                    widget.event_generate("<Return>")
+            elif hasattr(widget, "invoke"):
+                widget.invoke()
+            else:
+                widget.event_generate("<Button-1>")
+            self.after_idle(self._notify)
+            return {"ok": True, "state": self._build_state()}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "state": self._build_state()}
+
+    def _on_destroy(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        self._destroyed = True
+        for attr in ("_ui_poll_job", "_wv_show_job"):
+            job = getattr(self, attr, None)
+            if job:
+                try:
+                    self.after_cancel(job)
+                except tk.TclError:
+                    pass
+        if self._wv_host is not None:
+            try:
+                self._wv_host.close()
+            except Exception:
+                pass
+        if self._web_server is not None:
+            self._web_server.stop()
+
+
+_SIDEBAR_HTML = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+:root{--bg:#171c28;--border:#2a3346;--text:#e6edf7;--dim:#8b97ad;--accent:#2563eb;--on:#fff}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font:13px "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif}.nav{height:100%;padding:14px 7px;display:flex;flex-direction:column;gap:3px}.item{border:1px solid transparent;background:transparent;color:var(--text);border-radius:5px;padding:10px 8px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.item:hover{background:#ffffff12;border-color:var(--border)}.item.active{background:var(--accent);color:var(--on);font-weight:700}.item.dim{color:var(--dim)}.divider{height:1px;background:var(--border);margin:8px 5px}</style></head><body><div class="nav" id="nav"></div><script>const TOKEN=__TOKEN__;const $=id=>document.getElementById(id);function css(c){for(const[k,v]of Object.entries(c||{})){if(v)document.documentElement.style.setProperty('--'+k.replaceAll('_','-'),v)}}async function act(key){try{const r=await fetch('/api/action?token='+encodeURIComponent(TOKEN),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});const j=await r.json();if(j.state)render(j.state)}catch(e){}}function render(s){if(!s)return;css(s.colors);const n=$('nav');n.replaceChildren();(s.items||[]).forEach((x,i)=>{if(i===s.divider_at){const d=document.createElement('div');d.className='divider';n.appendChild(d)}const b=document.createElement('button');b.className='item'+(x.dim?' dim ':' ')+(x.key===s.current?' active':'');b.textContent=x.label;b.onclick=()=>act(x.key);n.appendChild(b)})}async function load(){try{const r=await fetch('/api/state?token='+encodeURIComponent(TOKEN));const j=await r.json();render(j.state)}catch(e){}}const es=new EventSource('/api/events?token='+encodeURIComponent(TOKEN));es.onmessage=load;load();</script></body></html>'''
+
+
+_GENERIC_HTML = r'''<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OIT</title><style>
+:root{--bg:#0f131b;--card:#171c28;--border:#2a3346;--text:#e6edf7;--dim:#8b97ad;--accent:#67d5f7;--fill:#2563eb;--onfill:#fff;--danger:#ef4444}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font:13.5px "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif}button,input,select{font:inherit}button{border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:6px;padding:6px 12px;cursor:pointer}button:hover{border-color:var(--accent);background:#263044}button:disabled{opacity:.45;cursor:not-allowed}input,select{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 9px;outline:0}input:focus,select:focus{border-color:var(--accent)}.app{height:100%;display:flex;flex-direction:column;padding:18px 24px;gap:10px}.header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:10px}.title{font-size:20px;font-weight:700}.body{flex:1;min-height:0;overflow:auto;padding:2px 1px 14px}.group{display:flex;flex-direction:column;gap:7px;margin:6px 0}.section{border:1px solid var(--border);background:var(--card);border-radius:8px;padding:12px}.line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.label{white-space:pre-wrap;line-height:1.45}.muted{color:var(--dim)}.control{margin:2px 0}.tree{display:flex;flex-direction:column;gap:8px}.rows{display:flex;flex-direction:column;gap:4px}.row{padding:6px 8px;border-bottom:1px solid #ffffff12}.row:last-child{border:0}.hidden{display:none}.body::-webkit-scrollbar{width:8px}.body::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+</style></head><body><div class="app"><div class="header"><div id="title" class="title">OIT</div><div id="hint" class="muted"></div></div><div id="body" class="body"></div></div><script>
+const TOKEN=__TOKEN__;const $=id=>document.getElementById(id);let active=null;
+function colors(c){if(!c)return;for(const [k,v] of Object.entries(c)){if(v)document.documentElement.style.setProperty('--'+k.replaceAll('_','-'),v)}}
+async function action(id,type='invoke',value=''){try{const r=await fetch('/api/action?token='+encodeURIComponent(TOKEN),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,type,value})});const j=await r.json();if(j.state)render(j.state)}catch(e){}}
+function control(n){const k=n.kind||'';if(k.includes('button')||k==='checkbutton'||k==='radiobutton'){const b=document.createElement('button');b.className='control';b.textContent=n.text||'操作';b.disabled=!!n.disabled;b.onclick=()=>action(n.id);return b}if(k==='entry'||k==='spinbox'){const i=document.createElement('input');i.value=n.value||'';i.disabled=!!n.disabled;i.onchange=()=>action(n.id,'set',i.value);i.onkeydown=e=>{if(e.key==='Enter')i.blur()};return i}if(k==='combobox'){const s=document.createElement('select');(n.options||[]).forEach(x=>{const o=document.createElement('option');o.textContent=x;o.value=x;s.appendChild(o)});s.value=n.value||'';s.onchange=()=>action(n.id,'set',s.value);return s}if(k==='scale'){return document.createElement('input')}return null}
+function node(n,depth=0){const wrap=document.createElement(depth<2?'div':'div');wrap.className=depth<2?'section group':'';const c=control(n);if(c){wrap.appendChild(c)}else if(n.text){const l=document.createElement('div');l.className='label'+(n.kind==='label'?'':' muted');l.textContent=n.text;wrap.appendChild(l)}if(n.rows){const rs=document.createElement('div');rs.className='rows';n.rows.forEach(r=>{const x=document.createElement('div');x.className='row';x.textContent=[r.text,...(r.values||[])].filter(Boolean).join('  ');rs.appendChild(x)});wrap.appendChild(rs)}(n.children||[]).forEach(ch=>wrap.appendChild(node(ch,depth+1)));return wrap}
+function render(s){if(!s)return;colors(s.colors);$('title').textContent=s.title||'OIT';$('body').replaceChildren(node(s.tree))}async function load(){try{const r=await fetch('/api/state?token='+encodeURIComponent(TOKEN));const j=await r.json();render(j.state)}catch(e){}}const es=new EventSource('/api/events?token='+encodeURIComponent(TOKEN));es.onmessage=load;load();
+</script></body></html>'''
+
+_CONTRACT_HTML = r'''<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OIT Contract</title><style>
+:root{--bg:#1f2023;--text:#f2f2f2;--dim:#9a9ca1;--line:#c8202f;--board:#d6d7da;--band:#2c2d31;--band-text:#ececec;--band-dim:#9a9ca1;--tile:#45474d;--tile-text:#f4f4f4;--tile-rim:#6b6d73;--tile-on:#1d6fc4;--tile-on-text:#fff;--tile-on-rim:#9cc8ff;--tile-off:#bdbec1;--tile-off-text:#8e9095;--tile-off-rim:#a9aaad;--tile-rand:#f2b33d;--tile-rand-text:#141416;--tile-rand-rim:#ffd27a;--tile-ban:#7c3aed;--tile-ban-text:#fff;--tile-ban-rim:#c4a1ff;--sel:#141416;--sel-text:#f2f2f2;--sel-dim:#77797e;--bar:#26272b;--start:#9e1b28;--start-hover:#bf2433;--start-text:#fff;--start-off:#4a4b51;--start-off-text:#8e9095;--clear:#3a3b40;--clear-hover:#4a4b51;--clear-text:#ececec;--danger:#ff4d5a;--idle:#f2b33d;--live:#18181b;--live-rim:#c8202f;--hint:#2c2d31;--nav:#ececec;--nav-off:#55575c}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font:13px "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif}button{font:inherit;border:1px solid var(--clear);background:var(--clear);color:var(--clear-text);padding:7px 14px;border-radius:4px;cursor:pointer}button:hover{background:var(--clear-hover)}button:disabled{opacity:.45;cursor:not-allowed}.app{height:100%;display:flex;flex-direction:column;padding:16px 22px 12px;gap:8px}.head{display:flex;align-items:center;gap:10px;min-height:31px}.tag{background:var(--line);color:#fff;padding:4px 8px;font-weight:700;font-size:11px}.title{font-size:20px;font-weight:700}.brand{color:var(--dim);font-weight:700;font-size:11px;letter-spacing:1px}.head-state{margin-left:auto;color:var(--danger);font-weight:700}.rules{margin-left:auto;border:1px solid var(--line);background:var(--live);padding:8px 12px;white-space:pre-wrap;color:var(--dim);font-size:11px;max-width:420px}.rule-title{color:var(--danger);font-weight:700}.line{height:2px;background:var(--line)}.live{border:2px solid var(--live-rim);background:var(--live);padding:8px 14px;display:flex;flex-wrap:wrap;gap:4px 18px;align-items:center}.left{font-size:22px;font-weight:700}.viol{margin-left:auto;color:var(--danger);font-size:16px;font-weight:700}.live-sub{width:100%;color:var(--dim);white-space:pre-wrap}.idle{color:var(--idle);font-weight:700}.board-wrap{flex:1;min-height:220px;overflow:auto;background:var(--board);color:var(--band-text);display:flex;flex-direction:column}.board{display:flex;min-height:370px}.band{width:116px;flex:0 0 116px;background:var(--band);display:flex;flex-direction:column;padding:10px 8px}.band-title{writing-mode:vertical-rl;transform:rotate(180deg);color:var(--band-dim);font-weight:700;letter-spacing:1px;margin:auto}.band-sub{writing-mode:vertical-rl;transform:rotate(180deg);color:var(--band-text);font-weight:700;margin:auto}.nav{display:flex;justify-content:space-between;align-items:center;color:var(--nav);padding-top:8px}.nav button{background:transparent;border:0;color:var(--nav);font-size:20px;padding:0 4px}.tiles{flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(95px,1fr));grid-auto-rows:82px;gap:7px;padding:10px}.tile{position:relative;display:flex;align-items:center;justify-content:center;text-align:center;white-space:pre-wrap;cursor:pointer;clip-path:polygon(25% 3%,75% 3%,98% 50%,75% 97%,25% 97%,2% 50%);border:0;color:var(--tile-text);background:var(--tile);font-weight:700;padding:10px}.tile::after{content:"";position:absolute;inset:3px;clip-path:inherit;border:2px solid var(--tile-rim)}.tile:hover{filter:brightness(1.14)}.tile span{position:relative;z-index:1}.combo-grid{flex:1;display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:9px;padding:12px}.combo{background:var(--sel);border:1px solid var(--tile-rim);padding:12px;min-height:105px}.combo.done{border-color:var(--accent,#a5f3ff)}.combo-name{font-weight:700;font-size:15px}.combo-need{color:var(--sel-dim);margin-top:8px}.combo-desc{color:var(--sel-text);margin-top:7px;white-space:pre-wrap}.selected{background:var(--sel);color:var(--sel-text);padding:10px 14px;max-height:165px;overflow:auto}.selected-title{color:var(--sel-dim);font-weight:700;margin-bottom:6px}.selected-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 14px}.selected-row{padding:4px 6px;white-space:pre-wrap}.selected-row.void{color:var(--sel-dim)}.selected-row.rand{color:var(--tile-rand)}.bottom{background:var(--bar);display:flex;align-items:center;gap:18px;padding:9px 14px}.level-label{color:var(--dim);font-size:11px}.level{font-size:20px;font-weight:700}.info{white-space:pre-wrap;color:var(--text);font-size:12px}.bottom-actions{margin-left:auto;display:flex;align-items:flex-end;gap:6px;flex-direction:column}.block{color:var(--dim);font-size:11px;white-space:pre-wrap;text-align:right}.start{background:var(--start);color:var(--start-text);font-size:15px;font-weight:700;padding:9px 22px}.start:hover{background:var(--start-hover)}.start.off{background:var(--start-off);color:var(--start-off-text);cursor:default}.last{color:var(--dim);font-size:11px;padding:2px 4px}.hidden{display:none}@media(max-width:760px){.rules{display:none}.band{width:78px;flex-basis:78px}.tiles{grid-template-columns:repeat(auto-fit,minmax(72px,1fr));grid-auto-rows:70px}.selected-grid{grid-template-columns:1fr}.bottom{gap:8px;padding:7px}.info{display:none}}
+</style></head><body><div class="app"><div class="head"><div id="tag" class="tag"></div><div class="title" id="title"></div><div class="brand" id="brand"></div><div class="head-state" id="state"></div><div class="rules"><span class="rule-title">合约期间</span><br><span id="rules"></span></div></div><div class="line"></div><div id="live" class="live hidden"><div id="left" class="left"></div><div id="viol" class="viol"></div><div id="liveSub" class="live-sub"></div><div id="idle" class="idle"></div></div><div class="board-wrap"><div class="board"><div class="band"><div id="bandTitle" class="band-title">CONTRACT LIST</div><div id="bandSub" class="band-sub">可选词条</div><div class="nav"><button id="prev">◀</button><span id="page"></span><button id="next">▶</button></div></div><div id="tiles" class="tiles"></div><div id="combos" class="combo-grid hidden"></div></div><div id="selected" class="selected"></div></div><div id="last" class="last"></div><div class="bottom"><button id="clear">🗑 清空</button><div><div class="level-label">危机等级</div><div id="level" class="level">0</div></div><div id="info" class="info"></div><div class="bottom-actions"><div id="block" class="block"></div><button id="start" class="start"></button></div></div></div><script>
+const TOKEN=__TOKEN__;const $=id=>document.getElementById(id);function css(c){for(const[k,v]of Object.entries(c||{})){if(v)document.documentElement.style.setProperty('--'+k.replaceAll('_','-'),v)}}async function act(type,extra={}){try{const r=await fetch('/api/action?token='+encodeURIComponent(TOKEN),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type,...extra})});const j=await r.json();if(j.state)render(j.state)}catch(e){}}function render(s){if(!s)return;css(s.colors);$('tag').textContent=s.tag||'';$('title').textContent=s.title||'';$('brand').textContent=s.brand||'';$('state').textContent=s.state||'';$('rules').textContent=(s.rules||[]).join('\n');$('page').textContent=s.page+' / '+s.page_count;$('prev').disabled=s.page<=1;$('next').disabled=s.page>=s.page_count;$('live').classList.toggle('hidden',!s.active);$('left').textContent=s.left||'';$('viol').textContent=s.viol||'';$('liveSub').textContent=s.live||'';$('idle').textContent=s.idle||'';$('bandTitle').textContent=s.combo_page?'CONTRACT EFFECT':'CONTRACT LIST';$('bandSub').textContent=s.combo_page?'词条组合':'可选词条';$('tiles').classList.toggle('hidden',s.combo_page);$('combos').classList.toggle('hidden',!s.combo_page);$('clear').classList.toggle('hidden',s.active);$('level').textContent=s.level||'0';$('info').textContent=s.info||'';$('block').textContent=s.block||'';$('last').textContent=s.last||'';const b=$('start');b.textContent=s.button||'';b.classList.toggle('off',!!s.button_disabled);b.disabled=!!s.button_disabled&& !s.active;$('tiles').replaceChildren();(s.tiles||[]).forEach(t=>{const b=document.createElement('button');b.className='tile';b.style.background=t.fill;b.style.color=t.fg;b.style.outline='2px solid '+t.rim;b.title=t.desc;b.innerHTML='<span>'+t.mark+'\n'+t.name+'</span>';b.onclick=()=>act('tile',{id:t.id});$('tiles').appendChild(b)});$('combos').replaceChildren();(s.combos||[]).forEach(c=>{const x=document.createElement('div');x.className='combo '+(c.state==='done'?'done':'');x.style.borderColor=c.color;x.innerHTML='<div class="combo-name" style="color:'+c.color+'">'+c.name+' <small>'+c.state+'</small></div><div class="combo-need">需要 '+c.need+'</div><div class="combo-desc">'+c.desc+'</div>';$('combos').appendChild(x)});const sel=$('selected');sel.innerHTML='<div class="selected-title">CONTRACT SELECTED · 已选中词条</div>';const sg=document.createElement('div');sg.className='selected-grid';(s.selected||[]).forEach(x=>{const r=document.createElement('div');r.className='selected-row'+(x.void?' void':'')+(x.rand?' rand':'');r.textContent=x.mark+'  '+x.text;r.onclick=()=>x.tid&&act('selected',{tid:x.tid,rand:x.rand});sg.appendChild(r)});sel.appendChild(sg)}async function load(){try{const r=await fetch('/api/state?token='+encodeURIComponent(TOKEN));const j=await r.json();render(j.state)}catch(e){}}$('prev').onclick=()=>act('flip',{step:-1});$('next').onclick=()=>act('flip',{step:1});$('clear').onclick=()=>act('clear');$('start').onclick=()=>act('start');const es=new EventSource('/api/events?token='+encodeURIComponent(TOKEN));es.onmessage=load;load();
+</script></body></html>'''
+

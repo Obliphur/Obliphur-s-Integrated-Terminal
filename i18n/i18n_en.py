@@ -2,6 +2,8 @@
 
 
 EN = {
+    "对方的左手": "Their left hand",
+    "对方的右手": "Their right hand",
     "请提供 Project Gutenberg 或 Standard Ebooks 的官方书目地址。": "Provide an official Project Gutenberg or Standard Ebooks book page URL.",
     "未通过 Standard Ebooks 全文校验：书名、来源书目、正文或完整结构不匹配。": "Standard Ebooks validation failed: the title, source book, body text or complete document structure does not match.",
     "未通过全文校验：缺少对应书号、书名或完整首尾标记": "Full-text validation failed: missing matching book ID, title or complete start/end markers.",

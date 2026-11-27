@@ -1054,24 +1054,6 @@ async function openActorModal(actorId, actorName) {
       });
       btns.appendChild(bMove);
     }
-    const bHold = document.createElement("button");
-    bHold.className = "btn";
-    if (info.holding_side) {
-      bHold.textContent = "松开握持";
-    } else if (!samePos) {
-      bHold.textContent = "🤝 牵手带走 (需同位置)";
-      bHold.disabled = true;
-    } else if (!info.hold_ok) {
-      bHold.textContent = "🤝 牵手带走 (未解锁)";
-      bHold.disabled = true;
-    } else {
-      bHold.textContent = "🤝 牵手带走";
-    }
-    bHold.addEventListener("click", async () => {
-      closeModal();
-      await doAction({ type: "toggle_hold", actor_id: actorId, actor_name: actorName });
-    });
-    btns.appendChild(bHold);
     top.append(meta, btns);
     body.appendChild(top);
 
@@ -1110,7 +1092,7 @@ async function openActorModal(actorId, actorName) {
     if (!samePos) {
       const warn = document.createElement("div");
       warn.style.cssText = "color:var(--danger);font-size:12px;";
-      warn.textContent = `你与 ${actorName} 不在同一位置，请先点击「走到「${info.target_pos}」身旁」再使用手部动作或牵手（当前仍可勾选「目光注视」）。`;
+      warn.textContent = `你与 ${actorName} 不在同一位置，请先点击「走到「${info.target_pos}」身旁」再使用手部动作（当前仍可勾选「目光注视」）。`;
       body.appendChild(warn);
     } else if (leftBound && rightBound) {
       const warn = document.createElement("div");

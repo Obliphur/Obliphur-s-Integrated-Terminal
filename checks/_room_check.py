@@ -114,6 +114,8 @@ def main():
         assert part_allowed("肩膀", 0) == (True, 0)
         assert part_allowed("手掌 / 指尖", 49) == (False, 50)
         assert part_allowed("手掌 / 指尖", 50) == (True, 50)
+        assert part_allowed("对方的左手", 49) == (False, 50)
+        assert part_allowed("对方的右手", 50) == (True, 50)
         assert part_allowed("脸颊", 119) == (False, 120)
         assert part_allowed("脸颊", 120) == (True, 120)
         assert part_allowed("拥抱 / 拉近", 199) == (False, 200)
@@ -219,6 +221,9 @@ def main():
             {"user", "Claudia.txt"}, set(store.rooms.keys()),
         )
         assert parsed["silent"] is False and parsed["volume"] == "whisper" and parsed["move_to"] == "lounge"
+        hold_parsed = parse_actor_reply('{"hold_hand":"right"}', {"user", "Claudia.txt"})
+        assert hold_parsed["hold_hand"] == "right", "模型牵手意图应保留左右手选择"
+        assert parse_actor_reply('{"hold_hand":"invalid"}', {"user"})["hold_hand"] is None
         silent_parsed = parse_actor_reply('{"silent":true,"speech":"不应说出口"}', {"user", "Claudia.txt"})
         assert silent_parsed["silent"] is True and silent_parsed["speech"] == ""
 

@@ -24,6 +24,7 @@ from pages.widgets import LoadingCover, cfg, frozen
 from pages.knowledge_page import KnowledgePage
 from pages.room_page import RoomPage
 from pages.timer_web import TimerPage
+from pages.web_page import ContractWebPageAdapter, WebPageAdapter, WebSidebar
 from .app_sidebar import SidebarMixin
 
 
@@ -379,6 +380,16 @@ class WindowMixin(SidebarMixin):
             b.pack(fill="x", pady=(0, 2))
             self.nav_btns[key] = b
         self._build_sidebar_order()
+        self.web_sidebar = WebSidebar(
+            self.sidebar, self.nav_labels,
+            order_get=lambda: self.sidebar_order,
+            current_get=lambda: getattr(self, "current_page", "timer"),
+            on_select=self.show_page,
+        )
+        if self.web_sidebar.enabled:
+            for button in self.nav_btns.values():
+                button.pack_forget()
+            self.web_sidebar.start()
 
         self.content = tk.Frame(self.shell, bg=bg)
         self.content.pack(side="left", fill="both", expand=True)
@@ -397,22 +408,26 @@ class WindowMixin(SidebarMixin):
         # 只有当前页挂在界面上 (grid), 其余页 grid_remove:
         # 看不见的页面不参与布局和重画, 每秒的刷新也不会去画它们.
         def make_cal():
-            page = CalendarPage(self.content, self.dm)
-            page.fog = self._fog_seed
-            page.live = self._calendar_live
-            return page
+            def build(parent):
+                page = CalendarPage(parent, self.dm)
+                page.fog = self._fog_seed
+                page.live = self._calendar_live
+                return page
+            return WebPageAdapter(self.content, build, tr("📅  日历"))
         self.pages.add_factory("cal", make_cal)
         yield
         def make_stats():
-            page = StatsPage(self.content, self.dm, self.net, focus_live=self._focus_live)
-            page.fog = self._fog_seed
-            page.journal_get = self.prescripts.journal_view
-            page.journal_set = self.prescripts.note_journal
-            page.journal_logs = self.prescripts.logs_newest
-            page.journal_synced = lambda: self.sync.sync_now() if self.sync.peers() else None
-            page.contract_log = lambda: self.contract.history
-            page.violation_log = lambda: self.dm.recent_violations()
-            return page
+            def build(parent):
+                page = StatsPage(parent, self.dm, self.net, focus_live=self._focus_live)
+                page.fog = self._fog_seed
+                page.journal_get = self.prescripts.journal_view
+                page.journal_set = self.prescripts.note_journal
+                page.journal_logs = self.prescripts.logs_newest
+                page.journal_synced = lambda: self.sync.sync_now() if self.sync.peers() else None
+                page.contract_log = lambda: self.contract.history
+                page.violation_log = lambda: self.dm.recent_violations()
+                return page
+            return WebPageAdapter(self.content, build, tr("📊  统计"))
         self.pages.add_factory("stats", make_stats)
         yield
         self.pages.add_factory("log", lambda: HourLogPage(
@@ -427,44 +442,50 @@ class WindowMixin(SidebarMixin):
             rest=lambda a, b, text: self.contract.rest_cell(a, b, text, self.dm.auto_text_for_key),
             sealed=lambda a, b: self.contract.hour_sealed(a, b)))
         yield
-        self.pages.add_factory("contract", lambda: ContractPage(self.content, self.contract, on_start=self.start_contract,
-                                              on_abandon=self.abandon_contract,
-                                              blocked=self.contract_block,
-                                              net_used=lambda: self.net.used_all,
-                                              on_change=self._paint_sidebar,
-                                              rec_text=self._rec_text,
-                                              on_stop_screen=self.terminate_recording,
-                                              on_close_rand=self.close_random_term,
-                                              on_lift_ban=self.lift_net_ban,
-                                              on_pick=self._warn_pick_term, on_joint_pick=self._joint_pick_done,
-                                              invite_fn=self._joint_invite_info, on_invite=self._joint_invite_respond,
-                                              locked_fn=lambda: self.comm.joint_state() == "yes"))
-        self.pages.add_factory("settings", lambda: SettingsPage(
-            self.content, self.settings,
-            on_changed=self.on_settings_changed, on_sound=self.play_chime,
-            on_dev_mode=self.on_dev_toggled,
-            on_language=self.on_language_changed,
-            on_font_scale=self.on_font_scale_changed,
-            on_theme=self.on_theme_changed,
-            on_contract_theme=self.rebuild_ui,
-            on_end_setup=self.end_setup_period,
-            updater=self.updater,
-            on_update_check=lambda: self.check_update(auto=False),
-            on_update_install=self.install_update,
-            on_update_relay=lambda: self.relay_updates(manual=True),
-            sync=self.sync, achievements=self.ach,
-            on_open_achievements=self._open_achievements,
-            data_dir=self.dm.data_dir, recording=self.recording, on_delete_record=self.delete_recording,
-            comm=self.comm, on_open_rules=self.open_rules_popup,
-            alarm=self.alarm, ringer=self.ringer, co_alarm_fn=self._co_alarm_fn,
-            ring_busy=lambda: self._alarm_win is not None,
-            username_get=lambda: self.dm.username,
-            username_set=self._set_username,
-        ))
+        def build_contract(parent):
+            return ContractPage(parent, self.contract, on_start=self.start_contract,
+                                on_abandon=self.abandon_contract,
+                                blocked=self.contract_block,
+                                net_used=lambda: self.net.used_all,
+                                on_change=self._paint_sidebar,
+                                rec_text=self._rec_text,
+                                on_stop_screen=self.terminate_recording,
+                                on_close_rand=self.close_random_term,
+                                on_lift_ban=self.lift_net_ban,
+                                on_pick=self._warn_pick_term, on_joint_pick=self._joint_pick_done,
+                                invite_fn=self._joint_invite_info, on_invite=self._joint_invite_respond,
+                                locked_fn=lambda: self.comm.joint_state() == "yes")
+        self.pages.add_factory("contract", lambda: ContractWebPageAdapter(self.content, build_contract, tr("⚔  合约")))
+
+        def build_settings(parent):
+            return SettingsPage(
+                parent, self.settings,
+                on_changed=self.on_settings_changed, on_sound=self.play_chime,
+                on_dev_mode=self.on_dev_toggled,
+                on_language=self.on_language_changed,
+                on_font_scale=self.on_font_scale_changed,
+                on_theme=self.on_theme_changed,
+                on_contract_theme=self.rebuild_ui,
+                on_end_setup=self.end_setup_period,
+                updater=self.updater,
+                on_update_check=lambda: self.check_update(auto=False),
+                on_update_install=self.install_update,
+                on_update_relay=lambda: self.relay_updates(manual=True),
+                sync=self.sync, achievements=self.ach,
+                on_open_achievements=self._open_achievements,
+                data_dir=self.dm.data_dir, recording=self.recording, on_delete_record=self.delete_recording,
+                comm=self.comm, on_open_rules=self.open_rules_popup,
+                alarm=self.alarm, ringer=self.ringer, co_alarm_fn=self._co_alarm_fn,
+                ring_busy=lambda: self._alarm_win is not None,
+                username_get=lambda: self.dm.username,
+                username_set=self._set_username,
+            )
+        self.pages.add_factory("settings", lambda: WebPageAdapter(self.content, build_settings, tr("⚙  设置")))
         yield
         # 成就 (MECHANICS 17): 单独一页, 左侧导航里没有它 (由 设置 → 基本设置 的"🏆 成就"按钮打开)
-        self.pages.add_factory("ach", lambda: AchievementsPage(
-            self.content, self.ach, on_back=lambda: self.show_page("settings")))
+        self.pages.add_factory("ach", lambda: WebPageAdapter(
+            self.content, lambda parent: AchievementsPage(
+                parent, self.ach, on_back=lambda: self.show_page("settings")), tr("🏆  成就")))
         yield
         def make_comm():
             page = CommPage(
@@ -487,9 +508,11 @@ class WindowMixin(SidebarMixin):
         ))
         yield
         def make_net():
-            page = tk.Frame(self.content, bg=bg)
-            self._build_net_page(page)
-            return page
+            def build(parent):
+                page = tk.Frame(parent, bg=bg)
+                self._build_net_page(page)
+                return page
+            return WebPageAdapter(self.content, build, tr("🌐  联网申请"))
         self.pages.add_factory("net", make_net)
         yield
         def make_timer():
@@ -498,9 +521,11 @@ class WindowMixin(SidebarMixin):
         self._ensure_page("timer")
         yield
         def make_reset():
-            page = tk.Frame(self.content, bg=bg)
-            self._build_reset_page(page)
-            return page
+            def build(parent):
+                page = tk.Frame(parent, bg=bg)
+                self._build_reset_page(page)
+                return page
+            return WebPageAdapter(self.content, build, tr("🔄  重置"))
         self.pages.add_factory("reset", make_reset)
         # share data: 页面下方的聊天悬浮窗 (第 1 行), 和盖在原页面上的"AI 的数据" (第 0 行, 在所有页面上面)
         self.share_dock = ShareDock(self.content, self.comm, on_view=lambda: self._share_sync_ui(True))
@@ -529,6 +554,12 @@ class WindowMixin(SidebarMixin):
                 self._rebuilding = False
 
     def _rebuild_ui(self, cover=None):
+        if hasattr(self, "web_sidebar"):
+            try:
+                self.web_sidebar.destroy()
+            except Exception:
+                pass
+            self.web_sidebar = None
         for k in ("comm", "room", "timer", "log", "knowledge"):
             if k in self.pages and hasattr(self.pages[k], "hide"):
                 self.pages[k].hide()
@@ -715,6 +746,8 @@ class WindowMixin(SidebarMixin):
                 except Exception:
                     pass
         self._paint_sidebar()
+        if hasattr(self, "web_sidebar"):
+            self.web_sidebar.notify()
         # 只把目标页挂到界面上, 其余页收起 (不参与布局 / 重画)
         target = self._ensure_page(key)
         if key != "prescript" and target.winfo_manager() != "grid":
@@ -728,7 +761,7 @@ class WindowMixin(SidebarMixin):
                     f.hide()
             elif f.winfo_manager() == "grid":
                 f.grid_remove()
-                if k in ("room", "comm", "timer", "log", "knowledge") and hasattr(f, "hide"):
+                if hasattr(f, "hide"):
                     f.hide()
         if key == "prescript":
             page = self.pages["prescript"]
@@ -755,11 +788,13 @@ class WindowMixin(SidebarMixin):
         elif key == "knowledge":
             self.pages["knowledge"].show()
         elif key == "settings":
-            self.pages["settings"].refresh()
+            self.pages["settings"].show()
         elif key == "ach":
             self.pages["ach"].show()
         elif key == "reset":
             self.refresh_reset()
+            if hasattr(self.pages["reset"], "show"):
+                self.pages["reset"].show()
         if key != "comm":
             self.comm.set_viewing(False)
         try:

@@ -495,28 +495,6 @@ class RoomPage(tk.Frame):
             if side in ("left", "right") and self.store.hands[side]["state"] == "holding":
                 self.store.release_hand(side, self._persona_names())
             return {"ok": True, "state": self._build_web_state()}
-        if atype == "toggle_hold":
-            actor_id = str(body.get("actor_id") or "")
-            actor_name = str(body.get("actor_name") or self._actor_name(actor_id))
-            holding_side = next((s for s in ("left", "right") if self.store.holding_hands.get(s) == actor_id), "")
-            if holding_side:
-                self.store.release_hand(holding_side, self._persona_names())
-                self._notify_room_action_change()
-                return {"ok": True, "state": self._build_web_state()}
-            free = self.store.available_hands()
-            if not free:
-                return {"ok": False, "toast": tr("当前没有可用的手来牵住对方。"), "warn": True}
-            err = self.store.hold_hand(free[0], actor_id, actor_name, msg_count=self.total_msgs_with(actor_id))
-            if err:
-                return {"ok": False, "toast": tr(err), "warn": True}
-            if self.comm and hasattr(self.comm, "apply_room_action_vt"):
-                self.comm.apply_room_action_vt(actor_id, [{"part": "牵手带走", "secret": False}])
-            self._notify_room_action_change()
-            return {
-                "ok": True,
-                "toast": tr("已牵住 {name} 的手，切换房间时会把对方一起带出去。", name=actor_name),
-                "state": self._build_web_state(),
-            }
         if atype == "actor_interact_info":
             actor_id = str(body.get("actor_id") or "")
             msg_count = self.total_msgs_with(actor_id)
@@ -1182,28 +1160,6 @@ class RoomPage(tk.Frame):
                                    n=msg_count, up=user_pos, tp=target_pos),
                  bg=bg, fg=COLORS["accent"], font=config.font("small"), anchor="w").pack(side="left", fill="x", expand=True)
 
-        def toggle_hold():
-            if holding_side:
-                self.store.release_hand(holding_side, self._persona_names())
-                dlg.finish(True)
-                self.refresh()
-                self._notify_room_action_change()
-                return
-            free = self.store.available_hands()
-            if not free:
-                toast.warn(tr("当前没有空闲的手来牵住对方。"))
-                return
-            err = self.store.hold_hand(free[0], actor_id, actor_name)
-            if err:
-                toast.warn(tr(err))
-                return
-            toast.info(tr("已牵住 {name} 的手，切换房间时会把对方一起带出去。", name=actor_name))
-            dlg.finish(True)
-            self.refresh()
-            self._notify_room_action_change()
-
-        ttk.Button(top_info, text=tr("松开牵手") if holding_side else tr("🤝 牵手带走"),
-                   command=toggle_hold).pack(side="right")
         if user_pos != target_pos:
             def move_near():
                 self.store.move_position("user", target_pos, self._actor_name("user"))
@@ -1601,6 +1557,16 @@ class RoomPage(tk.Frame):
                 self.store.set_hand_bound("both", False)
             elif bind in ("left", "right", "both"):
                 self.store.set_hand_bound(bind, True, note=actor_name)
+            hold = parsed.get("hold_hand")
+            if hold == "release":
+                for side in ("left", "right"):
+                    if self.store.holding_hands.get(side) == actor_id:
+                        self.store.release_hand(side, names)
+            elif hold in ("left", "right"):
+                err = self.store.hold_hand(hold, actor_id, actor_name,
+                                           msg_count=self.total_msgs_with(actor_id))
+                if not err and self.comm and hasattr(self.comm, "apply_room_action_vt"):
+                    self.comm.apply_room_action_vt(actor_id, [{"part": "牵手带走", "secret": False}])
 
         # 2. 更新室内位置
         pos = parsed.get("position")
