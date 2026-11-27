@@ -99,6 +99,10 @@ def _selftest():
             mem_calls.append([dict(m) for m in messages])
             mem_kws.append(dict(kw))
             return mem_script.pop(0) if mem_script else ""
+        if system.startswith("你是独立的心理与情绪分析子代理"):
+            return "普通情绪表达，无安全风险。"
+        if system.startswith("你是 OIT 沟通模块的离线睡眠期记忆整理器"):
+            return '{"mem_auto": "", "remove_live_ids": []}'
         if "你刚才已经回复了用户" in messages[-1]["content"]:      # 规则 VIII 的第二次调用 (标记已被 OIT_TAG 取代)
             follow_calls.append((system, [dict(m) for m in messages]))
             return follow.pop(0) if follow else REFUSE
@@ -2369,7 +2373,7 @@ def _selftest():
     script.append("好的")
     cas2.send("你好")
     wait(cas2)
-    assert calls[-1][0].startswith(prefix_prompt(True)) and calls[-1][0].endswith("你是别人.")
+    assert calls[-1][0].startswith(prefix_prompt(True)) and (PERSONA_HEAD + "你是别人.") in calls[-1][0]
 
     # 合约失败 / 没有休息: 立即重新计算; 提前终止也一样; 系统消息写明原因
     clock[0] = day.replace(hour=15, minute=0)
@@ -3229,8 +3233,8 @@ def _selftest():
     cr = Comm(rt_dir, rt_personas, now=lambda: clock[0], chat_fn=fake)
     cr.ai.set_profile("deepseek", api_key="k")
     cr.ai.provider = "deepseek"
-    assert cr.persona_name() == "Claudia.txt" and list_personas(rt_personas) == ["Assistant.txt", "Claudia.txt"], "Claudia_templates 是配套文件, 不是人设"
-    assert companion_files(rt_personas) == ["Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt"] and routine_name_of(rt_personas, "Claudia.txt") == "Claudia_templates.txt"
+    assert cr.persona_name() == "Claudia.txt" and list_personas(rt_personas) == ["Assistant.txt", "Charlotte.txt", "Claudia.txt", "Gemina.txt"], "Claudia_templates 是配套文件, 不是人设"
+    assert all(f in companion_files(rt_personas) for f in ("Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt")) and routine_name_of(rt_personas, "Claudia.txt") == "Claudia_templates.txt"
     assert is_companion_name(rt_personas, "Claudia_templates.txt") and is_companion_name(rt_personas, "Claudia_background.txt") and not is_companion_name(rt_personas, "Claudia.txt")
     assert base_persona_of(rt_personas, "Claudia_templates.txt") == "Claudia.txt" and base_persona_of(rt_personas, "Claudia_background.txt") == "Claudia.txt"
     assert companions_of(rt_personas, "Claudia.txt") == ["Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt"] and companions_of(rt_personas, "Assistant.txt") == []
@@ -3434,7 +3438,7 @@ def _selftest():
     assert cr.condition_state()[2][4], "信息 >= 500 条"
     # ---- 亲密关系 / 主动告白 (1.0.397): 信息总数 + 严格条件 + 每次进入特殊空闲判定 + 用户 [accept] + 同步 + 长期记忆 ----
     assert "accept_relationship=true" in prefix_prompt()
-    assert "系统在进入特殊空闲时间时检查更严格的主动告白条件" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "系统在进入特殊空闲时检查更严格的主动告白条件" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert condition_rules(builtin_rules, True)[0] == {"joint_days": 30, "joint_n": 27, "joint_lv": 20, "study_days": 60, "study_h": 480.0, "idle_h": 180.0, "msgs": 1000, "today_h": 9.0}
     love_clock = clock[0]
 
