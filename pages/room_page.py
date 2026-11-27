@@ -563,10 +563,13 @@ class RoomPage(tk.Frame):
                 target_name = str(item.get("target_name") or "")
                 text = str(item.get("text") or "").strip()
                 secret = bool(item.get("secret", False))
-                msg_count = self.total_msgs_with(target_id)
-                err = self.store.queue_hand_action(
-                    hand, target_id, target_name, part, text, msg_count=msg_count, secret=secret
-                )
+                if item.get("is_facility") or part == "设施":
+                    err = self.store.queue_hand_action(hand, target_id, target_name, "设施", text)
+                else:
+                    msg_count = self.total_msgs_with(target_id)
+                    err = self.store.queue_hand_action(
+                        hand, target_id, target_name, part, text, msg_count=msg_count, secret=secret
+                    )
                 if err:
                     return {"ok": False, "toast": tr(err), "warn": True, "state": self._build_web_state()}
             return {"ok": True, "state": self._build_web_state()}

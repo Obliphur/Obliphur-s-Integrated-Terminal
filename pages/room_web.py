@@ -952,18 +952,33 @@ mapBox.addEventListener("click", (e) => {
     return;
   }
   const act = hs.action || "custom";
+  const myOcc = STATE && STATE.occupants ? STATE.occupants.find(o => o.is_me) : null;
+  const moveOpt = {
+    label: `🚶 移动到「${hs.label}」`,
+    onClick: () => doAction({ type: "move_position", label: hs.label, hs }),
+  };
   if (act === "piano") {
-    doAction({ type: "open_music" });
+    openMenu(e.clientX, e.clientY, [
+      moveOpt,
+      { label: "🎹 打开音乐演奏", onClick: () => doAction({ type: "open_music" }) },
+      { label: `✋ 与「${hs.label}」互动…`, onClick: () => openFacilityModal(hs) },
+    ]);
   } else if (act === "bookshelf") {
-    doAction({ type: "open_coread" });
+    openMenu(e.clientX, e.clientY, [
+      moveOpt,
+      { label: "📚 打开共读 / 书库", onClick: () => doAction({ type: "open_coread" }) },
+      { label: `✋ 与「${hs.label}」互动…`, onClick: () => openFacilityModal(hs) },
+    ]);
   } else if (act === "desk") {
     openMenu(e.clientX, e.clientY, [
+      moveOpt,
       { label: "⏱ 打开专注计时器", onClick: () => doAction({ type: "open_page", page: "timer" }) },
       { label: "🤝 发起联合行动", onClick: () => doAction({ type: "open_joint" }) },
       { label: `✋ 与「${hs.label}」互动…`, onClick: () => openFacilityModal(hs) },
     ]);
   } else if (act === "board") {
     openMenu(e.clientX, e.clientY, [
+      moveOpt,
       { label: "⚔ 打开合约页", onClick: () => doAction({ type: "open_page", page: "contract" }) },
       { label: "📚 打开知识库", onClick: () => doAction({ type: "open_page", page: "knowledge" }) },
       { label: `✋ 与「${hs.label}」互动…`, onClick: () => openFacilityModal(hs) },
@@ -971,7 +986,7 @@ mapBox.addEventListener("click", (e) => {
   } else if (act === "position") {
     doAction({ type: "move_position", label: hs.label, hs });
   } else if (act === "door") {
-    const items = [];
+    const items = [moveOpt];
     const locked = STATE && STATE.room && STATE.room.locked_inside;
     items.push({
       label: locked ? "🔓 解除房门反锁" : "🔒 从内部反锁房门",
@@ -988,7 +1003,10 @@ mapBox.addEventListener("click", (e) => {
     items.push({ label: "＋ 协商新建房间…", onClick: openCreateRoomModal });
     openMenu(e.clientX, e.clientY, items);
   } else {
-    openFacilityModal(hs);
+    openMenu(e.clientX, e.clientY, [
+      moveOpt,
+      { label: `✋ 与「${hs.label}」互动…`, onClick: () => openFacilityModal(hs) },
+    ]);
   }
 });
 
@@ -997,9 +1015,11 @@ async function openActorModal(actorId, actorName) {
   const res = await doAction({ type: "actor_interact_info", actor_id: actorId });
   if (!res.ok || !res.info) return;
   const info = res.info;
+  const samePos = info.user_pos === info.target_pos;
   const leftBound = info.hands.left.state === "bound";
   const rightBound = info.hands.right.state === "bound";
-  let activeHand = !leftBound ? "left" : (!rightBound ? "right" : "");
+  const handsBlocked = !samePos || (leftBound && rightBound);
+  let activeHand = (!samePos ? "" : (!leftBound ? "left" : (!rightBound ? "right" : "")));
   let gazeChecked = false;
   const handPart = { left: "", right: "" };
   let customPartInput = null;
@@ -1011,16 +1031,17 @@ async function openActorModal(actorId, actorName) {
     top.className = "row-between";
     const meta = document.createElement("div");
     meta.style.cssText = "font-size:12px;color:var(--accent);";
-    meta.textContent = `累计消息：${info.msg_count} 条 | 位置：你在「${info.user_pos}」· 对方在「${info.target_pos}」`;
+    meta.textContent = `位置：你在「${info.user_pos}」· 对方在「${info.target_pos}」`;
     const btns = document.createElement("div");
     btns.style.cssText = "display:flex;gap:6px;";
-    if (info.user_pos !== info.target_pos) {
+    if (!samePos) {
       const bMove = document.createElement("button");
-      bMove.className = "btn";
-      bMove.textContent = "走到 TA 身边";
+      bMove.className = "btn btn-accent";
+      bMove.textContent = `🚶 走到「${info.target_pos}」身旁`;
       bMove.addEventListener("click", async () => {
         closeModal();
         await doAction({ type: "move_near", target_pos: info.target_pos });
+        openActorModal(actorId, actorName);
       });
       btns.appendChild(bMove);
     }
@@ -1028,6 +1049,9 @@ async function openActorModal(actorId, actorName) {
     bHold.className = "btn";
     if (info.holding_side) {
       bHold.textContent = "松开握持";
+    } else if (!samePos) {
+      bHold.textContent = "🤝 牵手带走 (需同位置)";
+      bHold.disabled = true;
     } else if (!info.hold_ok) {
       bHold.textContent = "🤝 牵手带走 (未解锁)";
       bHold.disabled = true;
@@ -1047,8 +1071,8 @@ async function openActorModal(actorId, actorName) {
     handRow.style.cssText = "display:flex;align-items:center;gap:12px;flex-wrap:wrap;";
     handRow.innerHTML = `<span class="field-label" style="margin:0;">当前设置：</span>`;
     const handDefs = [
-      { id: "left", label: "左手" + (info.hands.left.state === "holding" ? " (握住)" : (leftBound ? " (被束缚)" : "")), disabled: leftBound },
-      { id: "right", label: "右手" + (info.hands.right.state === "holding" ? " (握住)" : (rightBound ? " (被束缚)" : "")), disabled: rightBound },
+      { id: "left", label: "左手" + (info.hands.left.state === "holding" ? " (握住)" : (leftBound ? " (被束缚)" : "")), disabled: !samePos || leftBound },
+      { id: "right", label: "右手" + (info.hands.right.state === "holding" ? " (握住)" : (rightBound ? " (被束缚)" : "")), disabled: !samePos || rightBound },
     ];
     for (const ch of handDefs) {
       const lbl = document.createElement("label");
@@ -1074,7 +1098,12 @@ async function openActorModal(actorId, actorName) {
     summaryEl.className = "sel-summary";
     body.appendChild(summaryEl);
 
-    if (leftBound && rightBound) {
+    if (!samePos) {
+      const warn = document.createElement("div");
+      warn.style.cssText = "color:var(--danger);font-size:12px;";
+      warn.textContent = `你与 ${actorName} 不在同一位置，请先点击「走到「${info.target_pos}」身旁」再使用手部动作或牵手（当前仍可勾选「目光注视」）。`;
+      body.appendChild(warn);
+    } else if (leftBound && rightBound) {
       const warn = document.createElement("div");
       warn.style.cssText = "color:var(--danger);font-size:12px;";
       warn.textContent = "双手正被束缚，当前仅可勾选「目光注视」。";
@@ -1084,7 +1113,7 @@ async function openActorModal(actorId, actorName) {
     const rowRefs = [];
     const makeRow = (p) => {
       const isGaze = p.label === "目光注视";
-      const disabled = !p.allowed || (!isGaze && leftBound && rightBound);
+      const disabled = !p.allowed || (!isGaze && handsBlocked);
       const row = document.createElement("label");
       row.className = "part-row" + (disabled ? " disabled" : "");
       const left = document.createElement("span");
@@ -1190,7 +1219,7 @@ async function openActorModal(actorId, actorName) {
     customPartInput = document.createElement("input");
     customPartInput.className = "input";
     customPartInput.style.flex = "1";
-    customPartInput.disabled = !info.custom_ok || (leftBound && rightBound);
+    customPartInput.disabled = !info.custom_ok || handsBlocked;
     customPartInput.addEventListener("input", syncTable);
     cRow.append(cLbl, customPartInput);
     body.appendChild(cRow);
@@ -1242,12 +1271,13 @@ async function openActorModal(actorId, actorName) {
   ]);
 }
 
-/* 自定义设施互动弹窗 */
+/* 自定义设施互动弹窗（支持多选左手 / 右手） */
 function openFacilityModal(hs) {
   const hands = STATE ? STATE.hands : { left: { state: "free" }, right: { state: "free" } };
   const leftBound = hands.left.state === "bound";
   const rightBound = hands.right.state === "bound";
-  let selectedHand = !leftBound ? "left" : (!rightBound ? "right" : "");
+  const checkedHands = { left: !leftBound, right: false };
+  if (leftBound && !rightBound) checkedHands.right = true;
   let textArea = null;
 
   openModal(`互动设施：${hs.label}`, (body) => {
@@ -1257,25 +1287,36 @@ function openFacilityModal(hs) {
       desc.textContent = hs.desc;
       body.appendChild(desc);
     }
-    const hRow = document.createElement("div");
-    hRow.style.cssText = "display:flex;align-items:center;gap:12px;flex-wrap:wrap;";
-    hRow.innerHTML = `<span class="field-label" style="margin:0;">使用手部：</span>`;
+    const hTitle = document.createElement("div");
+    hTitle.className = "field-label";
+    hTitle.textContent = "选择使用的手（可多选，同时用左手和右手）：";
+    body.appendChild(hTitle);
+
+    const grid = document.createElement("div");
+    grid.className = "part-table";
     const channels = [
       { id: "left", label: "左手" + (hands.left.state === "holding" ? " (握住)" : (leftBound ? " (被束缚)" : "")), disabled: leftBound },
       { id: "right", label: "右手" + (hands.right.state === "holding" ? " (握住)" : (rightBound ? " (被束缚)" : "")), disabled: rightBound },
     ];
     for (const ch of channels) {
-      const lbl = document.createElement("label");
-      lbl.className = "radio-opt" + (ch.disabled ? " disabled" : "");
+      const row = document.createElement("label");
+      row.className = "part-row" + (ch.disabled ? " disabled" : "") + (checkedHands[ch.id] ? " checked" : "");
+      const left = document.createElement("span");
+      left.className = "part-row-left";
       const inp = document.createElement("input");
-      inp.type = "radio"; inp.name = "f_hand"; inp.value = ch.id;
+      inp.type = "checkbox";
       inp.disabled = ch.disabled;
-      inp.checked = selectedHand === ch.id;
-      inp.addEventListener("change", () => { selectedHand = ch.id; });
-      lbl.append(inp, document.createTextNode(ch.label));
-      hRow.appendChild(lbl);
+      inp.checked = checkedHands[ch.id];
+      inp.addEventListener("change", () => {
+        checkedHands[ch.id] = inp.checked;
+        row.className = "part-row" + (ch.disabled ? " disabled" : "") + (inp.checked ? " checked" : "");
+      });
+      left.append(inp, document.createTextNode(ch.label));
+      row.appendChild(left);
+      grid.appendChild(row);
     }
-    body.appendChild(hRow);
+    body.appendChild(grid);
+
     textArea = document.createElement("textarea");
     textArea.className = "textarea";
     textArea.placeholder = "输入互动动作…";
@@ -1286,16 +1327,26 @@ function openFacilityModal(hs) {
     {
       label: "加入待发动作", accent: true, disabled: leftBound && rightBound,
       onClick: async () => {
-        const r = await doAction({
-          type: "queue_action",
-          hand: selectedHand,
-          target_id: hs.id,
-          target_name: hs.label,
-          part: "设施",
-          text: textArea.value.trim(),
-          secret: false,
-          is_facility: true,
-        });
+        const text = textArea.value.trim();
+        const actions = [];
+        for (const side of ["left", "right"]) {
+          if (checkedHands[side] && hands[side].state !== "bound") {
+            actions.push({
+              hand: side,
+              target_id: hs.id,
+              target_name: hs.label,
+              part: "设施",
+              text,
+              secret: false,
+              is_facility: true,
+            });
+          }
+        }
+        if (!actions.length) {
+          showToast("请至少勾选一只手。", true);
+          return;
+        }
+        const r = await doAction({ type: "queue_actions", actions });
         if (r.ok) closeModal();
       },
     },

@@ -656,6 +656,8 @@ class RoomStore:
             return "这只手正被束缚着，无法牵手"
         if self.occupants.get("user") != self.occupants.get(actor_id):
             return "对方不在你当前所在的房间"
+        if self.position_of("user") != self.position_of(actor_id):
+            return "你和对方不在同一个位置，需先走到对方身边才能牵手"
         self.holding_hands[side] = actor_id
         self.hands[side] = {"state": "holding", "note": f"握住 {actor_name or actor_id}"[:24]}
         rid = self.current_room_id()
@@ -1042,6 +1044,11 @@ class RoomStore:
         if channel in ("left", "right"):
             if self.hands[channel]["state"] == "bound":
                 return "这只手正被束缚着，暂时无法行动"
+            if clean_part != "设施" and target_id in self.occupants:
+                if self.occupants.get("user") != self.occupants.get(target_id):
+                    return "对方不在你当前所在的房间"
+                if self.position_of("user") != self.position_of(target_id):
+                    return "你和对方不在同一个位置，需先走到对方身边才能使用动作"
         if msg_count is not None and clean_part != "设施":
             ok, req = part_allowed(clean_part, msg_count)
             if not ok:

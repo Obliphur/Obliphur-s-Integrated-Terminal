@@ -90,7 +90,10 @@ def main():
         chair_labels = [lbl for _id, lbl, _req in position_interactions_for(store.position_of("user"), "房间中央")]
         assert "按在椅子上" in chair_labels and "坐到身旁 / 腿上" in chair_labels
 
-        # 牵手带人出去（需 100 条消息）& 言语跟随 & 被对方带出去
+        # 牵手带人出去（需同位置 + 100 条消息）& 言语跟随 & 被对方带出去
+        assert store.hold_hand("left", "Claudia.txt", "Claudia", msg_count=100) != "", "不在同一位置时不应允许牵手"
+        assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "肩膀", "隔空拍肩", msg_count=100) != "", "不在同一位置时不应允许手部动作"
+        assert store.move_position("user", store.position_of("Claudia.txt"), "Madam Chen") is True
         assert store.hold_hand("left", "Claudia.txt", "Claudia", msg_count=99) != "", "不足 100 条消息不应允许牵手带走"
         assert store.hold_hand("left", "Claudia.txt", "Claudia", msg_count=100) == ""
         assert store.hands["left"]["state"] == "holding" and "握住" in store.hand_label("left")
@@ -186,6 +189,7 @@ def main():
         assert any(e.get("redacted") for e in user_view)
 
         # 公开小动作同房全员可见；隐秘身体接触仅双方可见
+        store.move_position("user", "椅子", "Madam Chen")
         assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "肩膀", "公开拍拍肩", msg_count=200, secret=False) == ""
         assert store.queue_hand_action("right", "Claudia.txt", "Claudia", "手掌 / 指尖", "桌下偷偷勾手指", msg_count=200, secret=True) == ""
         acts_mix = list(store.pending_actions)
