@@ -42,6 +42,33 @@ class CardsMixin:
             self.on_end_setup()
         self.refresh()
 
+    def _build_username_card(self, body):
+        """基本设置中的用户名 (user_name) 修改卡片，即时保存。"""
+        if not callable(getattr(self, "username_get", None)) or not callable(getattr(self, "username_set", None)):
+            return
+        card = COLORS["bg_card"]
+        fr = tk.Frame(body, bg=card, highlightbackground=COLORS["border"], highlightthickness=1)
+        fr.pack(fill="x", pady=(2, 8))
+        row = tk.Frame(fr, bg=card)
+        row.pack(fill="x", padx=12, pady=10)
+        self._track(tk.Label(row, text=tr("🧑  用户名 (user_name)"), bg=card, fg=COLORS["text"],
+                             font=config.font("body", bold=True)), "🧑  用户名 (user_name)").pack(side="left")
+        self.var_username = tk.StringVar(value=str(self.username_get() or ""))
+        ent = ttk.Entry(row, textvariable=self.var_username, width=20)
+        ent.pack(side="left", padx=(12, 8))
+
+        def save_name(_e=None):
+            name = self.var_username.get().strip()[:40]
+            if not name:
+                toast.warn(tr("用户名不能为空"))
+                return
+            self.username_set(name)
+            self.var_username.set(name)
+            toast.info(tr("已更新用户名：{name}", name=name))
+
+        ent.bind("<Return>", save_name)
+        self._track(ttk.Button(row, text=tr("保存"), command=save_name), "保存").pack(side="left")
+
     def _build_update_card(self, body):
         """更新 (MECHANICS 16): 当前版本, GitHub 上的最新版本, 检查 / 立即更新."""
         if self.updater is None:

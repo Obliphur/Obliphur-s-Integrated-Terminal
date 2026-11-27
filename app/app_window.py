@@ -456,7 +456,9 @@ class WindowMixin(SidebarMixin):
             data_dir=self.dm.data_dir, recording=self.recording, on_delete_record=self.delete_recording,
             comm=self.comm, on_open_rules=self.open_rules_popup,
             alarm=self.alarm, ringer=self.ringer, co_alarm_fn=self._co_alarm_fn,
-            ring_busy=lambda: self._alarm_win is not None
+            ring_busy=lambda: self._alarm_win is not None,
+            username_get=lambda: self.dm.username,
+            username_set=self._set_username,
         ))
         yield
         # 成就 (MECHANICS 17): 单独一页, 左侧导航里没有它 (由 设置 → 基本设置 的"🏆 成就"按钮打开)
@@ -475,11 +477,11 @@ class WindowMixin(SidebarMixin):
         self.pages.add_factory("room", lambda: RoomPage(
             self.content, self.comm, self.dm.data_dir,
             username=lambda: self.dm.username,
-            on_back=lambda: self.show_page("comm"),
+            on_back=self._exit_room,
             on_open_page=self.show_page,
             on_open_settings=self._open_comm_settings,
-            on_music=lambda: (self.show_page("comm"), self.pages["comm"]._review_performance()),
-            on_coread=lambda: (self.show_page("comm"), self.pages["comm"]._reading()),
+            on_music=lambda: self._ensure_page("comm")._review_performance(),
+            on_coread=lambda: self._ensure_page("comm")._reading(),
             on_joint=self._joint_pick_start,
         ))
         yield
@@ -640,7 +642,22 @@ class WindowMixin(SidebarMixin):
         except Exception:
             pass
 
+    def _exit_room(self):
+        self._comm_in_room = False
+        self.show_page("comm")
+
+    def _set_username(self, name: str):
+        self.dm.set_username(name)
+        if "room" in self.pages:
+            self.pages["room"].refresh()
+        if "comm" in self.pages:
+            self.pages["comm"].refresh(force=True)
+
     def show_page(self, key: str):
+        if key == "room":
+            self._comm_in_room = True
+        elif key == "comm" and getattr(self, "_comm_in_room", False):
+            key = "room"
         # 合约 · 黑雾 (软规则): 要切到计时器以外的页面记一次, 一个钟点里满 50 次算一次违反 (MECHANICS 18.3)
         if key != "timer" and key != getattr(self, "current_page", None) and not getattr(self, "_page_from_sync", False):
             tid = self.contract.fog_switch(datetime.now(), self.sync.my_id)

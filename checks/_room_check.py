@@ -14,11 +14,13 @@ if ROOT not in sys.path:
 import comm as comm_mod
 from comm.comm_room import (
     RoomStore,
+    display_width,
     parse_actor_reply,
     parse_generated_room,
     part_allowed,
     persona_room_id,
     pick_auto_speaker,
+    position_interactions_for,
     render_room_map,
 )
 from pages.room_page import RoomPage
@@ -71,13 +73,36 @@ def main():
         }, creator_id="user", is_public=False)
         assert store.has_key("user", custom["id"]) and not store.has_key("Claudia.txt", custom["id"])
 
-        # 3. 热点解析
+        # 3. 热点解析与字符画严格等宽对齐 + 椅子/墙边位置互动
         text, hotspots = render_room_map(
             store.rooms[c_rid],
-            [("user", "我"), ("Claudia.txt", "Claudia")],
+            [("user", "Madam Chen"), ("Claudia.txt", "Claudia")],
         )
-        assert "[钢琴]" in text and "[书架]" in text and "[@Claudia]" in text
-        assert {"piano", "bookshelf", "desk", "door"} <= {h["action"] for h in hotspots if h["kind"] == "facility"}
+        widths = {display_width(line) for line in text.splitlines()}
+        assert len(widths) == 1, f"字符画各行显示宽度必须完全一致，实际: {widths}"
+        assert "[钢琴]" in text and "[书架]" in text and "[椅子]" in text and "[墙边]" in text and "[@Claudia]" in text
+        assert {"piano", "bookshelf", "desk", "door", "position"} <= {h["action"] for h in hotspots if h["kind"] == "facility"}
+
+        assert store.move_position("user", "墙边", "Madam Chen") is True
+        wall_labels = [lbl for _id, lbl, _req in position_interactions_for(store.position_of("user"), "房间中央")]
+        assert "按在墙上 / 抵在墙边" in wall_labels
+        assert store.move_position("user", "椅子", "Madam Chen") is True
+        chair_labels = [lbl for _id, lbl, _req in position_interactions_for(store.position_of("user"), "房间中央")]
+        assert "按在椅子上" in chair_labels and "坐到身旁 / 腿上" in chair_labels
+
+        # 牵手带人出去 & 言语跟随 & 被对方带出去
+        assert store.hold_hand("left", "Claudia.txt", "Claudia") == ""
+        assert store.enter_room("user", "lounge", "Madam Chen") == ""
+        assert store.occupants["Claudia.txt"] == "lounge", "牵手切换房间应把 Claudia 一起带出来"
+        store.release_hand("left")
+        store.set_following("Claudia.txt", "user", "Claudia", "Madam Chen")
+        assert store.enter_room("user", "my_home", "Madam Chen") == ""
+        assert store.occupants["Claudia.txt"] == "my_home", "跟随状态下切换房间应一起跟着走"
+        store.set_following("Claudia.txt", None, "Claudia")
+        assert store.enter_room("Claudia.txt", "lounge", "Claudia", bring_ids=["user"]) == ""
+        assert store.occupants["user"] == "lounge", "对方 bring_user 移动时应把用户一起带出去"
+        assert store.enter_room("user", c_rid, "Madam Chen") == ""
+        assert store.enter_room("Claudia.txt", c_rid, "Claudia") == ""
 
         # 4. 按条数解锁部位 + 双手槽位与束缚规则
         assert part_allowed("肩膀", 0) == (True, 0)

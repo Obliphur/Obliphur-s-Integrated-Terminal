@@ -28,9 +28,12 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
                  on_update_install=None, on_update_relay=None, sync=None, achievements=None,
                  on_open_achievements=None, data_dir=None, recording=None, on_delete_record=None,
                  on_contract_theme=None, comm=None, on_open_rules=None,
-                 alarm=None, ringer=None, co_alarm_fn=None, ring_busy=None):
+                 alarm=None, ringer=None, co_alarm_fn=None, ring_busy=None,
+                 username_get=None, username_set=None):
         super().__init__(master, bg=COLORS["bg"])
         self.comm = comm
+        self.username_get = username_get
+        self.username_set = username_set
         self.on_open_rules = on_open_rules
         self.alarm = alarm                              # 闹钟 (1.0.359): alarm.Alarm / alarm.Ringer / 共时闹钟 f() / 现在有没有在响
         self.ringer = ringer
@@ -143,6 +146,7 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
         self.area = self.areas["basic"]
         body = self.area.inner
         self._build_setup_card(body)
+        self._build_username_card(body)
         self._build_achievements_card(body)
         if self.sync is not None:
             from ..sync_panel import SyncPanel

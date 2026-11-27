@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """🏠 情景房间子页面（PC 优先）：分人设房间、钥匙与内部反锁、按条数解锁部位、定向听觉隔离与 NPC 自主移动/对话。"""
 
+import sys
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -19,6 +20,7 @@ from comm.comm_room import (
     parse_generated_room,
     part_allowed,
     pick_auto_speaker,
+    position_interactions_for,
     render_room_map,
 )
 from config import COLORS
@@ -139,15 +141,17 @@ class RoomPage(tk.Frame):
                                      font=config.font("small"), anchor="w", justify="left", wraplength=520)
         self.lbl_ambience.pack(fill="x", padx=12, pady=(10, 6))
 
+        map_font_family = "NSimSun" if sys.platform == "win32" else "TkFixedFont"
         self.map_text = tk.Text(
             left, wrap="none", state="disabled",
-            font=("Consolas", max(11, config.scaled(12))),
+            font=(map_font_family, max(11, config.scaled(12))),
             bg="#12161f", fg="#dce4f2",
             relief="flat", bd=0, padx=14, pady=12,
             cursor="arrow", highlightthickness=1, highlightbackground="#293245",
         )
         self.map_text.pack(fill="both", expand=True, padx=12, pady=(0, 6))
         self.map_text.tag_configure("fac", foreground="#67d5f7", underline=False)
+        self.map_text.tag_configure("pos", foreground="#94e2d5", underline=False)
         self.map_text.tag_configure("door", foreground="#f6c177", underline=False)
         self.map_text.tag_configure("actor", foreground="#c4a7e7", underline=False)
         self.map_text.tag_configure("actor_me", foreground="#a6e3a1", underline=False)
@@ -209,7 +213,7 @@ class RoomPage(tk.Frame):
                                        highlightthickness=1, highlightbackground=border, cursor="hand2")
         self.lbl_right_hand.pack(side="left", padx=(0, 6))
         self.lbl_right_hand.bind("<Button-1>", lambda _e: self._toggle_hand_bind("right"))
-        tk.Label(hand_bar, text=tr("(点手部可切换/解除束缚)"), bg=card, fg=COLORS["text_dim"],
+        tk.Label(hand_bar, text=tr("(点手部可松开牵手或切换束缚)"), bg=card, fg=COLORS["text_dim"],
                  font=config.font("small")).pack(side="left")
 
         self.pending_frame = tk.Frame(right, bg=card)
@@ -335,8 +339,12 @@ class RoomPage(tk.Frame):
             tag = f"hs_{idx}"
             if hs["kind"] == "actor":
                 base_tag = "actor_me" if hs["id"] == "user" else "actor"
+            elif hs["action"] == "door":
+                base_tag = "door"
+            elif hs["action"] == "position":
+                base_tag = "pos"
             else:
-                base_tag = "door" if hs["action"] == "door" else "fac"
+                base_tag = "fac"
             w.tag_add(base_tag, start, end)
             w.tag_add(tag, start, end)
             w.tag_bind(tag, "<Enter>", lambda _e, h=hs, s=start, en=end: self._on_hotspot_enter(h, s, en))
@@ -362,8 +370,11 @@ class RoomPage(tk.Frame):
         for aid in self.store.occupants_in(room_id):
             name = names.get(aid, aid)
             is_me = (aid == "user")
+            pos_tag = self.store.position_of(aid)
             act_tag = "" if is_me else self.store.activity_label(aid, schedule_kind=sched.get(aid, ""))
-            chip_text = f"@{name}" + (" (我)" if is_me else (f" · {act_tag}" if act_tag else ""))
+            extras = [x for x in (pos_tag, act_tag) if x and x != "房间中央"]
+            suffix = f" ({' · '.join(extras)})" if extras else ""
+            chip_text = f"@{name}" + (" [我]" if is_me else "") + suffix
             lbl = tk.Label(
                 self.occ_chips,
                 text=chip_text,
@@ -451,7 +462,12 @@ class RoomPage(tk.Frame):
         self._render_hands()
 
     def _toggle_hand_bind(self, side: str):
-        cur_bound = self.store.hands[side]["state"] == "bound"
+        st = self.store.hands[side]["state"]
+        if st == "holding":
+            self.store.release_hand(side, self._persona_names())
+            self.refresh()
+            return
+        cur_bound = (st == "bound")
         self.store.set_hand_bound(side, not cur_bound, note="束缚" if not cur_bound else "")
         self._render_hands()
 
@@ -531,6 +547,12 @@ class RoomPage(tk.Frame):
                 (tr("📚 打开知识库"), lambda: self.on_open_page("knowledge") if callable(self.on_open_page) else None),
                 (tr("✋ 与「{label}」互动…", label=hs["label"]), lambda: self._open_custom_facility_interact(hs)),
             ])
+        elif action == "position":
+            if self.store.move_position("user", hs["label"], self._actor_name("user")):
+                toast.info(tr("你移动到了「{pos}」，现在点击人物可触发相关位置互动。", pos=hs["label"]))
+                self.refresh()
+            else:
+                self._open_custom_facility_interact(hs)
         elif action == "door":
             items = []
             cur_rid = self.store.current_room_id()
@@ -559,7 +581,7 @@ class RoomPage(tk.Frame):
             self._switch_user_room(self._room_ids[idx])
 
     def _switch_user_room(self, room_id: str):
-        err = self.store.enter_room("user", room_id, self._actor_name("user"))
+        err = self.store.enter_room("user", room_id, self._actor_name("user"), name_map=self._persona_names())
         if err:
             toast.warn(err)
             self.refresh()
@@ -571,12 +593,40 @@ class RoomPage(tk.Frame):
     def _open_actor_interact(self, actor_id: str, actor_name: str):
         avail = self.store.available_hands()
         msg_count = self.total_msgs_with(actor_id)
+        user_pos = self.store.position_of("user")
+        target_pos = self.store.position_of(actor_id)
+        pos_opts = position_interactions_for(user_pos, target_pos)
+        holding_side = next((s for s in ("left", "right") if self.store.holding_hands.get(s) == actor_id), "")
         bg = COLORS["bg"]
         dlg = Modal(self.winfo_toplevel(), tr("与 {name} 互动", name=actor_name),
-                    width=config.scaled(520), height=config.scaled(470))
+                    width=config.scaled(540), height=config.scaled(540 if pos_opts else 490))
 
-        tk.Label(dlg.body, text=tr("与 {name} 累计互动消息：{n} 条（按条数逐步解锁可接触部位）", name=actor_name, n=msg_count),
-                 bg=bg, fg=COLORS["accent"], font=config.font("small"), anchor="w").pack(fill="x", pady=(0, 6))
+        top_info = tk.Frame(dlg.body, bg=bg)
+        top_info.pack(fill="x", pady=(0, 6))
+        tk.Label(top_info, text=tr("累计消息：{n} 条 | 位置：你在「{up}」· 对方在「{tp}」",
+                                   n=msg_count, up=user_pos, tp=target_pos),
+                 bg=bg, fg=COLORS["accent"], font=config.font("small"), anchor="w").pack(side="left", fill="x", expand=True)
+
+        def toggle_hold():
+            if holding_side:
+                self.store.release_hand(holding_side, self._persona_names())
+                dlg.finish(True)
+                self.refresh()
+                return
+            free = self.store.available_hands()
+            if not free:
+                toast.warn(tr("当前没有空闲的手来牵住对方。"))
+                return
+            err = self.store.hold_hand(free[0], actor_id, actor_name)
+            if err:
+                toast.warn(tr(err))
+                return
+            toast.info(tr("已牵住 {name} 的手，切换房间时会把对方一起带出去。", name=actor_name))
+            dlg.finish(True)
+            self.refresh()
+
+        ttk.Button(top_info, text=tr("松开牵手") if holding_side else tr("🤝 牵手带走"),
+                   command=toggle_hold).pack(side="right")
 
         hand_row = tk.Frame(dlg.body, bg=bg)
         hand_row.pack(fill="x", pady=(0, 8))
@@ -585,22 +635,22 @@ class RoomPage(tk.Frame):
         var_hand = tk.StringVar(value=avail[0] if avail else "")
         for side, label in (("left", "左手"), ("right", "右手")):
             st = self.store.hands[side]["state"]
-            suffix = "" if st == "free" else (" (已用)" if st == "used" else " (被束缚)")
+            suffix = "" if st == "free" else (" (已用)" if st == "used" else (" (牵手中)" if st == "holding" else " (被束缚)"))
             rb = ttk.Radiobutton(hand_row, text=tr(label) + suffix, value=side, variable=var_hand)
             if st != "free":
                 rb.state(["disabled"])
             rb.pack(side="left", padx=(8, 0))
 
         if not avail:
-            tk.Label(dlg.body, text=tr("当前没有空闲的手（两只手已用完或被束缚），无法添加新的手部互动。"),
-                     bg=bg, fg="#ef4444", font=config.font("small"), anchor="w", wraplength=470).pack(
+            tk.Label(dlg.body, text=tr("当前没有空闲的手（已用/牵手中或被束缚），无法添加新的手部互动。"),
+                     bg=bg, fg="#ef4444", font=config.font("small"), anchor="w", wraplength=490).pack(
                 fill="x", pady=(0, 6))
 
         tk.Label(dlg.body, text=tr("选择互动部位："), bg=bg, fg=COLORS["text"],
                  font=config.font("body"), anchor="w").pack(fill="x")
         var_part = tk.StringVar(value=BODY_PARTS[0][1])
         grid = tk.Frame(dlg.body, bg=bg)
-        grid.pack(fill="x", pady=(4, 8))
+        grid.pack(fill="x", pady=(4, 6))
         for i, (_pid, plabel, req) in enumerate(BODY_PARTS):
             ok, _ = part_allowed(plabel, msg_count)
             text = tr(plabel) if ok else tr("{label} (需{req}条)", label=plabel, req=req)
@@ -608,6 +658,19 @@ class RoomPage(tk.Frame):
             if not ok:
                 rb.state(["disabled"])
             rb.grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 14), pady=2)
+
+        if pos_opts:
+            tk.Label(dlg.body, text=tr("基于当前位置的互动："), bg=bg, fg=COLORS["accent"],
+                     font=config.font("small", bold=True), anchor="w").pack(fill="x", pady=(2, 2))
+            pgrid = tk.Frame(dlg.body, bg=bg)
+            pgrid.pack(fill="x", pady=(0, 6))
+            for i, (_pid, plabel, req) in enumerate(pos_opts):
+                ok, _ = part_allowed(plabel, msg_count)
+                text = tr(plabel) if ok else tr("{label} (需{req}条)", label=plabel, req=req)
+                rb = ttk.Radiobutton(pgrid, text=text, value=plabel, variable=var_part)
+                if not ok:
+                    rb.state(["disabled"])
+                rb.grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 14), pady=2)
 
         custom_ok = msg_count >= CUSTOM_PART_MIN_MSGS
         custom_row = tk.Frame(dlg.body, bg=bg)
@@ -917,14 +980,26 @@ class RoomPage(tk.Frame):
             elif bind in ("left", "right", "both"):
                 self.store.set_hand_bound(bind, True, note=actor_name)
 
-        # 2. 分发钥匙
+        # 2. 更新室内位置
+        pos = parsed.get("position")
+        if pos:
+            self.store.move_position(actor_id, pos, actor_name)
+
+        # 3. 更新跟随状态（言语请求跟随）
+        fol = parsed.get("follow")
+        if fol == "none":
+            self.store.set_following(actor_id, None, actor_name)
+        elif fol:
+            self.store.set_following(actor_id, fol, actor_name, names.get(fol, fol))
+
+        # 4. 分发钥匙
         gk = parsed.get("give_key")
         if gk:
             to_id = str(gk.get("to") or "")
             self.store.grant_key(str(gk.get("room_id") or ""), actor_id, to_id,
                                  actor_name, names.get(to_id, to_id))
 
-        # 3. 发言（在当前房间）
+        # 5. 发言（在当前房间）
         speech = parsed.get("speech") or ""
         action = parsed.get("action") or ""
         combined = f"（{action}）{speech}".strip() if action and speech else (f"（{action}）" if action else speech)
@@ -932,13 +1007,14 @@ class RoomPage(tk.Frame):
             self.store.append_log(room_id, actor_id, actor_name,
                                   parsed.get("to") or ["user"], "say", combined)
 
-        # 4. 自主移动 / 拜访其他房间
+        # 6. 自主移动 / 拜访其他房间（bring_user=True 或牵手时可把用户一起带出去）
         move_to = parsed.get("move_to")
         if move_to and move_to != room_id:
-            self.store.enter_room(actor_id, move_to, actor_name)
+            bring = ["user"] if parsed.get("bring_user") else []
+            self.store.enter_room(actor_id, move_to, actor_name, bring_ids=bring, name_map=names)
             room_id = self.store.occupants.get(actor_id, room_id)
 
-        # 5. 从内部锁门 / 开门
+        # 7. 从内部锁门 / 开门
         if parsed.get("lock_door") is not None:
             self.store.set_room_lock(room_id, actor_id, bool(parsed["lock_door"]), actor_name)
 
