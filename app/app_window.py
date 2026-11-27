@@ -348,6 +348,9 @@ class WindowMixin(SidebarMixin):
         side = tk.Frame(self.shell, bg=card, highlightbackground=COLORS["border"],
                         highlightthickness=1)
         side.pack(side="left", fill="y")
+        # WebView2 导航不再由 Tk 按钮撑开尺寸，侧边栏必须保留稳定宽度。
+        side.configure(width=config.scaled(180))
+        side.pack_propagate(False)
         self.sidebar = side
         tk.Frame(side, bg=card, height=14).pack()
 
@@ -747,6 +750,7 @@ class WindowMixin(SidebarMixin):
                     pass
         self._paint_sidebar()
         if hasattr(self, "web_sidebar"):
+            self.web_sidebar.show()
             self.web_sidebar.notify()
         # 只把目标页挂到界面上, 其余页收起 (不参与布局 / 重画)
         target = self._ensure_page(key)

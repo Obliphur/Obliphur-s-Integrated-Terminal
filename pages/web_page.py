@@ -580,6 +580,84 @@ function node(n,depth=0){const wrap=document.createElement(depth<2?'div':'div');
 function render(s){if(!s)return;colors(s.colors);$('title').textContent=s.title||'OIT';$('body').replaceChildren(node(s.tree))}async function load(){try{const r=await fetch('/api/state?token='+encodeURIComponent(TOKEN));const j=await r.json();render(j.state)}catch(e){}}const es=new EventSource('/api/events?token='+encodeURIComponent(TOKEN));es.onmessage=load;load();
 </script></body></html>'''
 
+
+# The adapter lifecycle helpers are shared with the generic control-tree code.
+# They are assigned explicitly because the contract renderer is declared before
+# the HTML constants and the navigation helper in this module.
+for _name in (
+    "show", "hide", "refresh", "_notify", "_schedule_ui_poll", "_drain_ui_queue",
+    "_call_on_ui", "_walk", "_tree_rows", "_build_state", "_handle_action", "_on_destroy",
+):
+    setattr(WebPageAdapter, _name, getattr(WebSidebar, _name))
+
+
+def _adapter_fallback(self, _reason=""):
+    if self._destroyed or not self._use_webview:
+        return
+    self._use_webview = False
+    if self._wv_host is not None:
+        try:
+            self._wv_host.close()
+            self._wv_host.destroy()
+        except Exception:
+            pass
+        self._wv_host = None
+    if self._wv_loading is not None:
+        try:
+            self._wv_loading.destroy()
+        except Exception:
+            pass
+        self._wv_loading = None
+    if self._web_server is not None:
+        self._web_server.stop()
+        self._web_server = None
+    self._native_host.pack(fill="both", expand=True)
+    try:
+        self._delegate.show()
+    except Exception:
+        try:
+            self._delegate.refresh()
+        except Exception:
+            pass
+
+
+WebPageAdapter._fallback_to_tk = _adapter_fallback
+
+
+def _sidebar_show(self):
+    self._visible = True
+    if self._host:
+        self._host.set_visible(True)
+    if self._server:
+        self._server.notify("update")
+
+
+def _sidebar_hide(self):
+    self._visible = False
+    if self._host:
+        self._host.set_visible(False)
+
+
+def _sidebar_destroy(self):
+    self._destroyed = True
+    if self._poll:
+        try:
+            self.master.after_cancel(self._poll)
+        except tk.TclError:
+            pass
+    if self._host:
+        try:
+            self._host.close()
+        except Exception:
+            pass
+    if self._server:
+        self._server.stop()
+
+
+WebSidebar.show = _sidebar_show
+WebSidebar.hide = _sidebar_hide
+WebSidebar.destroy = _sidebar_destroy
+
 _CONTRACT_HTML = r'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OIT Contract</title><style>
