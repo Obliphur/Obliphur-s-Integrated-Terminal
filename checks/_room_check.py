@@ -95,8 +95,7 @@ def main():
         assert store.available_hands() == []
 
         store.set_hand_bound("left", True, note="丝带")
-        store.reset_turn_hands(advance_turn=True)
-        assert store.turn_no == 1
+        store.reset_turn_hands()
         assert store.hands["left"]["state"] == "bound" and store.hands["right"]["state"] == "free"
         store.set_hand_bound("both", False)
 
@@ -125,17 +124,41 @@ def main():
         )
         assert parsed["move_to"] == "lounge" and parsed["lock_door"] is False and parsed["give_key"]["to"] == "user"
 
-        # 7. NPC 自动对话与跨房自主行动挑选
+        # 7. 专注/睡眠自动反锁自己的房间、空闲系统随机活动（不发言）与自动行动挑选
+        assert store.enter_room("user", "lounge", "我") == ""
+        store.sync_schedule_locks({"Claudia.txt": "focus", "Gemina.txt": "idle"},
+                                  {"Claudia.txt": "Claudia", "Gemina.txt": "Gemina"})
+        assert store.occupants["Claudia.txt"] == c_rid
+        assert store.rooms[c_rid]["locked_inside"] is True and store.rooms[c_rid]["locked_reason"] == "focus"
+        assert store.enter_room("user", c_rid, "我") != "", "专注反锁期间即使有钥匙也进不去"
+        store.sync_schedule_locks({"Claudia.txt": "idle", "Gemina.txt": "idle"},
+                                  {"Claudia.txt": "Claudia", "Gemina.txt": "Gemina"})
+        assert store.rooms[c_rid]["locked_inside"] is False, "结束专注后自动解除反锁"
+
+        # N 分钟内无互动 -> 系统随机移动或活动，不发言
+        now_ms = 1_700_000_000_000
+        assert not store.is_recently_interacted("Gemina.txt", 15, now_ms=now_ms)
+        logs_before = len(store.logs)
+        res = store.perform_idle_system_step("Gemina.txt", "Gemina", now_ms=now_ms, rng=random.Random(3))
+        assert res.startswith(("activity:", "move:")), f"应执行本地随机活动或移动: {res}"
+        new_logs = store.logs[logs_before:]
+        assert new_logs and all(e["kind"] in ("sys", "move") for e in new_logs), "空闲随机活动不应发言"
+        if res.startswith("activity:"):
+            assert store.activity_label("Gemina.txt", now_ms=now_ms) != ""
+            assert store.perform_idle_system_step("Gemina.txt", "Gemina", now_ms=now_ms + 60_000, rng=random.Random(3)) == ""
+
         rng = random.Random(7)
         assert pick_auto_speaker(store, c_rid, set(), False, 100, rng=rng, include_other_rooms=True) is None
-        picked = pick_auto_speaker(store, c_rid, set(), True, 100, rng=rng, include_other_rooms=True)
-        assert picked is not None and picked[0] != "user"
+        picked = pick_auto_speaker(store, c_rid, set(), True, 100, rng=rng,
+                                   include_other_rooms=True, blocked_ids={"Claudia.txt"})
+        assert picked is not None and picked[0] not in ("user", "Claudia.txt")
 
         # 8. RoomPage tkinter UI 冒烟与设施联动
         personas_dir = os.path.join(tmp, "personas")
         os.makedirs(personas_dir, exist_ok=True)
         c = comm_mod.Comm(tmp, personas_dir)
         assert c.msg_total_for("Claudia.txt") >= 0
+        assert int(c.cfg.get("room_npc_idle_min")) == 15
 
         root = tk.Tk()
         root.withdraw()

@@ -15,6 +15,15 @@ ROOM_FILE = "comm_rooms.json"
 MAX_ROOM_LOGS = 500
 CUSTOM_PART_MIN_MSGS = 200
 
+# 无互动时的系统随机活动：(活动标签, 最短分钟, 最长分钟, 系统动作描述模板)
+IDLE_ACTIVITIES = (
+    ("弹琴", 20, 30, "{who} 坐到钢琴前，静静弹起了琴（预计 {m} 分钟）。"),
+    ("看书", 20, 40, "{who} 从书架抽出一本书，安静地翻阅起来（预计 {m} 分钟）。"),
+    ("休息", 15, 25, "{who} 靠在椅背上闭目养神，打算休息一会儿（预计 {m} 分钟）。"),
+    ("泡茶", 10, 20, "{who} 沏了一壶热茶，慢慢啜饮着小憩（预计 {m} 分钟）。"),
+    ("窗边发呆", 10, 20, "{who} 走到窗边望向外面，静静吹了会儿风（预计 {m} 分钟）。"),
+)
+
 FACILITY_ACTIONS = {
     "piano": "音乐演奏 / 曲库",
     "bookshelf": "打开共读",
@@ -249,6 +258,7 @@ def normalize_room(raw: dict) -> dict:
         "keys": keys,
         "locked_inside": bool(raw.get("locked_inside", False)),
         "locked_by": str(raw.get("locked_by") or "").strip(),
+        "locked_reason": str(raw.get("locked_reason") or "").strip(),
         "ascii_map": clean_lines,
         "facilities": list(fac_by_token.values()),
     }
@@ -314,13 +324,14 @@ class RoomStore:
         self.rooms: dict[str, dict] = {}
         self.occupants: dict[str, str] = {}     # actor_id -> room_id（所有角色默认在线，各自在自己房间）
         self.room_counts: dict[str, int] = {}   # actor_id -> 在房间里与用户的累计互动条数
+        self.last_user_interact: dict[str, int] = {}  # actor_id -> 最近一次与用户互动的毫秒时间戳
+        self.activities: dict[str, dict] = {}         # actor_id -> {"label": str, "until": int, "room_id": str}
         self.hands: dict[str, dict] = {
             "left": {"state": "free", "note": ""},
             "right": {"state": "free", "note": ""},
         }
         self.pending_actions: list[dict] = []
         self.logs: list[dict] = []
-        self.turn_no: int = 0
         self.load()
 
     def _ensure_builtins(self):
@@ -365,8 +376,9 @@ class RoomStore:
         self.rooms = {}
         self.occupants = {}
         self.room_counts = {}
+        self.last_user_interact = {}
+        self.activities = {}
         self.logs = []
-        self.turn_no = 0
         if os.path.isfile(self.path):
             try:
                 with open(self.path, "r", encoding="utf-8") as f:
@@ -392,6 +404,23 @@ class RoomStore:
                                     self.room_counts[aid] = max(0, int(val or 0))
                                 except (ValueError, TypeError):
                                     pass
+                    lui = data.get("last_user_interact") or {}
+                    if isinstance(lui, dict):
+                        for aid, val in lui.items():
+                            if isinstance(aid, str):
+                                try:
+                                    self.last_user_interact[aid] = max(0, int(val or 0))
+                                except (ValueError, TypeError):
+                                    pass
+                    acts = data.get("activities") or {}
+                    if isinstance(acts, dict):
+                        for aid, val in acts.items():
+                            if isinstance(aid, str) and isinstance(val, dict):
+                                self.activities[aid] = {
+                                    "label": str(val.get("label") or "")[:30],
+                                    "until": max(0, int(val.get("until") or 0)),
+                                    "room_id": str(val.get("room_id") or ""),
+                                }
                     hands = data.get("hands") or {}
                     if isinstance(hands, dict):
                         for side in ("left", "right"):
@@ -404,7 +433,6 @@ class RoomStore:
                     logs = data.get("logs") or []
                     if isinstance(logs, list):
                         self.logs = [x for x in logs[-MAX_ROOM_LOGS:] if isinstance(x, dict)]
-                    self.turn_no = max(0, int(data.get("turn_no") or 0))
             except (OSError, json.JSONDecodeError, ValueError):
                 pass
         self._ensure_builtins()
@@ -417,9 +445,10 @@ class RoomStore:
             "rooms": self.rooms,
             "occupants": self.occupants,
             "room_counts": self.room_counts,
+            "last_user_interact": self.last_user_interact,
+            "activities": self.activities,
             "hands": self.hands,
             "logs": self.logs[-MAX_ROOM_LOGS:],
-            "turn_no": self.turn_no,
         }
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -521,19 +550,30 @@ class RoomStore:
             self.save()
         return ""
 
-    def set_room_lock(self, room_id: str, actor_id: str, locked: bool, actor_name: str = "") -> str:
+    def set_room_lock(self, room_id: str, actor_id: str, locked: bool, actor_name: str = "",
+                      reason: str = "manual") -> str:
         room = self.rooms.get(room_id)
         if not room:
             return "房间不存在"
         if self.occupants.get(actor_id) != room_id:
             return "只有在房间内部才能反锁或打开门锁"
         if bool(room.get("locked_inside")) == bool(locked):
+            if locked and reason:
+                room["locked_reason"] = reason
             return ""
         room["locked_inside"] = bool(locked)
         room["locked_by"] = actor_id if locked else ""
+        room["locked_reason"] = reason if locked else ""
         who = actor_name or ("你" if actor_id == "user" else actor_id)
-        msg = (tr("{who} 从里面反锁了房门（外面即使有钥匙也打不开）。", who=who)
-               if locked else tr("{who} 打开了房门的反锁。", who=who))
+        if locked:
+            if reason == "focus":
+                msg = tr("{who} 进入专注时段，回到房间并从里面反锁了房门。", who=who)
+            elif reason == "sleep":
+                msg = tr("{who} 进入睡眠时段，回到房间并从里面反锁了房门。", who=who)
+            else:
+                msg = tr("{who} 从里面反锁了房门（外面即使有钥匙也打不开）。", who=who)
+        else:
+            msg = tr("{who} 打开了房门的反锁。", who=who)
         self.append_log(room_id, "sys", "系统", ["all"], "sys", msg)
         self.save()
         return ""
@@ -583,6 +623,88 @@ class RoomStore:
         self.save()
         return True
 
+    # ---- 专注/睡眠自动反锁、互动时间与空闲系统随机活动 ----
+
+    def sync_schedule_locks(self, status_map: dict[str, str], name_map: dict[str, str]) -> bool:
+        """专注/睡眠期间，对方会自动回到自己的房间并从内部反锁；结束后若仍为自动反锁则解锁。"""
+        changed = False
+        for aid, kind in status_map.items():
+            if aid == "user":
+                continue
+            own_rid = persona_room_id(aid)
+            if own_rid not in self.rooms:
+                continue
+            name = name_map.get(aid, aid)
+            room = self.rooms[own_rid]
+            if kind in ("focus", "sleep"):
+                if self.occupants.get(aid) != own_rid:
+                    self.enter_room(aid, own_rid, actor_name=name, force=True)
+                    changed = True
+                if not room.get("locked_inside") or room.get("locked_reason") != kind:
+                    self.set_room_lock(own_rid, aid, True, actor_name=name, reason=kind)
+                    changed = True
+            else:
+                if room.get("locked_inside") and room.get("locked_by") == aid and room.get("locked_reason") in ("focus", "sleep"):
+                    self.set_room_lock(own_rid, aid, False, actor_name=name)
+                    changed = True
+        return changed
+
+    def is_recently_interacted(self, actor_id: str, idle_minutes: int, now_ms: int = None) -> bool:
+        now = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        last = int(self.last_user_interact.get(actor_id) or 0)
+        if not last:
+            return False
+        return (now - last) < max(1, int(idle_minutes or 15)) * 60 * 1000
+
+    def activity_label(self, actor_id: str, now_ms: int = None, schedule_kind: str = "") -> str:
+        if schedule_kind == "focus":
+            return "专注中"
+        if schedule_kind == "sleep":
+            return "睡眠中"
+        now = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        act = self.activities.get(actor_id)
+        if act and int(act.get("until") or 0) > now and act.get("label"):
+            return f"{act['label']}中"
+        return ""
+
+    def perform_idle_system_step(self, actor_id: str, actor_name: str,
+                                 now_ms: int = None, rng=None) -> str:
+        """超过 N 分钟未与用户互动：由系统随机移动或开展持续活动（弹琴/看书/休息等），不调用模型也不发言。"""
+        now = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        r = rng or random
+        cur_act = self.activities.get(actor_id)
+        if cur_act and int(cur_act.get("until") or 0) > now:
+            return ""
+
+        cur_rid = self.occupants.get(actor_id)
+        if not cur_rid or cur_rid not in self.rooms:
+            return ""
+
+        # 35% 概率随机去另一个可进入的房间（公共空间或持有钥匙且未反锁），否则在当前房间开始一段随机活动
+        enterable = [
+            rid for rid in self.rooms
+            if rid != cur_rid and self.can_enter(actor_id, rid)[0]
+        ]
+        if enterable and r.random() < 0.35:
+            target_rid = r.choice(enterable)
+            if self.enter_room(actor_id, target_rid, actor_name=actor_name) == "":
+                cur_rid = target_rid
+                self.activities.pop(actor_id, None)
+                self.save()
+                return f"move:{target_rid}"
+
+        label, lo_m, hi_m, tpl = r.choice(IDLE_ACTIVITIES)
+        mins = r.randint(lo_m, hi_m)
+        self.activities[actor_id] = {
+            "label": label,
+            "until": now + mins * 60 * 1000,
+            "room_id": cur_rid,
+        }
+        msg = tr(tpl, who=actor_name, m=mins)
+        self.append_log(cur_rid, "sys", "系统", ["all"], "sys", msg)
+        self.save()
+        return f"activity:{label}"
+
     # ---- 房间互动计数（用于部位解锁） ----
 
     def room_msg_count(self, actor_id: str) -> int:
@@ -591,13 +713,17 @@ class RoomStore:
     def _bump_room_counts(self, room_id: str, sender: str, targets: list[str], kind: str):
         if kind not in ("say", "action"):
             return
+        now = int(time.time() * 1000)
         occ = self.occupants_in(room_id)
         if sender == "user":
             heard = [aid for aid in occ if aid != "user" and ("all" in targets or aid in targets)]
             for aid in heard:
                 self.room_counts[aid] = self.room_counts.get(aid, 0) + 1
+                self.last_user_interact[aid] = now
+                self.activities.pop(aid, None)
         elif "all" in targets or "user" in targets:
             self.room_counts[sender] = self.room_counts.get(sender, 0) + 1
+            self.last_user_interact[sender] = now
 
     # ---- 双手槽位与部位互动 ----
 
@@ -662,8 +788,6 @@ class RoomStore:
 
     def reset_turn_hands(self, save: bool = True, advance_turn: bool = False):
         self.pending_actions = []
-        if advance_turn:
-            self.turn_no += 1
         for side in ("left", "right"):
             if self.hands[side]["state"] == "used":
                 self.hands[side] = {"state": "free", "note": ""}
@@ -901,18 +1025,20 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
 
 def pick_auto_speaker(store: RoomStore, room_id: str, busy_ids: set[str],
                       enabled: bool, prob_pct: int, rng=None,
-                      include_other_rooms: bool = False) -> tuple[str, str] | None:
-    """按概率挑选一位空闲的非玩家角色自主行动（对话或移动拜访）。返回 (actor_id, actor_room_id) 或 None。"""
+                      include_other_rooms: bool = False,
+                      blocked_ids: set[str] = None) -> tuple[str, str] | None:
+    """按概率挑选一位空闲的非玩家角色自主行动（对话、移动或系统随机活动）。返回 (actor_id, actor_room_id) 或 None。"""
     if not enabled:
         return None
     r = rng or random
     p = max(0, min(100, int(prob_pct or 0))) / 100.0
     if p <= 0 or r.random() >= p:
         return None
+    skip = set(busy_ids or ()) | set(blocked_ids or ())
     if include_other_rooms:
-        candidates = [(aid, rid) for aid, rid in store.occupants.items() if aid != "user" and aid not in busy_ids]
+        candidates = [(aid, rid) for aid, rid in store.occupants.items() if aid != "user" and aid not in skip]
     else:
-        candidates = [(aid, room_id) for aid in store.occupants_in(room_id) if aid != "user" and aid not in busy_ids]
+        candidates = [(aid, room_id) for aid in store.occupants_in(room_id) if aid != "user" and aid not in skip]
     if not candidates:
         return None
     return r.choice(candidates)

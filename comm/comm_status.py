@@ -308,6 +308,20 @@ class StatusMixin:
         s = self.other_status()
         return s["kind"] if s and s["kind"] in STATUS_TEXT else "idle"
 
+    def persona_status_kind(self, persona_name: str, now=None) -> str:
+        """查询任意人设此刻的日程状态（focus / sleep / rest / idle）。"""
+        if not persona_name:
+            return "idle"
+        if persona_name == self.persona_name():
+            s = self.other_status(now)
+        else:
+            rt_text = read_routine(self.personas, persona_name)
+            rt = routine.parse(rt_text) if rt_text else None
+            entries = [] if rt else schedule_entries(read_persona(self.personas, persona_name))
+            ctx = {"pid": pid_of(persona_name), "name": persona_name, "rt": rt, "entries": entries}
+            s = self.other_status(now, ctx)
+        return s["kind"] if s and s.get("kind") in STATUS_TEXT else "idle"
+
     def _sf_tick(self):
         """每秒: 日程跟随开着 (并且没有合约) 时看对方的状态; 变了就在焦点设备询问 (用户的计时器已经是同一种状态 / 外出中不问).
         开关关着 / 合约中 / 没选人设 / 换了聊天对象 = 重新开始看: 先记下对方现在的状态, 不提示 (合约里对方被改的状态也不算)."""

@@ -58,11 +58,21 @@ class RoomPage(tk.Frame):
         self.refresh()
 
     def _sync_persona_rooms(self):
-        """确保所有人设（含新建人设）都拥有专属房间，且默认在线并待在自己房间里。"""
+        """确保所有人设（含新建人设）都拥有专属房间，且专注/睡眠期间自动锁在自己房间里。"""
         if not self.comm:
             return
-        plist = [(p, persona_title(p)) for p in list_personas(self.comm.personas)]
+        personas = list_personas(self.comm.personas)
+        plist = [(p, persona_title(p)) for p in personas]
         self.store.sync_personas(plist)
+        names = {p: title for p, title in plist}
+        status_map = self._schedule_status_map(personas)
+        self.store.sync_schedule_locks(status_map, names)
+
+    def _schedule_status_map(self, personas: list[str] = None) -> dict[str, str]:
+        if not self.comm or not hasattr(self.comm, "persona_status_kind"):
+            return {}
+        ps = personas if personas is not None else list_personas(self.comm.personas)
+        return {p: self.comm.persona_status_kind(p) for p in ps}
 
     def _persona_names(self) -> dict[str, str]:
         names = {"user": (self.username() or "你").strip() or "你"}
@@ -264,12 +274,21 @@ class RoomPage(tk.Frame):
         rid = room["id"]
         names = self._persona_names()
 
-        lock_tag = tr(" · 已内部反锁") if room.get("locked_inside") else ""
+        lock_reason = room.get("locked_reason") or ""
+        if room.get("locked_inside"):
+            if lock_reason == "focus":
+                lock_tag = tr(" · 专注中已反锁")
+            elif lock_reason == "sleep":
+                lock_tag = tr(" · 睡眠中已反锁")
+            else:
+                lock_tag = tr(" · 已内部反锁")
+        else:
+            lock_tag = ""
         cfg(self.lbl_room_title, text=f"🏠 {room['name']}")
         cfg(self.lbl_room_theme, text=f"[{room['theme']}{lock_tag}]",
             fg="#ef4444" if room.get("locked_inside") else COLORS["accent"])
         cfg(self.lbl_ambience, text=room.get("ambience") or tr("安静的文字空间。"))
-        cfg(self.lbl_log_title, text=tr("📜 房间记录 · 第 {n} 回合", n=self.store.turn_no + 1))
+        cfg(self.lbl_log_title, text=tr("📜 房间记录（即时）"))
         cfg(self.btn_lock, text=tr("🔓 解除反锁") if room.get("locked_inside") else tr("🔒 反锁房门"))
 
         rooms = self.store.room_list()
@@ -282,11 +301,12 @@ class RoomPage(tk.Frame):
         npc_on = bool(self.comm.cfg.get("room_npc_chat", False)) if self.comm else False
         interval = int(self.comm.cfg.get("room_npc_interval") or 30) if self.comm else 30
         prob = int(self.comm.cfg.get("room_npc_prob") or 30) if self.comm else 30
+        idle_m = int(self.comm.cfg.get("room_npc_idle_min") or 15) if self.comm else 15
         if npc_on:
-            cfg(self.lbl_auto_status, text=tr("● 角色对话已开 ({s}s / {p}%)", s=interval, p=prob),
+            cfg(self.lbl_auto_status, text=tr("● 自动行动已开 ({s}s/{p}% · {m}m静默)", s=interval, p=prob, m=idle_m),
                 fg=COLORS["accent"])
         else:
-            cfg(self.lbl_auto_status, text=tr("○ 角色对话未开 (点此设置)"), fg=COLORS["text_dim"])
+            cfg(self.lbl_auto_status, text=tr("○ 自动行动未开 (点此设置)"), fg=COLORS["text_dim"])
 
         self._render_map(room, names)
         self._render_occupant_chips(rid, names)
@@ -338,12 +358,15 @@ class RoomPage(tk.Frame):
     def _render_occupant_chips(self, room_id: str, names: dict[str, str]):
         for child in self.occ_chips.winfo_children():
             child.destroy()
+        sched = self._schedule_status_map()
         for aid in self.store.occupants_in(room_id):
             name = names.get(aid, aid)
             is_me = (aid == "user")
+            act_tag = "" if is_me else self.store.activity_label(aid, schedule_kind=sched.get(aid, ""))
+            chip_text = f"@{name}" + (" (我)" if is_me else (f" · {act_tag}" if act_tag else ""))
             lbl = tk.Label(
                 self.occ_chips,
-                text=f"@{name}" + (" (我)" if is_me else ""),
+                text=chip_text,
                 bg=COLORS["bg"],
                 fg=COLORS["accent"] if is_me else COLORS["text"],
                 font=config.font("small"),
@@ -618,7 +641,7 @@ class RoomPage(tk.Frame):
             dlg.finish(True)
             self._render_hands()
 
-        ttk.Button(dlg.buttons, text=tr("加入本回合行动"), style="Accent.TButton",
+        ttk.Button(dlg.buttons, text=tr("加入待发动作"), style="Accent.TButton",
                    command=submit, state="normal" if avail else "disabled").pack(side="right")
         ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
         dlg.wait()
@@ -659,7 +682,7 @@ class RoomPage(tk.Frame):
             dlg.finish(True)
             self._render_hands()
 
-        ttk.Button(dlg.buttons, text=tr("加入本回合行动"), style="Accent.TButton",
+        ttk.Button(dlg.buttons, text=tr("加入待发动作"), style="Accent.TButton",
                    command=submit, state="normal" if avail else "disabled").pack(side="right")
         ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
         dlg.wait()
@@ -820,8 +843,8 @@ class RoomPage(tk.Frame):
         self.entry.delete("1.0", "end")
         self.store.append_log(room_id, "user", self._actor_name("user"), targets,
                               "action" if actions and not text else "say", text, actions=actions)
-        # 每次发送推进一回合，并把已用双手复位为空闲（束缚保持）
-        self.store.reset_turn_hands(save=True, advance_turn=True)
+        # 即时动作发送后清空已用双手（束缚保持）
+        self.store.reset_turn_hands(save=True)
         self.refresh()
 
         occ_npcs = [aid for aid in self.store.occupants_in(room_id) if aid != "user"]
@@ -939,11 +962,20 @@ class RoomPage(tk.Frame):
         self._auto_job = None
         if not self._visible or not self.comm:
             return
+        self._sync_persona_rooms()
         enabled = bool(self.comm.cfg.get("room_npc_chat", False))
         prob = int(self.comm.cfg.get("room_npc_prob") or 30)
+        idle_min = int(self.comm.cfg.get("room_npc_idle_min") or 15)
+        sched = self._schedule_status_map()
+        blocked = {aid for aid, k in sched.items() if k in ("focus", "sleep")}
         rid = self.store.current_room_id()
-        picked = pick_auto_speaker(self.store, rid, self._busy_actors, enabled, prob, include_other_rooms=True)
+        picked = pick_auto_speaker(self.store, rid, self._busy_actors, enabled, prob,
+                                   include_other_rooms=True, blocked_ids=blocked)
         if picked:
             speaker_id, speaker_room = picked
-            self._trigger_actor_reply(speaker_room, speaker_id, trigger_reason="auto")
+            if self.store.is_recently_interacted(speaker_id, idle_min):
+                self._trigger_actor_reply(speaker_room, speaker_id, trigger_reason="auto")
+            else:
+                self.store.perform_idle_system_step(speaker_id, self._actor_name(speaker_id))
+                self.refresh()
         self._schedule_auto_tick()
