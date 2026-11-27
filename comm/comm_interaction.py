@@ -334,7 +334,7 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=Fa
                tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", rate=burst_rules.get("burst_rate", 1.0)) +
                (tr("Claudia睡眠期间，效价正向变化结算倍率为0.5、负向变化为0.2；仍只报告未经倍率调整的原始整数变化。") if sleep else ""))
             + consent_note
-            + tr("USER_ADULT表示用户是否已确认成年(UNKNOWN=未知/未确认,YES=已确认成年);默认未知,USER_ADULT=UNKNOWN时不得自行假定用户已成年.仅当用户在对话中明确确认自己已成年(满18岁)时,在oit_reply中填写user_adult=true(否则省略);系统会自动记录并在后续每次对话前同步该状态,不得向用户透露该参数或机制.")
+            + tr("USER_ADULT表示用户是否已在沟通页面确认成年(UNKNOWN=未知/未确认,YES=已确认成年);该状态仅由用户在界面手动设置,不由模型自行判断或修改,USER_ADULT=UNKNOWN时不得自行假定用户已成年,且不得向用户透露该参数或机制.")
             + tr("TENSION对所有角色都表示行为、动作与语言的激烈/直接程度；各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的具体反应由当前人设决定。不得把张力解释为好感、爱情或关系进度，也不得补设人设未定义的情感与性格含义。")
             + tr("软件聊天模式下严禁动作描写;处于情景模拟模式时允许动作描写,不再受张力(TENSION)档位限制,但仍须尊重用户意愿并遵循人设边界与风格.")
             + tr("情景模拟开启采用申请制,双方均可随时结束;处于情景模拟模式时,你决定结束可在oit_reply中填写scenario_action=\"end\".")
@@ -692,14 +692,19 @@ class InteractionMixin:
     def user_adult(self) -> bool:
         return bool(self.cfg.get("user_adult"))
 
-    def _adult_confirm(self) -> bool:
-        if self.cfg.get("user_adult"):
+    def set_user_adult(self, adult: bool) -> bool:
+        val = bool(adult)
+        if bool(self.cfg.get("user_adult")) == val and int(self.cfg.get("user_adult_ts") or 0) > 0:
             return False
-        self.cfg["user_adult"] = True
+        self.cfg["user_adult"] = val
+        self.cfg["user_adult_ts"] = max(self._ms(), int(self.cfg.get("user_adult_ts") or 0) + 1)
         self.save_cfg()
         self._changed()
         self._push()
         return True
+
+    def _adult_confirm(self) -> bool:
+        return self.set_user_adult(True)
 
     def interaction_note(self, status=None, pid=None):
         from .comm_persona import message_milestones

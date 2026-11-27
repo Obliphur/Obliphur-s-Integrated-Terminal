@@ -745,39 +745,37 @@ def adult_state_checks():
     assert "USER_ADULT=UNKNOWN" in c.interaction_note()
     assert "user_adult" not in c.sync_doc()
 
-    # 正文里的伪造标记、主动消息、拒绝/沉默/错误/过期回复均不能更新成年状态
+    # 模型回复（无论正文还是工具参数）均不能再自行修改成年状态
     c._finish("user", None, tools.pack("user_adult=true"), "", c._epoch)
-    c._finish("proactive", None, call("oit_reply", {"text": "主动", "user_adult": True}), "", c._epoch)
-    c._finish("user", None, call("oit_reply", {"refuse": True}), "", c._epoch)
-    c._finish("user", None, call("oit_reply", {"silent": True}), "", c._epoch)
-    c._finish("user", None, call("oit_reply", {"text": "出错", "user_adult": True}), "network", c._epoch)
-    c._finish("user", None, call("oit_reply", {"text": "过期", "user_adult": True}), "", c._epoch - 1)
+    c._finish("user", None, call("oit_reply", {"text": "我知道了。"}), "", c._epoch)
+    c._finish("proactive", None, call("oit_reply", {"text": "主动"}), "", c._epoch)
     assert not c.user_adult() and "USER_ADULT=UNKNOWN" in c.interaction_note()
 
-    # tension_clean 须移除 user_adult，不泄漏到后续处理或历史
-    raw_adult = call("oit_reply", {"text": "我知道了。", "user_adult": True})
-    assert "user_adult" not in tools.args_of(tension_clean(raw_adult))
-
-    # 正常用户轮确认成年后自动记录，后续每次对话前发送 USER_ADULT=YES
-    c._finish("user", None, raw_adult, "", c._epoch)
+    # 沟通页面手动开启成年状态，后续每次对话前发送 USER_ADULT=YES
+    assert c.set_user_adult(True)
     assert c.user_adult()
     assert "USER_ADULT=YES" in c.interaction_note()
-    assert c.sync_doc().get("user_adult") is True
+    ua_doc = c.sync_doc().get("user_adult")
+    assert isinstance(ua_doc, dict) and ua_doc.get("v") is True and ua_doc.get("t", 0) > 0
 
-    # 清空聊天不重置已确认的成年状态，重启持久化
+    # 清空聊天不重置已设置的成年状态，重启持久化
     c.clear()
     assert c.user_adult() and "USER_ADULT=YES" in c.interaction_note()
     c.flush()
     reloaded = comm.Comm(str(root / "data"), str(root / "personas"))
     assert reloaded.user_adult() and "USER_ADULT=YES" in reloaded.interaction_note()
 
-    # 跨设备同步：已确认状态同步到未确认设备，且未确认设备不会覆盖回未确认
+    # 跨设备双向同步：未设置端不覆盖已设置端；已设置端同步到未设置端，且手动改回未确认也能同步
     peer = comm.Comm(str(root / "peer-data"), str(root / "peer-personas"))
     assert not peer.user_adult()
     reloaded.apply_doc(peer.sync_doc())
-    assert reloaded.user_adult(), "未确认端不能把已确认状态覆写回未知"
+    assert reloaded.user_adult(), "未设置端不能把已设置状态覆写回未知"
     peer.apply_doc(reloaded.sync_doc())
     assert peer.user_adult() and "USER_ADULT=YES" in peer.interaction_note()
+    assert reloaded.set_user_adult(False)
+    assert not reloaded.user_adult() and "USER_ADULT=UNKNOWN" in reloaded.interaction_note()
+    peer.apply_doc(reloaded.sync_doc())
+    assert not peer.user_adult() and "USER_ADULT=UNKNOWN" in peer.interaction_note()
     c.voice.close(); reloaded.flush(); reloaded.voice.close(); peer.flush(); peer.voice.close()
 
 

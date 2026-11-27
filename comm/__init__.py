@@ -624,8 +624,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             doc["coread_offer"] = dict(self.cfg["coread_offer"])
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
-        if self.user_adult():
-            doc["user_adult"] = True
+        ua_ts = int(self.cfg.get("user_adult_ts") or 0)
+        if ua_ts > 0:
+            doc["user_adult"] = {"v": self.user_adult(), "t": ua_ts}
+        elif self.user_adult():
+            doc["user_adult"] = {"v": True, "t": 1}
         doc["think"] = self.think_auto()                # 自动开思考的开关: 同上
         doc["bgpro"] = self.bg_on()
         doc["sfollow"] = self.sf_on()                   # 日程跟随的开关: 提示在主端弹, 两台设备要一致
@@ -932,9 +935,22 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     self.cfg["user_profile"] = new
                     self.save_cfg()
                     self._changed()
-            elif key == "user_adult" and val is True:
-                if not self.user_adult():
+            elif key == "user_adult":
+                local_ts = int(self.cfg.get("user_adult_ts") or 0)
+                if isinstance(val, dict):
+                    try:
+                        rem_t = int(val.get("t") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    rem_v = bool(val.get("v"))
+                    if rem_t > local_ts:
+                        self.cfg["user_adult"] = rem_v
+                        self.cfg["user_adult_ts"] = rem_t
+                        self.save_cfg()
+                        self._changed()
+                elif val is True and local_ts == 0 and not self.user_adult():
                     self.cfg["user_adult"] = True
+                    self.cfg["user_adult_ts"] = 1
                     self.save_cfg()
                     self._changed()
             elif kind == "pro" and isinstance(val, str):             # 已经处理过的主动消息时间点: 两边合起来
@@ -1784,8 +1800,6 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 burst = self._interaction_judged(tension_reply)
                 special, until, shame = getattr(self, "_interaction_turn", (False, 0, False))
                 self._interaction_reply(special, burst, until, shame)
-            if kind in ("user", "retry", "followup") and args_of(tension_reply).get("user_adult") is True:
-                self._adult_confirm()
             if accept and self.offense_blocked():
                 accept = False
                 text = tr("我现在还不能答应。")

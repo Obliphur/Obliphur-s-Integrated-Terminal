@@ -600,7 +600,9 @@ def main():
                 "user_adult": True,
             })
             assert rep_tv["ok"] and rep_tv["applied"]["tension"] > 0 and rep_tv["applied"]["valence"] > 0, f"应结算张力与效价: {rep_tv}"
-            assert rep_tv["applied"].get("user_adult") is True and c.user_adult()
+            assert not c.user_adult(), "模型回复不再自行修改 USER_ADULT"
+            act_adult = _http_json(port, bridge.token, "/ui/action", {"action": "set_user_adult", "params": {"adult": True}})
+            assert act_adult["ok"] and act_adult["user_adult"] is True and c.user_adult()
             ctx_adult = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
             assert "USER_ADULT=YES" in ctx_adult["system_message"] and "成年状态:" not in ctx_adult["system_message"]
 

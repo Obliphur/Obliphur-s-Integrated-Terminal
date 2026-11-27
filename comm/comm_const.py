@@ -122,7 +122,7 @@ THINK_NEW_AFTER = 180                                    # 对方此刻按日程
 DEFAULTS = {"persona": "", "show_avatar": True, "coread_link": {}, "coread_offer": {},
             "avatar_me": "", "avatar_ai": "", "default_avatars": 0, "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False, "gemina_seeded": False, "charlotte_seeded": False,
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "", "example_base": "", "profile_base": "", "builtin_bases": {},
-            "legacy_done": False, "joint_last": [], "user_profile": "", "user_adult": False,
+            "legacy_done": False, "joint_last": [], "user_profile": "", "user_adult": False, "user_adult_ts": 0,
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {}, "sched_follow": False, "pro_lang": "",
             "answer_images": True,                          # 学科子代理回答是否生成可滑动长图
             "mem_auto": "", "mem_live": "", "mem_fixed": [], "mem_upto": 0, "mem_ts": 0,  # 长期摘要、实时事件与系统固定记录

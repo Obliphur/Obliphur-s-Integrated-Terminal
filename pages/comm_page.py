@@ -123,6 +123,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.btn_review.pack(side="left", padx=(4, 0))
         self.btn_coread = ttk.Button(tools, text="📚", width=3, command=self._reading)
         self.btn_coread.pack(side="left", padx=(4, 0))
+        self.btn_adult = ttk.Button(tools, text="18?", width=4, command=self._toggle_user_adult)
+        self.btn_adult.pack(side="left", padx=(4, 0))
         self.btn_consent = ttk.Button(tools, text="🛡", width=3, command=self._open_burst_consent)
         self._burst_consent_prompted = None
         self._burst_consent_open = False
@@ -270,6 +272,13 @@ class CommPage(CommVoiceMixin, tk.Frame):
         if why:
             toast.warn(tr(why))
         self.refresh(force=True)
+
+    def _toggle_user_adult(self):
+        c = self.comm
+        new_val = not c.user_adult()
+        c.set_user_adult(new_val)
+        toast.info(tr("已确认成年 (USER_ADULT=YES).") if new_val else tr("已设为未确认成年 (USER_ADULT=UNKNOWN)."))
+        self.refresh()
 
     def _open_burst_consent(self):
         if self._burst_consent_open:
@@ -457,9 +466,10 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 self.scenario_btns.pack(side="left", padx=(8, 0))
         elif self.scenario_btns.winfo_manager() == "pack":
             self.scenario_btns.pack_forget()
+        cfg(self.btn_adult, text="18+" if c.user_adult() else "18?")
         if c.burst_consent_rules_for():
             if self.btn_consent.winfo_manager() != "pack":
-                self.btn_consent.pack(side="left", padx=(4, 0), after=self.btn_coread)
+                self.btn_consent.pack(side="left", padx=(4, 0), after=self.btn_adult)
         elif self.btn_consent.winfo_manager() == "pack":
             self.btn_consent.pack_forget()
         pending_consent = c.burst_consent_pending()
@@ -1185,6 +1195,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
                 ("📚", "阅读", "选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送，待对方明确同意后才打开共读室。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。"),
+                ("18? / 18+", "成年状态", "手动切换成年确认状态（18? = 未确认，18+ = 已确认满 18 岁，同步至所有聊天对象与已绑定设备），不再由模型自行判断。"),
                 ("🛡", "同意声明", "当且仅当当前人设有同意声明时在工具栏显示。可随时点击逐项勾选或撤回同意（未勾选的项目将被严格禁止）；若首次触发 BURST 时仍未设置，系统也会自动弹窗提示确认。"),
                 ("💬", "说教", "你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。"),
                 ("📱 / 🎭", "聊天模式", "输入框上方的 📱 / 🎭 按钮用于情景模拟。开启情景模拟采用申请制（📱 会把申请作为附件随下一条消息发出，或点「接受」同意对方申请），开启后显示 🎭，双方均可随时结束。模式按聊天对象保存。"),

@@ -2433,6 +2433,16 @@ class Comm(
     /** 用户在 设置 → 沟通 里自己填的身份背景: 附在人设后面一起发给对方. */
     var userProfile = ""; private set
     var userAdult = false; private set
+    private var userAdultTs = 0L
+
+    @Synchronized
+    fun setUserAdult(adult: Boolean): Boolean {
+        if (userAdult == adult && userAdultTs > 0L) return false
+        userAdult = adult
+        userAdultTs = maxOf(nowMs(), userAdultTs + 1L)
+        saveCfg(); changed(); push()
+        return true
+    }
     /** 收到对方主动发来的消息, 并且前 5 分钟没和对方聊过: 放柔和的提示音. Core 接上. */
     var onProactive: () -> Unit = {}
     private val others = HashMap<String, ChatState>()
@@ -2738,6 +2748,7 @@ class Comm(
             }
             userProfile = d.optString("user_profile", "")
             userAdult = d.optBoolean("user_adult", false)
+            userAdultTs = d.optLong("user_adult_ts", if (userAdult) 1L else 0L)
             schedFollow = d.optBoolean("sched_follow", false)
             proLang = d.optString("pro_lang", "").trim().take(MAX_PRO_LANG)
             thinkAuto = d.optBoolean("think_auto", true)
@@ -2815,7 +2826,7 @@ class Comm(
         val o = JSONObject().put("persona", persona)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi).put("default_avatars", defaultAvatarVersion)
             .put("answer_images", answerImages)
-            .put("user_profile", userProfile).put("user_adult", userAdult).put("seeded", seeded).put("assistant_seeded", assistantSeeded).put("gemina_seeded", geminaSeeded).put("charlotte_seeded", charlotteSeeded)
+            .put("user_profile", userProfile).put("user_adult", userAdult).put("user_adult_ts", userAdultTs).put("seeded", seeded).put("assistant_seeded", assistantSeeded).put("gemina_seeded", geminaSeeded).put("charlotte_seeded", charlotteSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase).put("example_base", exampleBase)
             .put("profile_base", profileBase)
@@ -3093,7 +3104,8 @@ class Comm(
             doc["notice:$key"] = JSONObject(value.toString())
         }
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
-        if (userAdult) doc["user_adult"] = true
+        if (userAdultTs > 0L) doc["user_adult"] = JSONObject().put("v", userAdult).put("t", userAdultTs)
+        else if (userAdult) doc["user_adult"] = JSONObject().put("v", true).put("t", 1L)
         doc["think"] = thinkAuto                                    // 自动开思考的开关: 同上
         doc["bgpro"] = bgPro
         doc["sfollow"] = schedFollow                                // 日程跟随的开关: 提示在主端弹, 两台设备要一致
@@ -3207,7 +3219,15 @@ class Comm(
                     val n = (v as? String ?: "").take(MAX_PROFILE)
                     if (n != userProfile) { userProfile = n; saveCfg(); changed() }
                 }
-                key == "user_adult" && v == true -> if (!userAdult) { userAdult = true; saveCfg(); changed() }
+                key == "user_adult" && v is JSONObject -> {
+                    val remT = v.optLong("t", 0L)
+                    if (remT > userAdultTs) {
+                        userAdult = v.optBoolean("v", false)
+                        userAdultTs = remT
+                        saveCfg(); changed()
+                    }
+                }
+                key == "user_adult" && v == true -> if (userAdultTs == 0L && !userAdult) { userAdult = true; userAdultTs = 1L; saveCfg(); changed() }
                 kind == "milestone" && v is JSONObject -> {
                     val p = rest.substringBefore(':')
                     val threshold = rest.substringAfter(':').toIntOrNull() ?: continue
@@ -7252,9 +7272,6 @@ class Comm(
                 val replied = interactionPrepare().replied(interactionTurn.special, burst, interactionTurn.until, interactionTurn.shame, now, burstConsentRulesFor())
                 val endShift = if (replied.burstUntil > 0L && now >= replied.burstUntil) interactionBurstEndShift() else 0
                 interactionSet(replied.settle(now, endShift))
-            }
-            if (r.kind in listOf("user", "retry", "followup") && ToolProtocol.args(tensionReply).optBoolean("user_adult")) {
-                if (!userAdult) { userAdult = true; saveCfg(); changed(); push() }
             }
             if (accept && offenseBlocked()) {
                 accept = false

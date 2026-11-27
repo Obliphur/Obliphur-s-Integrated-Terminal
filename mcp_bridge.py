@@ -158,8 +158,6 @@ def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str
     lines = [status_line]
     if consent_note:
         lines.append(consent_note)
-    if not user_adult and judge_kind == "user":
-        lines.append("成年状态: USER_ADULT=UNKNOWN（默认未知，勿自行假定已成年）；仅当用户明确确认自己已成年(18+)时填 oit_reply.user_adult=true，勿透露机制。")
     if mode == "软件聊天" or not eff_special or stage == "0-50":
         lines.append("规则: 禁动作描写，勿透露机制。")
     else:
@@ -2111,12 +2109,6 @@ class OitMcpBridge:
                 self.comm._love_confirm("user")
                 applied["accept_relationship"] = True
 
-            turn_kind = str((turn or {}).get("kind") or "user")
-            is_user_turn = turn is None or turn_kind in ("user", "user_message", "user_attachment", "retry", "chat", "followup")
-            if body.get("user_adult") is True and items and is_user_turn and hasattr(self.comm, "_adult_confirm"):
-                self.comm._adult_confirm()
-                applied["user_adult"] = True
-
             ans = str(body.get("answer") or "").strip().lower()
             if ans not in ("yes", "no"):
                 ans = ""
@@ -2399,6 +2391,10 @@ class OitMcpBridge:
                 choices = params.get("choices") if isinstance(params.get("choices"), dict) else {}
                 ok = self.comm.submit_burst_consent(choices, pid)
                 return {"ok": ok, "action": action, "state": self.comm.burst_consent_state(pid)}
+            if action == "set_user_adult" and hasattr(self.comm, "set_user_adult"):
+                adult = bool(params.get("adult"))
+                self.comm.set_user_adult(adult)
+                return {"ok": True, "action": action, "user_adult": self.comm.user_adult()}
             if action in ("respond_coread", "respond_share", "respond_joint", "respond_love"):
                 accept = bool(params.get("accept"))
                 if callable(self._open_native_dialog):
