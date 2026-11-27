@@ -298,7 +298,7 @@ class WebPageAdapter(tk.Frame):
         return box.get("val")
 
     @staticmethod
-    def _is_horizontal_container(children) -> bool:
+    def _layout_info(children):
         sides = set()
         grid_cols = set()
         grid_rows = set()
@@ -313,17 +313,77 @@ class WebPageAdapter(tk.Frame):
                     grid_rows.add(int(info.get("row", 0)))
             except Exception:
                 pass
+        if grid_cols and (len(grid_cols) > 1 or len(grid_rows) > 1):
+            return ("grid", max(grid_cols) + 1)
         if sides and sides.issubset({"left", "right"}):
-            return True
-        if len(grid_cols) > 1 and len(grid_rows) == 1:
-            return True
-        return False
+            return ("row", 0)
+        return ("col", 0)
+
+    @staticmethod
+    def _canvas_svg(canvas):
+        try:
+            items = canvas.find_all()
+        except Exception:
+            return None
+        if not items:
+            return None
+        try:
+            w = max(int(canvas.winfo_width()), int(float(canvas.cget("width") or 0)), 1)
+            h = max(int(canvas.winfo_height()), int(float(canvas.cget("height") or 0)), 1)
+        except Exception:
+            w, h = 200, 120
+        shapes = []
+        for iid in items[:600]:
+            try:
+                t = canvas.type(iid)
+                coords = [round(float(x), 1) for x in canvas.coords(iid)]
+                if not coords:
+                    continue
+                if t == "rectangle" and len(coords) >= 4:
+                    shapes.append({
+                        "t": "rect", "x": min(coords[0], coords[2]), "y": min(coords[1], coords[3]),
+                        "w": abs(coords[2] - coords[0]), "h": abs(coords[3] - coords[1]),
+                        "fill": _cget_str(canvas, "bg") if canvas.itemcget(iid, "fill") == "" else canvas.itemcget(iid, "fill"),
+                        "stroke": canvas.itemcget(iid, "outline"),
+                        "no_fill": canvas.itemcget(iid, "fill") == "",
+                    })
+                elif t == "oval" and len(coords) >= 4:
+                    shapes.append({
+                        "t": "oval", "cx": (coords[0] + coords[2]) / 2, "cy": (coords[1] + coords[3]) / 2,
+                        "rx": abs(coords[2] - coords[0]) / 2, "ry": abs(coords[3] - coords[1]) / 2,
+                        "fill": canvas.itemcget(iid, "fill"), "stroke": canvas.itemcget(iid, "outline"),
+                    })
+                elif t == "line" and len(coords) >= 4:
+                    shapes.append({
+                        "t": "line", "pts": coords,
+                        "stroke": canvas.itemcget(iid, "fill"),
+                        "sw": canvas.itemcget(iid, "width"),
+                    })
+                elif t == "polygon" and len(coords) >= 6:
+                    shapes.append({
+                        "t": "poly", "pts": coords,
+                        "fill": canvas.itemcget(iid, "fill"), "stroke": canvas.itemcget(iid, "outline"),
+                    })
+                elif t == "text" and len(coords) >= 2:
+                    shapes.append({
+                        "t": "text", "x": coords[0], "y": coords[1],
+                        "text": canvas.itemcget(iid, "text"),
+                        "fill": canvas.itemcget(iid, "fill"),
+                        "anchor": canvas.itemcget(iid, "anchor"),
+                    })
+            except Exception:
+                continue
+        if not shapes:
+            return None
+        return {"w": w, "h": h, "bg": _cget_str(canvas, "bg"), "shapes": shapes}
 
     def _walk(self, widget, path="0", parent_bg=""):
         self._control_map[path] = widget
         kind = widget.winfo_class().lower()
         if kind.startswith("t"):
             kind = kind[1:]
+        if kind == "scrollbar":
+            return {"id": path, "kind": "skip", "text": "", "children": []}
         try:
             if kind == "label" and widget.bind("<Button-1>"):
                 kind = "button"
@@ -332,14 +392,19 @@ class WebPageAdapter(tk.Frame):
 
         bg = _cget_str(widget, "bg")
         fg = _cget_str(widget, "fg")
+        style_name = _cget_str(widget, "style")
         size, bold = _font_info(widget)
         is_card = False
+        border_col = ""
         if kind in ("frame", "labelframe"):
             try:
                 ht = int(widget.cget("highlightthickness") or 0)
             except Exception:
                 ht = 0
-            if ht > 0 or (bg and bg == COLORS.get("bg_card") and parent_bg != bg):
+            if ht > 0:
+                is_card = True
+                border_col = _cget_str(widget, "highlightbackground")
+            elif bg and bg == COLORS.get("bg_card") and parent_bg != bg:
                 is_card = True
 
         node = {
@@ -348,12 +413,32 @@ class WebPageAdapter(tk.Frame):
             "text": _text(widget),
             "children": [],
         }
+        try:
+            if widget.winfo_manager() == "grid":
+                gi = widget.grid_info()
+                node["gr"] = int(gi.get("row", 0))
+                node["gc"] = int(gi.get("column", 0))
+                cs = int(gi.get("columnspan", 1))
+                if cs > 1:
+                    node["gcs"] = cs
+        except Exception:
+            pass
+
         if is_card:
             node["card"] = True
+            if bg and bg.startswith("#"):
+                node["bg"] = bg
+            if border_col and border_col.startswith("#"):
+                node["border"] = border_col
         if fg and fg.startswith("#"):
             node["fg"] = fg
         if bg and bg.startswith("#") and kind in ("button", "label"):
             node["bg"] = bg
+        if style_name:
+            if "Accent" in style_name:
+                node["variant"] = "accent"
+            elif "Danger" in style_name:
+                node["variant"] = "danger"
         if size:
             node["size"] = size
         if bold:
@@ -364,6 +449,12 @@ class WebPageAdapter(tk.Frame):
                 node["text"] = widget.get("1.0", "end-1c")
             except Exception:
                 pass
+        elif kind == "progressbar":
+            try:
+                node["value"] = float(widget.cget("value") or 0)
+                node["max"] = float(widget.cget("maximum") or 100)
+            except Exception:
+                node["value"], node["max"] = 0.0, 100.0
         elif kind in ("entry", "spinbox", "combobox"):
             try:
                 node["value"] = widget.get()
@@ -401,17 +492,33 @@ class WebPageAdapter(tk.Frame):
                     node["disabled"] = False
 
         try:
-            raw_children = [ch for ch in widget.winfo_children() if ch.winfo_manager()]
+            all_children = widget.winfo_children()
+            if kind == "canvas":
+                raw_children = list(all_children)
+            else:
+                raw_children = [ch for ch in all_children if ch.winfo_manager()]
         except Exception:
             raw_children = []
 
-        if raw_children and self._is_horizontal_container(raw_children):
-            node["layout"] = "row"
+        if kind == "canvas" and not raw_children:
+            svg = self._canvas_svg(widget)
+            if svg:
+                node["svg"] = svg
+
+        if raw_children:
+            layout, cols = self._layout_info(raw_children)
+            if layout != "col":
+                node["layout"] = layout
+            if cols:
+                node["cols"] = cols
 
         for i, child in enumerate(raw_children):
             child_node = self._walk(child, f"{path}/{i}", bg or parent_bg)
-            if child_node.get("text") or child_node.get("children") or child_node.get("kind") in (
-                    "button", "checkbutton", "radiobutton", "entry", "spinbox", "combobox", "treeview", "separator"):
+            if child_node.get("kind") == "skip":
+                continue
+            if child_node.get("text") or child_node.get("children") or child_node.get("svg") or child_node.get("kind") in (
+                    "button", "checkbutton", "radiobutton", "entry", "spinbox", "combobox",
+                    "treeview", "separator", "progressbar"):
                 node["children"].append(child_node)
         return node
 
@@ -765,45 +872,100 @@ button,input,select{font:inherit}
 button{border:1px solid var(--border);background:var(--bg-card);color:var(--text);border-radius:4px;padding:6px 12px;cursor:pointer;line-height:1.3}
 button:hover{border-color:var(--accent);filter:brightness(1.06)}
 button:disabled{opacity:.45;cursor:not-allowed}
+button.accent{background:var(--accent-fill);color:var(--on-accent-fill);border-color:var(--accent-fill);font-weight:600}
+button.danger{background:var(--danger);color:#ffffff;border-color:var(--danger);font-weight:600}
 input,select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 9px;outline:0}
 input:focus,select:focus{border-color:var(--accent)}
-.app{height:100%;display:flex;flex-direction:column;padding:20px 26px 14px;gap:10px}
-.header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:10px}
-.title{font-size:20px;font-weight:700;color:var(--text)}
+.app{height:100%;display:flex;flex-direction:column;padding:18px 26px 14px}
 .body{flex:1;min-height:0;overflow:auto;padding:2px 2px 16px}
-.col{display:flex;flex-direction:column;gap:6px}
+.col{display:flex;flex-direction:column;gap:7px}
 .row{display:flex;flex-direction:row;align-items:center;gap:8px;flex-wrap:wrap}
+.grid{display:grid;gap:6px;align-items:stretch}
 .card{border:1px solid var(--border);background:var(--bg-card);border-radius:6px;padding:12px 14px;margin:4px 0}
 .sep{height:1px;background:var(--border);margin:6px 0;width:100%}
 .label{white-space:pre-wrap;line-height:1.45}
 .control{display:inline-flex;align-items:center;gap:6px}
 .check{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);padding:5px 10px;border-radius:4px;cursor:pointer}
 .check.on{border-color:var(--accent);background:var(--accent-fill);color:var(--on-accent-fill)}
+.pbar{width:100%;height:10px;background:var(--border);border-radius:5px;overflow:hidden;margin:6px 0}
+.pbar-fill{height:100%;background:var(--accent-fill);transition:width .2s ease}
+.svg-wrap{display:block;max-width:100%}
 .rows{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:4px;overflow:hidden}
 .trow{padding:6px 10px;border-bottom:1px solid var(--border);background:var(--bg)}
 .trow:last-child{border-bottom:0}
 .body::-webkit-scrollbar{width:8px}
 .body::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
-</style></head><body><div class="app"><div class="header"><div id="title" class="title">OIT</div></div><div id="body" class="body"></div></div><script>
-const TOKEN=__TOKEN__;const $=id=>document.getElementById(id);
+</style></head><body><div class="app"><div id="body" class="body"></div></div><script>
+const TOKEN=__TOKEN__;const $=id=>document.getElementById(id);const SVG_NS='http://www.w3.org/2000/svg';
 function colors(c){if(!c)return;for(const [k,v] of Object.entries(c)){if(v)document.documentElement.style.setProperty('--'+k.replaceAll('_','-'),v)}}
 async function action(id,type='invoke',value=''){try{const r=await fetch('/api/action?token='+encodeURIComponent(TOKEN),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,type,value})});const j=await r.json();if(j.state)render(j.state)}catch(e){}}
+function renderSvg(svg){
+  const el=document.createElementNS(SVG_NS,'svg');
+  el.setAttribute('viewBox','0 0 '+svg.w+' '+svg.h);
+  el.style.width=svg.w<=32?svg.w+'px':'100%';
+  el.style.maxWidth=svg.w+'px';
+  el.style.height=svg.h+'px';
+  el.classList.add('svg-wrap');
+  if(svg.bg&&svg.bg.startsWith('#'))el.style.background=svg.bg;
+  (svg.shapes||[]).forEach(sh=>{
+    if(sh.t==='rect'){
+      const r=document.createElementNS(SVG_NS,'rect');
+      r.setAttribute('x',sh.x);r.setAttribute('y',sh.y);r.setAttribute('width',sh.w);r.setAttribute('height',sh.h);
+      r.setAttribute('fill',sh.no_fill?'none':(sh.fill||'none'));
+      if(sh.stroke)r.setAttribute('stroke',sh.stroke);
+      el.appendChild(r);
+    }else if(sh.t==='oval'){
+      const o=document.createElementNS(SVG_NS,'ellipse');
+      o.setAttribute('cx',sh.cx);o.setAttribute('cy',sh.cy);o.setAttribute('rx',sh.rx);o.setAttribute('ry',sh.ry);
+      o.setAttribute('fill',sh.fill||'none');if(sh.stroke)o.setAttribute('stroke',sh.stroke);
+      el.appendChild(o);
+    }else if(sh.t==='line'){
+      const p=document.createElementNS(SVG_NS,'polyline');
+      const pts=[];for(let i=0;i+1<sh.pts.length;i+=2)pts.push(sh.pts[i]+','+sh.pts[i+1]);
+      p.setAttribute('points',pts.join(' '));p.setAttribute('fill','none');
+      p.setAttribute('stroke',sh.stroke||'currentColor');if(sh.sw)p.setAttribute('stroke-width',sh.sw);
+      el.appendChild(p);
+    }else if(sh.t==='poly'){
+      const p=document.createElementNS(SVG_NS,'polygon');
+      const pts=[];for(let i=0;i+1<sh.pts.length;i+=2)pts.push(sh.pts[i]+','+sh.pts[i+1]);
+      p.setAttribute('points',pts.join(' '));p.setAttribute('fill',sh.fill||'none');
+      if(sh.stroke)p.setAttribute('stroke',sh.stroke);
+      el.appendChild(p);
+    }else if(sh.t==='text'){
+      const t=document.createElementNS(SVG_NS,'text');
+      t.setAttribute('x',sh.x);t.setAttribute('y',sh.y);t.textContent=sh.text||'';
+      t.setAttribute('fill',sh.fill||'currentColor');t.setAttribute('font-size','11');
+      const a=sh.anchor||'center';
+      t.setAttribute('text-anchor',a.includes('w')?'start':(a.includes('e')?'end':'middle'));
+      t.setAttribute('dominant-baseline',a.includes('n')?'hanging':(a.includes('s')?'auto':'central'));
+      el.appendChild(t);
+    }
+  });
+  return el;
+}
 function control(n){
   const k=n.kind||'';
   if(k==='separator'){const d=document.createElement('div');d.className='sep';return d}
+  if(k==='progressbar'){
+    const p=document.createElement('div');p.className='pbar';
+    const f=document.createElement('div');f.className='pbar-fill';
+    const pct=n.max>0?Math.max(0,Math.min(100,(n.value/n.max)*100)):0;
+    f.style.width=pct+'%';p.appendChild(f);return p;
+  }
   if(k==='checkbutton'||k==='radiobutton'){
     const b=document.createElement('button');b.className='check'+(n.checked?' on':'');
     b.textContent=(n.checked?'✓ ':'○ ')+(n.text||'');b.disabled=!!n.disabled;
     b.onclick=()=>action(n.id);return b;
   }
   if(k.includes('button')){
-    const b=document.createElement('button');b.className='control';b.textContent=n.text||'操作';b.disabled=!!n.disabled;
-    if(n.bg)b.style.background=n.bg;if(n.fg)b.style.color=n.fg;if(n.bold)b.style.fontWeight='700';
+    const b=document.createElement('button');b.className='control'+(n.variant?' '+n.variant:'');
+    b.textContent=n.text||'操作';b.disabled=!!n.disabled;
+    if(!n.variant&&n.bg)b.style.background=n.bg;if(!n.variant&&n.fg)b.style.color=n.fg;if(n.bold)b.style.fontWeight='700';
     b.onclick=()=>action(n.id);return b;
   }
   if(k==='entry'||k==='spinbox'){
-    const i=document.createElement('input');i.value=n.value||'';i.disabled=!!n.disabled;
-    i.onchange=()=>action(n.id,'set',i.value);i.onkeydown=e=>{if(e.key==='Enter')i.blur()};return i;
+    const i=document.createElement('input');i.dataset.id=n.id;i.value=n.value||'';i.disabled=!!n.disabled;
+    i.onchange=()=>action(n.id,'set',i.value);i.onkeydown=e=>{if(e.key==='Enter')action(n.id,'set',i.value)};return i;
   }
   if(k==='combobox'){
     const s=document.createElement('select');(n.options||[]).forEach(x=>{const o=document.createElement('option');o.textContent=x;o.value=x;s.appendChild(o)});
@@ -811,17 +973,24 @@ function control(n){
   }
   return null;
 }
-function node(n){
+function node(n,inGrid=false){
   const wrap=document.createElement('div');
   const cls=[];
   if(n.card)cls.push('card');
-  cls.push(n.layout==='row'?'row':'col');
+  cls.push(n.layout==='grid'?'grid':(n.layout==='row'?'row':'col'));
   wrap.className=cls.join(' ');
+  if(n.layout==='grid'&&n.cols)wrap.style.gridTemplateColumns='repeat('+n.cols+',minmax(0,1fr))';
+  if(inGrid&&typeof n.gc==='number'){
+    wrap.style.gridColumn=(n.gc+1)+(n.gcs?' / span '+n.gcs:'');
+    if(typeof n.gr==='number')wrap.style.gridRow=(n.gr+1);
+  }
+  if(n.card){if(n.bg)wrap.style.background=n.bg;if(n.border)wrap.style.borderColor=n.border}
+  if(n.svg)wrap.appendChild(renderSvg(n.svg));
   const c=control(n);
   if(c){wrap.appendChild(c)}
   else if(n.text){
     const l=document.createElement('div');l.className='label';l.textContent=n.text;
-    if(n.fg)l.style.color=n.fg;if(n.bold)l.style.fontWeight='700';
+    if(n.fg)l.style.color=n.fg;if(n.bg)l.style.background=n.bg;if(n.bold)l.style.fontWeight='700';
     if(n.size&&n.size>=14)l.style.fontSize=(n.size+2)+'px';
     wrap.appendChild(l);
   }
@@ -830,10 +999,18 @@ function node(n){
     n.rows.forEach(r=>{const x=document.createElement('div');x.className='trow';x.textContent=[r.text,...(r.values||[])].filter(Boolean).join('  ');rs.appendChild(x)});
     wrap.appendChild(rs);
   }
-  (n.children||[]).forEach(ch=>wrap.appendChild(node(ch)));
+  const childGrid=n.layout==='grid';
+  (n.children||[]).forEach(ch=>wrap.appendChild(node(ch,childGrid)));
   return wrap;
 }
-function render(s){if(!s)return;colors(s.colors);$('title').textContent=s.title||'OIT';$('body').replaceChildren(node(s.tree))}
+function render(s){
+  if(!s)return;colors(s.colors);
+  const ae=document.activeElement;
+  const fid=ae&&ae.dataset?ae.dataset.id:null;
+  const sel=ae&&typeof ae.selectionStart==='number'?ae.selectionStart:null;
+  $('body').replaceChildren(node(s.tree,false));
+  if(fid){const el=document.querySelector('[data-id="'+CSS.escape(fid)+'"]');if(el){el.focus();if(sel!==null&&el.setSelectionRange)el.setSelectionRange(sel,sel)}}
+}
 async function load(){try{const r=await fetch('/api/state?token='+encodeURIComponent(TOKEN));const j=await r.json();render(j.state)}catch(e){}}
 const es=new EventSource('/api/events?token='+encodeURIComponent(TOKEN));es.onmessage=load;load();
 </script></body></html>'''
