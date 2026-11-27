@@ -579,5 +579,39 @@
       "required": [],
       "additionalProperties": false
     }
+  },
+  {
+    "name": "oit_room_action",
+    "description": "在手机沟通页面聊天时，同步执行情景小屋内的行动（移动到公共空间或持有钥匙且未反锁的房间、更换室内位置、从内部反锁/解锁当前房门、把持有钥匙的房间钥匙分给用户、或开启/取消跟随）。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "move_to": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "position": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "lock_door": {
+          "type": "boolean"
+        },
+        "give_key_room": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "give_key_to": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "follow": {
+          "type": "string",
+          "enum": ["user", "none"]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
   }
 ]

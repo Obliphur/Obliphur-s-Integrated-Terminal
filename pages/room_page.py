@@ -45,7 +45,9 @@ class RoomPage(tk.Frame):
         self.on_coread = on_coread
         self.on_joint = on_joint
 
-        self.store = RoomStore(data_dir)
+        self.store = comm.room_store if (comm is not None and hasattr(comm, "room_store")) else RoomStore(data_dir)
+        if comm is not None:
+            comm.on_room_changed = lambda: self.after(0, self.refresh) if self.winfo_exists() else None
         self._visible = False
         self._auto_job = None
         self._busy_actors: set[str] = set()
@@ -245,6 +247,8 @@ class RoomPage(tk.Frame):
 
     def show(self):
         self._visible = True
+        if self.comm is not None:
+            self.comm.room_viewing = True
         self._sync_persona_rooms()
         self.refresh()
         self._schedule_auto_tick()
@@ -252,6 +256,8 @@ class RoomPage(tk.Frame):
 
     def hide(self):
         self._visible = False
+        if self.comm is not None:
+            self.comm.room_viewing = False
         if self._auto_job:
             try:
                 self.after_cancel(self._auto_job)

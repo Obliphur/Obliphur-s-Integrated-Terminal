@@ -81,6 +81,8 @@ class ToolsMixin:
                     date_to=str(args.get("date_to") or ""),
                     limit=int(args.get("limit") or 8),
                 )
+            elif name == "oit_room_action":
+                result = self.execute_phone_room_action(args)
             elif name == "oit_query":
                 values = {}
                 for module in args["modules"]:

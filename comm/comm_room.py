@@ -1377,3 +1377,90 @@ def pick_auto_speaker(store: RoomStore, room_id: str, busy_ids: set[str],
     if not candidates:
         return None
     return r.choice(candidates)
+
+
+def phone_room_status_note(store: RoomStore, actor_id: str, actor_name: str,
+                           all_names: dict[str, str]) -> str:
+    """生成注入原手机沟通页的极简小屋状态提示，让角色在手机聊天中也能知晓并执行小屋行动。"""
+    if not actor_id or actor_id not in store.occupants:
+        return ""
+    my_rid = store.occupants.get(actor_id, "")
+    my_room = store.rooms.get(my_rid)
+    u_rid = store.current_room_id()
+    u_room = store.rooms.get(u_rid)
+    if not my_room or not u_room:
+        return ""
+    rooms_brief = []
+    for r in store.room_list():
+        ok, _ = store.can_enter(actor_id, r["id"])
+        tag = "公共" if r.get("is_public") else ("有钥匙" if store.has_key(actor_id, r["id"]) else "无钥匙")
+        if r.get("locked_inside"):
+            tag += "·已反锁"
+        rooms_brief.append(f"{r['name']}(id={r['id']},{tag},{'可进' if ok else '不可进'})")
+    return (
+        "[OIT 小屋状态（手机聊天联动）]\n"
+        f"你当前在小屋的「{my_room['name']}」(id={my_rid}，位置：{store.position_of(actor_id)}，"
+        f"门锁：{'已从内部反锁' if my_room.get('locked_inside') else '未反锁'})；"
+        f"用户当前在「{u_room['name']}」(id={u_rid}，位置：{store.position_of('user')})。\n"
+        f"小屋房间：{'；'.join(rooms_brief)}。\n"
+        "你此刻正通过手机与用户聊天；如果需要同时在小屋中移动房间、换室内位置、反锁/解锁房门、把你持有钥匙的房间钥匙分给用户或跟随用户，可调用 oit_room_action 工具。"
+    )
+
+
+def execute_room_tool(store: RoomStore, actor_id: str, actor_name: str,
+                      args: dict, all_names: dict[str, str]) -> dict:
+    """在手机沟通页执行 oit_room_action 工具，安全校验门锁与钥匙规则。"""
+    if not actor_id:
+        return {"ok": False, "error": "当前未选择人设"}
+    args = args if isinstance(args, dict) else {}
+    results = []
+    cur_rid = store.occupants.get(actor_id) or persona_room_id(actor_id)
+
+    move_to = str(args.get("move_to") or "").strip()
+    if move_to and move_to != cur_rid:
+        err = store.enter_room(actor_id, move_to, actor_name, name_map=all_names)
+        if err:
+            results.append(f"移动失败：{err}")
+        else:
+            cur_rid = store.occupants.get(actor_id, cur_rid)
+            results.append(f"已进入「{store.rooms[cur_rid]['name']}」")
+
+    pos = str(args.get("position") or "").strip()[:30]
+    if pos:
+        if store.move_position(actor_id, pos, actor_name):
+            results.append(f"已移动到室内位置「{pos}」")
+
+    fol = str(args.get("follow") or "").strip()
+    if fol == "none":
+        store.set_following(actor_id, None, actor_name)
+        results.append("已取消跟随")
+    elif fol == "user":
+        store.set_following(actor_id, "user", actor_name, all_names.get("user", "你"))
+        results.append("已开始跟随用户")
+
+    gk_room = str(args.get("give_key_room") or "").strip()
+    if gk_room:
+        to_id = str(args.get("give_key_to") or "user").strip() or "user"
+        err = store.grant_key(gk_room, actor_id, to_id, actor_name, all_names.get(to_id, to_id))
+        if err:
+            results.append(f"分发钥匙失败：{err}")
+        else:
+            results.append(f"已把房间 {gk_room} 的钥匙分给 {all_names.get(to_id, to_id)}")
+
+    lock_val = args.get("lock_door")
+    if isinstance(lock_val, bool):
+        err = store.set_room_lock(cur_rid, actor_id, lock_val, actor_name)
+        if err:
+            results.append(f"门锁操作失败：{err}")
+        else:
+            results.append("已从内部反锁房门" if lock_val else "已解除房门反锁")
+
+    room = store.rooms.get(cur_rid) or {}
+    return {
+        "ok": True,
+        "results": results or ["未执行变更"],
+        "current_room": room.get("name", cur_rid),
+        "current_room_id": cur_rid,
+        "position": store.position_of(actor_id),
+        "locked_inside": bool(room.get("locked_inside", False)),
+    }

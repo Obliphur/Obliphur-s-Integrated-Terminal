@@ -124,6 +124,12 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.version = 0              # 聊天记录 / 状态变了就加一, 页面据此重画
         self.unread = 0
         self.viewing = False
+        self.room_viewing = False
+        self.on_room_changed = None
+        from .comm_room import RoomStore
+        self.room_store = RoomStore(data_dir)
+        self._room_sync_at = 0.0
+        self._room_idle_at = 0.0
         self.reading_mode = False
         self.coread_session_id = ""
         self.user_day_fn = lambda day: None      # (日期) → (专注秒数, 空闲秒数) 或 None; app 接上 (dm.day_kinds), [condition] 判定用
@@ -1898,6 +1904,86 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     self.log(f"CATCHUP ({kind}): 等回复的时候用户又发了消息, 补问一次")
                     self._trigger("user", CATCHUP_BODY)
 
+    # ---- 小屋后台运转与手机聊天联动 ----
+    def _room_all_names(self) -> dict:
+        names = {"user": "你"}
+        for p in list_personas(self.personas):
+            names[p] = persona_title(p)
+        return names
+
+    def _room_sync(self):
+        personas = list_personas(self.personas)
+        plist = [(p, persona_title(p)) for p in personas]
+        changed = self.room_store.sync_personas(plist)
+        names = {p: title for p, title in plist}
+        status_map = {p: self.persona_status_kind(p) for p in personas}
+        if self.room_store.sync_schedule_locks(status_map, names):
+            changed = True
+        return status_map, changed
+
+    def _room_tick(self):
+        now_m = time.monotonic()
+        changed = False
+        status_map = None
+        if now_m - self._room_sync_at >= 5.0:
+            self._room_sync_at = now_m
+            try:
+                status_map, changed = self._room_sync()
+            except Exception:
+                return
+        interval = max(10, min(300, int(self.cfg.get("room_npc_interval") or 30)))
+        if (not self.room_viewing and bool(self.cfg.get("room_npc_chat", False))
+                and now_m - self._room_idle_at >= interval):
+            self._room_idle_at = now_m
+            try:
+                from .comm_room import pick_auto_speaker
+                if status_map is None:
+                    status_map, c2 = self._room_sync()
+                    changed = changed or c2
+                blocked = {aid for aid, k in status_map.items() if k in ("focus", "sleep")}
+                prob = int(self.cfg.get("room_npc_prob") or 30)
+                idle_min = int(self.cfg.get("room_npc_idle_min") or 15)
+                picked = pick_auto_speaker(self.room_store, self.room_store.current_room_id(),
+                                           set(), True, prob, include_other_rooms=True, blocked_ids=blocked)
+                if picked:
+                    aid, _rid = picked
+                    if not self.room_store.is_recently_interacted(aid, idle_min):
+                        if self.room_store.perform_idle_system_step(aid, persona_title(aid)):
+                            changed = True
+            except Exception:
+                pass
+        if changed and callable(self.on_room_changed):
+            try:
+                self.on_room_changed()
+            except Exception:
+                pass
+
+    def room_status_note(self) -> str:
+        cur = self.persona_name()
+        if not cur or not hasattr(self, "room_store"):
+            return ""
+        try:
+            self._room_sync()
+            from .comm_room import phone_room_status_note
+            return phone_room_status_note(self.room_store, cur, persona_title(cur), self._room_all_names())
+        except Exception:
+            return ""
+
+    def execute_phone_room_action(self, args: dict) -> dict:
+        cur = self.persona_name()
+        if not cur or not hasattr(self, "room_store"):
+            return {"ok": False, "error": "小屋未初始化"}
+        from .comm_room import execute_room_tool
+        with self._lock:
+            self._room_sync()
+            res = execute_room_tool(self.room_store, cur, persona_title(cur), args, self._room_all_names())
+        if callable(self.on_room_changed):
+            try:
+                self.on_room_changed()
+            except Exception:
+                pass
+        return res
+
     # ---- 每秒一次 ----
     def tick(self):
         if getattr(self, "mcp_bridge", None) is not None:
@@ -1936,6 +2022,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._coread_offer_tick()
         self._shift_tick()
         self._sf_tick()
+        self._room_tick()
         if self.busy or not self.leader() or any("pending_reply" in m for m in self.messages):
             return
         if self._ai_problem():

@@ -551,6 +551,9 @@ class FlowMixin:
         r_note = self.realism_note() if hasattr(self, "realism_note") else ""
         if r_note:
             note += "\n" + r_note
+        rm_note = self.room_status_note() if hasattr(self, "room_status_note") else ""
+        if rm_note:
+            note += "\n" + rm_note
         if self._rt:
             note += "\n" + self._rt_note(self.now())
         if msgs and msgs[-1]["role"] == "user":

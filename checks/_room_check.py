@@ -208,12 +208,21 @@ def main():
                                    include_other_rooms=True, blocked_ids={"Claudia.txt"})
         assert picked is not None and picked[0] not in ("user", "Claudia.txt")
 
-        # 8. RoomPage tkinter UI 冒烟与设施联动
+        # 8. RoomPage tkinter UI 冒烟、共享 RoomStore 与手机聊天联动 oit_room_action
         personas_dir = os.path.join(tmp, "personas")
         os.makedirs(personas_dir, exist_ok=True)
         c = comm_mod.Comm(tmp, personas_dir)
         assert c.msg_total_for("Claudia.txt") >= 0
         assert int(c.cfg.get("room_npc_idle_min")) == 15
+        note = c.room_status_note()
+        assert "[OIT 小屋状态（手机聊天联动）]" in note and "oit_room_action" in note
+        res_act = c.execute_phone_room_action({
+            "move_to": "lounge",
+            "position": "椅子",
+            "give_key_room": persona_room_id(c.persona_name()),
+        })
+        assert res_act["ok"] and res_act["current_room_id"] == "lounge" and res_act["position"] == "椅子"
+        assert c.room_store.has_key("user", persona_room_id(c.persona_name())), "手机聊天中分钥匙应同步到共享 RoomStore"
 
         root = tk.Tk()
         root.withdraw()
