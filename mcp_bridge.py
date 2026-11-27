@@ -807,14 +807,15 @@ class OitMcpBridge:
         self._emit_sse("proactive", event)
         return event
 
-    def push_memory_compact(self, persona_id: str = "") -> bool:
-        """在 Antigravity 无状态模式下发起一次独立的记忆卡整理单轮请求。"""
+    def push_memory_compact(self, persona_id: str = "", mode: str = "compact") -> bool:
+        """在 Antigravity 无状态模式下发起一次独立的记忆卡整理 / 睡眠期 Dreaming 单轮请求。"""
         with self._lock:
             has_client = bool(self._sse_clients)
         if not has_client:
             return False
         pid = str(persona_id or getattr(self.comm, "pid", "") or "").strip()
-        turn = self._make_turn(persona_id=pid, kind="memory_compact")
+        m = "dream" if str(mode or "").strip().lower() == "dream" else "compact"
+        turn = self._make_turn(persona_id=pid, kind="memory_compact", extra={"mode": m})
         payload = {
             "event": "memory_compact",
             "stateless": True,
@@ -822,6 +823,7 @@ class OitMcpBridge:
             "persona_id": pid,
             "persona_name": turn["persona_name"] or _display_persona_name(self.comm),
             "kind": "memory_compact",
+            "mode": m,
             "model": self._active_model_hint(),
             "ts": turn["created_ms"],
         }
@@ -1346,13 +1348,24 @@ class OitMcpBridge:
             if turn:
                 tkind = turn.get("kind") or "user_message"
                 if tkind == "memory_compact":
-                    lines.append(
-                        "[OIT记忆整理任务] 请调用隔离子代理 oit-memory-compact，把「当前时间」「人设中的记忆保留规则」"
-                        "「现有长期记忆摘要（不含实时事件与系统记录）」与「近期完整对话记录」完整传给它，"
-                        "由它整理为简洁准确的长期记忆并通过 oit_memory_save_auto(text=..., turn_id="
-                        f"{turn_id!r}) 保存。不要把实时事件或【系统记录】抄入长期记忆摘要。"
-                        "整理过程对用户完全静默，不要调用 oit_reply，完成后输出 ✓。"
-                    )
+                    mc_mode = str((turn.get("extra") or {}).get("mode") or "compact")
+                    if mc_mode == "dream":
+                        lines.append(
+                            "[OIT睡眠期记忆反思任务(Dreaming)] 请调用隔离子代理 oit-memory-compact，把「当前时间」「人设中的记忆保留规则」"
+                            "「现有长期记忆摘要（mem_auto）」「当前实时事件（mem_live，带 [#E*] 编号）」与「近期完整对话记录」完整传给它，"
+                            "要求它对照原始对话核验与修正长期记忆（核实带 ? 条目）、将已稳定的实时事件晋升至长期摘要、"
+                            "并筛选可安全清理的已过期回访/已解决普通事件编号（未证实完成的说教目标绝不移除），"
+                            "最后调用 oit_memory_save_auto(text=..., remove_live_ids=[...], turn_id="
+                            f"{turn_id!r}) 保存。整理过程对用户完全静默，不要调用 oit_reply，完成后输出 ✓。"
+                        )
+                    else:
+                        lines.append(
+                            "[OIT记忆整理任务] 请调用隔离子代理 oit-memory-compact，把「当前时间」「人设中的记忆保留规则」"
+                            "「现有长期记忆摘要（不含实时事件与系统记录）」与「近期完整对话记录」完整传给它，"
+                            "由它整理为简洁准确的长期记忆并通过 oit_memory_save_auto(text=..., turn_id="
+                            f"{turn_id!r}) 保存。不要把实时事件或【系统记录】抄入长期记忆摘要。"
+                            "整理过程对用户完全静默，不要调用 oit_reply，完成后输出 ✓。"
+                        )
                 else:
                     if turn.get("held_messages"):
                         if tkind in ("retry", "user", "user_message", "user_attachment"):
@@ -1753,34 +1766,40 @@ class OitMcpBridge:
 
             if name == "oit_memory_edit":
                 from comm.comm_persona import MEM_MAX
+                from comm.comm_memory import apply_live_edit
                 action = str(args.get("action") or "")
                 target = str(args.get("target") or "").strip()
                 text = str(args.get("text") or "").strip()
-                entries = [line[2:].strip() for line in str(self.comm.cfg.get("mem_live") or "").splitlines()
-                           if line.strip().startswith("- ")]
-                valid_text = "\n" not in text and "\r" not in text and "【系统记录】" not in text
-                if action == "add" and not target and text and valid_text and text not in entries and len(entries) < 15:
-                    entries.append(text)
-                elif action == "correct" and target in entries and text and valid_text:
-                    entries[entries.index(target)] = text
-                elif action == "remove" and target in entries:
-                    entries.remove(target)
-                else:
-                    return {"ok": False, "error": "记忆事件不匹配或已达到数量上限"}
-                new_live = "\n".join(f"- {e}" for e in entries)
-                if len(new_live) > MEM_MAX:
-                    return {"ok": False, "error": "实时记忆总字数已达到上限"}
+                ok_edit, new_live, disp_entries, err_msg = apply_live_edit(
+                    str(self.comm.cfg.get("mem_live") or ""), action, target, text, max_items=15, max_chars=MEM_MAX
+                )
+                if not ok_edit:
+                    return {"ok": False, "error": err_msg or "记忆事件不匹配或已达到数量上限"}
                 self.comm.cfg["mem_live"] = new_live
                 now_mem_ts = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
-                self.comm.cfg["mem_ts"] = max(now_mem_ts, int(self.comm.cfg.get("mem_ts") or 0) + 1)
+                self.comm.cfg["mem_live_ts"] = max(now_mem_ts, int(self.comm.cfg.get("mem_live_ts") or 0) + 1)
+                self.comm.cfg["mem_ts"] = max(now_mem_ts, int(self.comm.cfg.get("mem_ts") or 0) + 1, self.comm.cfg["mem_live_ts"])
                 self.comm.save_chat()
                 self.comm._changed()
                 if hasattr(self.comm, "_push"):
                     self.comm._push()
-                return {"ok": True, "entries": entries}
+                return {"ok": True, "entries": disp_entries}
+
+            if name == "oit_memory_search":
+                from comm.comm_memory import search_memory_archive
+                return search_memory_archive(
+                    self.comm.dir,
+                    str(getattr(self.comm, "pid", "") or ""),
+                    list(getattr(self.comm, "messages", []) or []),
+                    query=str(args.get("query") or ""),
+                    date_from=str(args.get("date_from") or ""),
+                    date_to=str(args.get("date_to") or ""),
+                    limit=int(args.get("limit") or 8),
+                )
 
             if name == "oit_memory_save_auto":
                 from comm.comm_util import sanitize_mem
+                from comm.comm_memory import apply_dream_live_removals
                 raw_text = str(args.get("text") or "").strip()
                 if not raw_text:
                     return {"ok": False, "error": "text required"}
@@ -1806,10 +1825,28 @@ class OitMcpBridge:
                     return {"ok": False, "error": "整理结果为空或格式无效"}
                 cur_clear_ts = int(self.comm.cfg.get("clear_ts") or 0)
                 cleared_during = t_info is not None and cur_clear_ts > int(t_info.get("clear_ts") or 0)
+                removed_ids = []
                 if not cleared_during:
-                    self.comm.cfg["mem_auto"] = clean
                     now_mem_ts = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
-                    self.comm.cfg["mem_ts"] = max(now_mem_ts, int(self.comm.cfg.get("mem_ts") or 0) + 1)
+                    self.comm.cfg["mem_auto"] = clean
+                    self.comm.cfg["mem_auto_ts"] = max(now_mem_ts, int(self.comm.cfg.get("mem_auto_ts") or 0) + 1)
+                    raw_rm = args.get("remove_live_ids")
+                    if isinstance(raw_rm, list) and raw_rm:
+                        new_live, removed_ids = apply_dream_live_removals(
+                            str(self.comm.cfg.get("mem_live") or ""), [str(x) for x in raw_rm]
+                        )
+                        if removed_ids:
+                            self.comm.cfg["mem_live"] = new_live
+                            self.comm.cfg["mem_live_ts"] = max(now_mem_ts, int(self.comm.cfg.get("mem_live_ts") or 0) + 1)
+                    self.comm.cfg["mem_ts"] = max(
+                        now_mem_ts,
+                        int(self.comm.cfg.get("mem_ts") or 0) + 1,
+                        int(self.comm.cfg.get("mem_auto_ts") or 0),
+                        int(self.comm.cfg.get("mem_live_ts") or 0),
+                    )
+                    if t_info and str((t_info.get("extra") or {}).get("mode") or "") == "dream":
+                        now_dt = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
+                        self.comm.cfg["dream_day"] = now_dt.date().isoformat()
                     latest_ts = max([int(m.get("ts") or 0) for m in self.comm.messages if m.get("role") in ("me", "ai")] or [0])
                     if latest_ts > int(self.comm.cfg.get("mem_upto") or 0):
                         self.comm.cfg["mem_upto"] = latest_ts
@@ -1828,7 +1865,7 @@ class OitMcpBridge:
                         "persona_id": cur_pid,
                         "ts": _now_ms(),
                     })
-                return {"ok": True, "discarded": cleared_during}
+                return {"ok": True, "discarded": cleared_during, "removed_live_ids": removed_ids}
 
             if name == "oit_music_catalog":
                 related, valence = self.comm._music_access()
@@ -2662,8 +2699,9 @@ def takeover_feature_prompt(feature: str, en: bool = False) -> str:
             "and (2) the maximum intimacy openness level (1–5) for V+, BURST, and in-relationship scenes "
             "(1: Restrained warmth/no intimate contact; 2: Gentle romance/hugs & light kisses; "
             "3: Intense emotional affection & passionate closeness without sexual content, ideal ceiling for Claude & ChatGPT; "
-            "4: Sensual light NSFW, ideal ceiling for Gemini; 5: Explicit NSFW, noting OIT does not include jailbreak prompts). "
-            "If I choose Level 3 or 4, also ask whether to enable 'Consent Declaration' mode (standardized [burst:consent] "
+            "4: Sensual light NSFW, ideal for Gemini; 4.5: Subtle physical relief with brief fade-to-black under explicit private-contact consent, "
+            "top testable tier for Gemini; 5: Explicit NSFW, noting OIT does not include jailbreak prompts). "
+            "If I choose Level 3, 4, or 4.5, also ask whether to enable 'Consent Declaration' mode (standardized [burst:consent] "
             "template: not initialized before first BURST, pops up to ask item-by-item on first BURST and can be withdrawn "
             "anytime; explain that consent requests increase the probability of accurate, full-intensity generation)."
         )
@@ -2673,10 +2711,11 @@ def takeover_feature_prompt(feature: str, en: bool = False) -> str:
         "不必与 Claudia 相同，例如情景模式的动作限制等，特别是 example 文件应贴合新角色本身而不要照搬 Claudia）；"
         "动笔前请先询问我两项设置："
         "（1）需要「简略」还是「详细」模式（详细：面面俱到；简略：不详细规定情景，只规定基础人设，example 文件随便写写）；"
-        "（2）对亲密动作的最高开放程度（V+、BURST、确立关系后，1–5 级：1 含蓄克制无亲密接触；2 优雅浪漫留白；"
-        "3 浓烈深情肢体张力不涉性内容，Claude / ChatGPT 适合 1–3 级；4 感官微醺轻度 NSFW，Gemini 适合 1–4 级；"
+        "（2）对亲密动作的最高开放程度（V+、BURST、确立关系后，1–5 级含 4.5 级：1 含蓄克制无亲密接触；2 优雅浪漫留白；"
+        "3 浓烈深情肢体张力不涉性内容，Claude / ChatGPT 适合 1–3 级；4 感官微醺轻度 NSFW；"
+        "4.5 生理需求含蓄点到为止（需配合隐私部位接触同意声明），Gemini 适合 1–4.5 级；"
         "5 允许完全暴露的 NSFW 描写，注意 OIT 不自带破甲提示词）；"
-        "若我选择 3 或 4 档，再询问是否启用「同意声明」模式（标准化复用 [burst:consent] 模板：首次触发 BURST 前不初始化，"
+        "若我选择 3、4 或 4.5 档，再询问是否启用「同意声明」模式（标准化复用 [burst:consent] 模板：首次触发 BURST 前不初始化，"
         "首次触发时弹窗逐项询问且可随时撤回；并说明使用同意请求可以增大内容被正确且保持原强度生成的概率），等我选定后再按 OIT 格式开始编写。"
     )
 

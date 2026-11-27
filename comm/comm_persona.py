@@ -116,11 +116,17 @@ def mem_fields(d) -> dict:
                 clean_sessions[sid[:80]] = clean
         if clean_sessions:
             agents[role[:40]] = clean_sessions
+    base_ts = int(d.get("mem_ts") or 0)
+    auto_ts = int(d.get("mem_auto_ts") or 0) or (base_ts if str(d.get("mem_auto") or "") else 0)
+    live_ts = int(d.get("mem_live_ts") or 0) or (base_ts if str(d.get("mem_live") or "") else 0)
     return {"interaction": interaction_norm(d.get("interaction")), "mem_auto": str(d.get("mem_auto") or "")[:MEM_MAX],
             "mem_live": str(d.get("mem_live") or "")[:MEM_MAX],
             "mem_fixed": message_milestones(d),
             "mem_upto": int(d.get("mem_upto") or 0),
-            "mem_ts": int(d.get("mem_ts") or 0),
+            "mem_ts": max(base_ts, auto_ts, live_ts),
+            "mem_auto_ts": auto_ts,
+            "mem_live_ts": live_ts,
+            "dream_day": str(d.get("dream_day") or "")[:10],
             "cut_until": int(d.get("cut_until") or 0),      # 对方切断谈话到什么时候 (毫秒时间戳; 0 = 没有)
             "love": love_norm(d.get("love")),               # 亲密关系 / 告白 (1.0.397)
             "shift": shift_norm(d.get("shift")),            # 起点平移记录 (1.0.402)
@@ -217,9 +223,10 @@ def other_profiles_text(folder: str, name: str) -> str:
 
 
 def persona_system(personas: str, name: str, split: bool = True) -> str:
-    """发给模型的 system：公共工具协议、人设文件前的固定一句、人设正文与其他人设的公开简介。"""
+    """发给模型的 system：公共工具协议、人设文件前的固定一句、剥离纯机读模板块后的人设正文与其他人设的公开简介。"""
+    from comm.comm_memory import strip_machine_template_blocks
     head = system_head(name, split)
-    body = native_persona_text(read_persona_full(personas, name))
+    body = strip_machine_template_blocks(native_persona_text(read_persona_full(personas, name)))
     others = other_profiles_text(personas, name)
     if others:
         body = (body + "\n\n" + others) if body else others

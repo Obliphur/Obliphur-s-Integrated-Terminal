@@ -61,19 +61,26 @@ class ToolsMixin:
                 except (ValueError, TypeError, OSError) as error:
                     result = {"ok": False, "error": str(error)[:500]}
             elif name == "oit_memory_edit" and op is None:
+                from comm.comm_memory import apply_live_edit
                 action, target, content = args["action"], args["target"].strip(), args["text"].strip()
-                entries = [line[2:].strip() for line in str(self.cfg.get("mem_live") or "").splitlines()
-                           if line.strip().startswith("- ")]
-                valid_text = "\n" not in content and "\r" not in content and "【系统记录】" not in content
-                if action == "add" and not target and content and valid_text and content not in entries and len(entries) < 15:
-                    op = {"type": "memory_event", "action": action, "target": "", "text": content}
-                elif action in ("correct", "remove") and target in entries and (action == "remove" or content and valid_text):
+                ok_edit, _preview, _disp, err_msg = apply_live_edit(
+                    str(self.cfg.get("mem_live") or ""), action, target, content, max_items=15, max_chars=MEM_MAX
+                )
+                if ok_edit:
                     op = {"type": "memory_event", "action": action, "target": target, "text": content}
-                else:
-                    result = {"ok": False, "error": "记忆事件不匹配或已达到数量上限"}
-                if op:
                     result = {"ok": True, "status": "queued_until_message_visible",
                               "next": "正式回复显示时保存这条实时记忆事件"}
+                else:
+                    result = {"ok": False, "error": err_msg or "记忆事件不匹配或已达到数量上限"}
+            elif name == "oit_memory_search":
+                from comm.comm_memory import search_memory_archive
+                result = search_memory_archive(
+                    self.dir, self.pid, self.messages,
+                    query=str(args.get("query") or ""),
+                    date_from=str(args.get("date_from") or ""),
+                    date_to=str(args.get("date_to") or ""),
+                    limit=int(args.get("limit") or 8),
+                )
             elif name == "oit_query":
                 values = {}
                 for module in args["modules"]:
@@ -306,23 +313,17 @@ class ToolsMixin:
         raise AIError("format", "工具调用轮次超限")
 
     def _memory_event_apply(self, op):
-        entries = [line[2:].strip() for line in str(self.cfg.get("mem_live") or "").splitlines()
-                   if line.strip().startswith("- ")]
+        from comm.comm_memory import apply_live_edit
         action, target, content = op.get("action"), op.get("target", ""), op.get("text", "")
-        valid_text = isinstance(content, str) and "\n" not in content and "\r" not in content and "【系统记录】" not in content
-        if action == "add" and target == "" and content and valid_text and content not in entries and len(entries) < 15:
-            entries.append(content)
-        elif action == "correct" and target in entries and content and valid_text:
-            entries[entries.index(target)] = content
-        elif action == "remove" and target in entries:
-            entries.remove(target)
-        else:
+        ok_edit, new_text, _disp, _err = apply_live_edit(
+            str(self.cfg.get("mem_live") or ""), action, target, content, max_items=15, max_chars=MEM_MAX
+        )
+        if not ok_edit:
             return False
-        text = "\n".join("- " + item for item in entries)
-        if len(text) > MEM_MAX:
-            return False
-        self.cfg["mem_live"] = text
-        self.cfg["mem_ts"] = self._ms()
+        now_ms = self._ms()
+        self.cfg["mem_live"] = new_text
+        self.cfg["mem_live_ts"] = max(now_ms, int(self.cfg.get("mem_live_ts") or 0) + 1)
+        self.cfg["mem_ts"] = max(now_ms, int(self.cfg.get("mem_ts") or 0) + 1, self.cfg["mem_live_ts"])
         return True
 
     def _music_deliver(self, message):

@@ -17,7 +17,7 @@ from comm.comm_rules import (
 )
 
 _EPOCH_2024 = date(2024, 1, 1).toordinal()
-_CALLBACK_RE = re.compile(r"^\s*(?:-\s*)?\[(?:回访\s*[:：]|@)\s*(\d{4}-\d{2}-\d{2})\s*\]\s*(.+?)\s*$")
+_CALLBACK_RE = re.compile(r"^\s*(?:-\s*)?(?:\[#[A-Za-z][A-Za-z0-9_-]{0,11}\]\s*)?\[(?:回访\s*[:：]|@)\s*(\d{4}-\d{2}-\d{2})\s*\]\s*(.+?)\s*$")
 _CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
 _STRIP_EDGE_RE = re.compile(r"^[\s，。！？、；：“”‘’\"'()（）\[\]【】《》—…·.,!?;:~`]+|[\s，。！？、；：“”‘’\"'()（）\[\]【】《》—…·.,!?;:~`]+$")
 _SENTENCE_SPLIT_RE = re.compile(r"[。！？!?；;\n]+")

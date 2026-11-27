@@ -159,8 +159,9 @@ class FlowMixin:
         api = self._compose(self.now(), oit_text(body))
         self._request(kind, (body, api))
 
-    def memory_block_of(self, st: dict, include_live=True) -> str:
+    def memory_block_of(self, st: dict, include_live=True, pid: str = "") -> str:
         """长期记忆: 模型整理的摘要 (可能不精确), 附在 system 里."""
+        from comm.comm_memory import archive_summary_line
         st = st or {}
         auto = str(st.get("mem_auto") or "").strip()[:MEM_MAX]
         live = str(st.get("mem_live") or "").strip()[:MEM_MAX] if include_live else ""
@@ -170,12 +171,14 @@ class FlowMixin:
         offenses = offenses_line(st.get("interaction"))
         fixed = "\n".join(tr("- 【系统记录】双方互相发送的信息总数已达到 {count} 条, 此消息数量条件已满足.", count=n)
                           for n in mem_fields(st)["mem_fixed"])
-        if not auto and not live and not rel and not shf and not fixed and not offenses:
+        target_pid = pid or (self.pid if st is self._active_state() or not pid else "")
+        arch = archive_summary_line(self.dir, target_pid) if (include_live and target_pid) else ""
+        if not auto and not live and not rel and not shf and not fixed and not offenses and not arch:
             return ""
-        return "\n\n以下是关于用户的长期记忆(自动整理摘要可能不精确；实时事件由你通过记忆工具维护；标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + "\n".join(x for x in (rel, shf, fixed, offenses, auto, live) if x)
+        return "\n\n以下是关于用户的长期记忆(自动整理摘要可能不精确；实时事件由你通过记忆工具维护，条目带 [#E*] 编号可直接按编号修改或移除；标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + "\n".join(x for x in (rel, shf, fixed, offenses, auto, live, arch) if x)
 
     def memory_block(self) -> str:
-        return self.memory_block_of(self._active_state())
+        return self.memory_block_of(self._active_state(), pid=self.pid)
 
     def _mem_delta(self) -> list:
         """上次整理之后的新消息 (对方拒绝 / 系统消息不算)."""
@@ -254,11 +257,132 @@ class FlowMixin:
             return
         self.cfg["mem_auto"] = text
         self.cfg["mem_upto"] = max(int(self.cfg.get("mem_upto") or 0), int(upto))
-        self.cfg["mem_ts"] = self._ms()
-        self._mem_next = self._ms() + MEM_GAP * 1000
+        now_ms = self._ms()
+        self.cfg["mem_auto_ts"] = max(now_ms, int(self.cfg.get("mem_auto_ts") or 0) + 1)
+        self.cfg["mem_ts"] = max(now_ms, int(self.cfg.get("mem_ts") or 0) + 1, self.cfg["mem_auto_ts"])
+        self._mem_next = now_ms + MEM_GAP * 1000
         self.save_chat()
         self._changed()
         self._push()
+
+    def _dream_due(self) -> bool:
+        """每日最多一次的睡眠期 / 静默期离线反思（Dreaming）：纠错、核验 ? 条目、跨层晋升与清理过期回访。"""
+        if self._dream_busy or self._mem_busy or self.busy or self._bg_busy:
+            return False
+        if self.hard_block() or self.blocked() or self._ai_problem() or not self.leader():
+            return False
+        now = self.now()
+        today = now.date().isoformat()
+        if str(self.cfg.get("dream_day") or "") == today:
+            return False
+        now_ms = self._ms()
+        if now_ms < int(getattr(self, "_dream_next", 0) or 0):
+            return False
+        # 仅在角色处于睡眠段，或距上次对话已静默 >= 30 分钟时触发，避免打扰活跃对话
+        st_kind = (self.other_status() or {}).get("kind") if hasattr(self, "other_status") else ""
+        last_chat_ts = max((int(m.get("ts") or 0) for m in self.messages if m.get("role") in ("me", "ai")), default=0)
+        quiet_enough = st_kind == "sleep" or (last_chat_ts > 0 and now_ms - last_chat_ts >= 30 * 60 * 1000)
+        if not quiet_enough:
+            return False
+        auto = str(self.cfg.get("mem_auto") or "").strip()
+        live = str(self.cfg.get("mem_live") or "").strip()
+        has_work = ("?" in auto) or bool(live) or len(self._mem_delta()) >= 6
+        return has_work
+
+    def _dream_kick(self) -> bool:
+        """后台发起每日睡眠期 Dreaming 整理；支持原生 API 与 Antigravity 接管双路径。"""
+        if not self._dream_due():
+            return False
+        today = self.now().date().isoformat()
+        if self._antigravity_active():
+            bridge = getattr(self, "mcp_bridge", None)
+            if bridge is not None and hasattr(bridge, "push_memory_compact") and bridge.push_memory_compact(self.pid, mode="dream"):
+                self._dream_next = self._ms() + 3 * 3600 * 1000
+                self.log(f"DREAM dispatched via Antigravity day={today}")
+                return True
+            return False
+        from comm.comm_memory import DREAM_PROMPT
+        recent = [m for m in self.messages if m.get("role") in ("me", "ai") and not m.get("hold") and "pending_reply" not in m][-60:]
+        if not recent and not str(self.cfg.get("mem_auto") or "").strip() and not str(self.cfg.get("mem_live") or "").strip():
+            return False
+        lines = []
+        for m in recent:
+            who = "用户" if m.get("role") == "me" else "对方"
+            when = stamp(datetime.fromtimestamp(int(m.get("ts") or 0) / 1000))
+            lines.append(f"[{when}] {who}: {clip_message(str(m.get('text') or ''), 800)}")
+        persona = clip_message(native_persona_text(read_persona_full(self.personas, self.persona_name())), 6000)
+        auto = str(self.cfg.get("mem_auto") or "").strip() or "(空)"
+        live = str(self.cfg.get("mem_live") or "").strip() or "(空)"
+        body = (
+            f"当前时间: {stamp(self.now())}\n\n"
+            f"对方的人设 (只看记忆保留规则，不要抄进摘要):\n{persona}\n\n"
+            f"现有长期记忆摘要 (mem_auto):\n{auto}\n\n"
+            f"当前实时事件 (mem_live):\n{live}\n\n"
+            f"近期对话记录:\n" + ("\n".join(lines) or "(无)")
+        )
+        upto = max((int(m.get("ts") or 0) for m in recent), default=0)
+        clear_snap = int(self.cfg.get("clear_ts") or 0)
+        pid = self.pid
+        profile = self.profile()
+        self._dream_busy = True
+        started = time.monotonic()
+        self.log(f"DREAM start day={today} msgs={len(recent)}")
+
+        def work():
+            reply, err = "", ""
+            try:
+                reply = self.chat_fn(profile, DREAM_PROMPT, [{"role": "user", "content": body}],
+                                     max_tokens=MEM_TOKENS, temperature=0.2, timeout=CHAT_TIMEOUT, cache=False, think=True,
+                                     on_usage=lambda t, c: self.log(f"USAGE dream input={t} cached={c}"))
+            except ai_assist.AIError as e:
+                err = e.message
+            except Exception as e:      # noqa: BLE001
+                err = type(e).__name__
+            self.log(f"DREAM {'FAIL ' + err if err else 'ok'} {time.monotonic() - started:.1f}s chars={len(reply)}")
+            with self._lock:
+                self._dream_results.append((reply, err, upto, clear_snap, today, pid))
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def _dream_finish(self, reply: str, err: str, upto: int, clear_snap: int, today: str, pid: str):
+        from comm.comm_memory import parse_dream_result, apply_dream_live_removals
+        self._dream_busy = False
+        if pid != self.pid or not self.leader():
+            return
+        if int(self.cfg.get("clear_ts") or 0) > int(clear_snap):
+            self._dream_next = self._ms() + 3 * 3600 * 1000
+            return
+        parsed = parse_dream_result(reply) if (not err and reply) else None
+        if not parsed:
+            self._dream_next = self._ms() + 30 * 60 * 1000
+            return
+        now_ms = self._ms()
+        changed = False
+        if parsed["mem_auto"]:
+            clean_auto = sanitize_mem(parsed["mem_auto"])
+            if clean_auto and clean_auto != str(self.cfg.get("mem_auto") or ""):
+                self.cfg["mem_auto"] = clean_auto
+                self.cfg["mem_auto_ts"] = max(now_ms, int(self.cfg.get("mem_auto_ts") or 0) + 1)
+                changed = True
+        if parsed["remove_live_ids"]:
+            new_live, removed = apply_dream_live_removals(str(self.cfg.get("mem_live") or ""), parsed["remove_live_ids"])
+            if removed:
+                self.cfg["mem_live"] = new_live
+                self.cfg["mem_live_ts"] = max(now_ms, int(self.cfg.get("mem_live_ts") or 0) + 1)
+                self.log(f"DREAM cleaned live ids={removed}")
+                changed = True
+        self.cfg["dream_day"] = today
+        if upto > int(self.cfg.get("mem_upto") or 0):
+            self.cfg["mem_upto"] = upto
+        if changed:
+            self.cfg["mem_ts"] = max(now_ms, int(self.cfg.get("mem_ts") or 0) + 1,
+                                     int(self.cfg.get("mem_auto_ts") or 0), int(self.cfg.get("mem_live_ts") or 0))
+        self._dream_next = now_ms + 3 * 3600 * 1000
+        self.save_chat()
+        self._changed()
+        if changed:
+            self._push()
 
     @staticmethod
     def _extra_api_only(api_txt: str, plain_txt: str) -> str:

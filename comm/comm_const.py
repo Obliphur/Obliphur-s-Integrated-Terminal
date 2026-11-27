@@ -126,6 +126,7 @@ DEFAULTS = {"persona": "", "show_avatar": True, "coread_link": {}, "coread_offer
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {}, "sched_follow": False, "pro_lang": "",
             "answer_images": True,                          # 学科子代理回答是否生成可滑动长图
             "mem_auto": "", "mem_live": "", "mem_fixed": [], "mem_upto": 0, "mem_ts": 0,  # 长期摘要、实时事件与系统固定记录
+            "mem_auto_ts": 0, "mem_live_ts": 0, "dream_day": "",                          # 拆分双端记忆时间戳与每日 Dreaming 日期
             "shift": [],                                     # 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件)
             "love": {}, "msg_gone": 0,                       # 亲密关系状态 (跟着聊天对象走, 同步) / 被 KEEP 砍掉的信息条数 (本机)
             "alarm_co": {},                                  # 共时闹钟 (1.0.359): {pid, devs: [响铃的设备 id], ts}; pid 为空 = 关闭
@@ -141,7 +142,7 @@ DEFAULTS = {"persona": "", "show_avatar": True, "coread_link": {}, "coread_offer
 # (claudia_base / routine_base / background_base) 判断, 以后改默认人设再按需往里放.
 CLAUDIA_LEGACIES = ()
 ROUTINE_LEGACIES = ()
-CHAT_KEYS = ("interaction", "clear_ts", "retry", "pro_key", "mem_auto", "mem_live", "mem_fixed", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone", "shift", "subagents", "cli_sessions")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
+CHAT_KEYS = ("interaction", "clear_ts", "retry", "pro_key", "mem_auto", "mem_live", "mem_fixed", "mem_upto", "mem_ts", "mem_auto_ts", "mem_live_ts", "dream_day", "cut_until", "love", "msg_gone", "shift", "subagents", "cli_sessions")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
 

@@ -76,12 +76,18 @@ class MiscMixin:
                 pass
         self.cfg["mem_auto"] = ""          # 记忆卡跟着聊天一起清掉
         self.cfg["mem_live"] = ""
+        from comm.comm_memory import archive_clear
+        archive_clear(self.dir, self.pid)
         old_interaction = mem_fields(self.cfg)["interaction"]
         self.cfg["interaction"] = mem_fields({"interaction": {"offenses": old_interaction["offenses"],
             "ts": self.cfg["clear_ts"] + 1 if old_interaction["offenses"] else 0}})["interaction"]
         self.cfg["mem_fixed"] = []
         self.cfg["mem_upto"] = 0
-        self.cfg["mem_ts"] = self._ms()
+        now_ms = self._ms()
+        self.cfg["mem_ts"] = now_ms
+        self.cfg["mem_auto_ts"] = now_ms
+        self.cfg["mem_live_ts"] = now_ms
+        self.cfg["dream_day"] = ""
         self.cfg["love"] = love_norm({"ts": self._ms()})   # 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)
         self.cfg["msg_gone"] = 0
         jj = self.cfg.get("joint")

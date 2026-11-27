@@ -67,6 +67,7 @@ python release.py               # 发布（PyInstaller）
 | `_pause_check.py` | 专注暂停：专注时长按 `PAUSE_REWIND` 倒退（下限 1）、退到 0 自动结束并弹窗、暂停时段记成 `p=true` 的空闲却仍算专注（`day_intervals` / `pause_as_idle=False`）、暂停状态随同步恢复 | `app/app_timer.py` 的 `_focus_elapsed` / `_pause_focus` / `_close_focus_pause` / `_end_rewound_focus` / `_enter_focus`、`app/app_sync.py`、`data_manager/data_focus.py`、`settings_manager.py` 的 `PAUSE_REWIND` |
 | `_mcp_bridge_check.py` | OIT 本地 MCP HTTP/SSE Bridge、Bearer 鉴权、主动触发 SSE 与原子消费、子代理双路由（外部 API vs 宿主原生）、分条气泡送达与插话撤销、Hooks 注入、TypeScript MCP Server（stdio）与 `aux_pane` 单文件资源 | `mcp_bridge.py`、`antigravity_plugin/`、`comm/comm_rt.py`、`app/app_comm.py` |
 | `_comm_realism_check.py` | 拟真增强模板解析与运行时注入：角色慢变量生活线（CRC32 确定性推进）、跨周趋势洞察（share data 门控）、延迟回调（`[回访:YYYY-MM-DD]`）、工程层防复读与双端同步 | `comm/comm_rules.py`、`comm/comm_realism.py`、`comm/comm_interaction.py`、`personas/Claudia_templates.txt`、安卓 `CommRules.kt` / `CommRealism.kt` |
+| `_comm_memory_check.py` | 记忆系统升级：System Prompt 剥离纯机读模板块、`mem_live` 短 ID 分配与定位、双端拆分 `mem_auto_ts`/`mem_live_ts` 独立合并、超出 `KEEP` 本地冷归档 JSONL 与 `oit_memory_search`、每日睡眠期 Dreaming 与说教硬保护 | `comm/comm_memory.py`、`comm/comm_persona.py`、`comm/comm_flow.py`、`comm/comm_tools.py`、`comm/__init__.py`、`mcp_bridge.py`、安卓 `Comm.kt` / `CommRealism.kt` |
 
 **规矩**：
 

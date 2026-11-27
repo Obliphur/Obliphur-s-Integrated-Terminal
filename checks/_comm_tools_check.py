@@ -513,9 +513,9 @@ def memory_tool_checks():
     op, _ = context._tool_rounds(lambda _: calls.pop(0), [], calls.pop(0), "proactive", 9)
     assert op == {"type": "memory_event", "action": "add", "target": "", "text": "用户正在准备考试"}
     context._memory_event_apply(op)
-    assert context.cfg["mem_live"] == "- 用户正在准备考试" and context.cfg["mem_ts"] == 1234
-    for action, target, text, expected in (("correct", "用户正在准备考试", "用户下周参加考试", "- 用户下周参加考试"),
-                                          ("remove", "用户下周参加考试", "", "")):
+    assert context.cfg["mem_live"] == "- [#E1] 用户正在准备考试" and context.cfg["mem_ts"] == 1234 and context.cfg["mem_live_ts"] == 1234
+    for action, target, text, expected in (("correct", "用户正在准备考试", "用户下周参加考试", "- [#E1] 用户下周参加考试"),
+                                          ("remove", "#E1", "", "")):
         calls = [tools.pack(name="oit_memory_edit", arguments={"action": action, "target": target, "text": text}),
                  tools.pack(name="oit_reply", arguments={"text": "已更新"})]
         op, _ = context._tool_rounds(lambda _: calls.pop(0), [], calls.pop(0), "user", 9)

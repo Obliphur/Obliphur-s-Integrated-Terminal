@@ -213,6 +213,9 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._mem_busy = False        # 正在整理记忆卡
         self._mem_results = []
         self._mem_next = 0            # 下一次可以整理记忆卡的时刻 (毫秒)
+        self._dream_busy = False      # 正在执行每日睡眠期 Dreaming 整理
+        self._dream_results = []
+        self._dream_next = 0          # 下一次可以尝试 Dreaming 的时刻 (毫秒)
         self.load()
         self._migrate_template_files()
         ensure_personas(self.personas)
@@ -517,6 +520,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.cfg["mem_fixed"] = self._active_state()["mem_fixed"]
         if len(self.messages) > KEEP:                  # 一次砍 HISTORY_STEP 的整数倍: 发给模型的历史的起点 (api_messages) 不会跟着滑
             cut = -(-(len(self.messages) - KEEP) // HISTORY_STEP) * HISTORY_STEP
+            from comm.comm_memory import archive_append
+            archive_append(self.dir, self.pid, self.messages[:cut])
             self.cfg["msg_gone"] = int(self.cfg.get("msg_gone") or 0) + sum(
                 1 for m in self.messages[:cut] if m.get("role") in ("me", "ai") and not m.get("hold"))      # 砍掉的也算在信息总数里
             self.messages = self.messages[cut:]
@@ -683,9 +688,16 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 doc[f"love:{pid}"] = love_norm(st.get("love"))      # 亲密关系 / 告白: 后改的为准
             if shift_norm(st.get("shift")):
                 doc[f"shift:{pid}"] = shift_norm(st.get("shift"))   # 起点平移记录: 两边合起来 (按记下的时刻去重)
-            if int(st.get("mem_ts") or 0) > 0:
-                doc[f"mem:{pid}"] = {"a": str(st.get("mem_auto") or ""), "e": str(st.get("mem_live") or ""),
-                                     "u": int(st.get("mem_upto") or 0), "t": int(st.get("mem_ts") or 0)}
+            mem_t = max(int(st.get("mem_ts") or 0), int(st.get("mem_auto_ts") or 0), int(st.get("mem_live_ts") or 0))
+            if mem_t > 0:
+                doc[f"mem:{pid}"] = {
+                    "a": str(st.get("mem_auto") or ""),
+                    "e": str(st.get("mem_live") or ""),
+                    "u": int(st.get("mem_upto") or 0),
+                    "t": mem_t,
+                    "at": int(st.get("mem_auto_ts") or 0) or (mem_t if st.get("mem_auto") else 0),
+                    "et": int(st.get("mem_live_ts") or 0) or (mem_t if st.get("mem_live") else 0),
+                }
         return doc
 
     def apply_doc(self, changes: dict):
@@ -951,24 +963,57 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             elif kind == "retry":
                 st_of(rest)[0]["retry"] = dict(val) if isinstance(val, dict) else {}
                 touched[rest][1] = True
-            elif kind == "mem" and isinstance(val, dict):            # 记忆卡: 后改的为准 (两台各自整理时不会来回盖)
+            elif kind == "mem" and isinstance(val, dict):            # 记忆卡: 支持按 mem_auto_ts / mem_live_ts 独立合并，兼容旧端单时间戳
                 st = st_of(rest)[0]
                 try:
                     t = int(val.get("t") or 0)
                 except (TypeError, ValueError):
                     continue
-                if t <= int(st.get("mem_ts") or 0):
-                    continue
-                if int(st.get("clear_ts") or 0) > t:                    # 自动摘要比清空还早: 不要 (旧对话的摘要)
-                    st["mem_auto"] = ""
-                    st["mem_live"] = ""
-                    st["mem_upto"] = 0
+                clear_ts = int(st.get("clear_ts") or 0)
+                has_split = ("at" in val) or ("et" in val)
+                if has_split:
+                    try:
+                        at_ts = int(val.get("at") or 0)
+                        et_ts = int(val.get("et") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    local_at = int(st.get("mem_auto_ts") or 0) or (int(st.get("mem_ts") or 0) if st.get("mem_auto") else 0)
+                    local_et = int(st.get("mem_live_ts") or 0) or (int(st.get("mem_ts") or 0) if st.get("mem_live") else 0)
+                    changed_mem = False
+                    if at_ts > local_at:
+                        if clear_ts > at_ts:
+                            st["mem_auto"] = ""
+                            st["mem_upto"] = 0
+                        else:
+                            st["mem_auto"] = str(val.get("a") or "")[:MEM_MAX]
+                            st["mem_upto"] = max(int(st.get("mem_upto") or 0), int(val.get("u") or 0))
+                        st["mem_auto_ts"] = at_ts
+                        changed_mem = True
+                    if et_ts > local_et:
+                        if clear_ts > et_ts:
+                            st["mem_live"] = ""
+                        else:
+                            st["mem_live"] = str(val.get("e") or "")[:MEM_MAX]
+                        st["mem_live_ts"] = et_ts
+                        changed_mem = True
+                    if changed_mem:
+                        st["mem_ts"] = max(int(st.get("mem_ts") or 0), int(st.get("mem_auto_ts") or 0), int(st.get("mem_live_ts") or 0), t)
+                        touched[rest][1] = True
                 else:
-                    st["mem_auto"] = str(val.get("a") or "")[:MEM_MAX]
-                    st["mem_live"] = str(val.get("e") or "")[:MEM_MAX]
-                    st["mem_upto"] = int(val.get("u") or 0)
-                st["mem_ts"] = t
-                touched[rest][1] = True
+                    if t <= int(st.get("mem_ts") or 0):
+                        continue
+                    if clear_ts > t:                    # 自动摘要比清空还早: 不要 (旧对话的摘要)
+                        st["mem_auto"] = ""
+                        st["mem_live"] = ""
+                        st["mem_upto"] = 0
+                    else:
+                        st["mem_auto"] = str(val.get("a") or "")[:MEM_MAX]
+                        st["mem_live"] = str(val.get("e") or "")[:MEM_MAX]
+                        st["mem_upto"] = int(val.get("u") or 0)
+                    st["mem_ts"] = t
+                    st["mem_auto_ts"] = t
+                    st["mem_live_ts"] = t
+                    touched[rest][1] = True
         for pid, (st, dirty, _known) in touched.items():
             if not dirty:
                 continue
@@ -1796,7 +1841,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._count_idle()
         interrupted = self._reply_interrupt()
         if ((interrupted or self._reply_rewrite) and not self.busy and self.leader()
-                and not self._ai_problem() and not self._away_kind() and not (self.cfg.get("retry") or {}).get("hold")):
+                and not self.blocked() and not self._ai_problem() and not self._away_kind()
+                and not (self.cfg.get("retry") or {}).get("hold")):
             self._ask_user()
         self._reply_drain()
         with self._lock:
@@ -1811,6 +1857,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             mem, self._mem_results = self._mem_results, []
         for res in mem:
             self._mem_finish(*res)
+        with self._lock:
+            drm, self._dream_results = self._dream_results, []
+        for res in drm:
+            self._dream_finish(*res)
         self._release_held()
         self._music_tick()
         self._joint_tick(self.now())
@@ -1858,6 +1908,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._check_proactive(now, snap)
         self._bg_check(now, snap)
         self._mem_kick()
+        self._dream_kick()
 
     def _check_wait(self, ctx=None) -> bool:
         """规则 IX: 对方最后一条消息末尾写了 [waiting for reply]:[N], N 分钟 (从用户看到它算起) 过去了用户还没回复: 让对方可以追问一次."""

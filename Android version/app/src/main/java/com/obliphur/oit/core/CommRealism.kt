@@ -13,7 +13,7 @@ import kotlin.math.roundToInt
  */
 object CommRealism {
     private val epoch2024: LocalDate = LocalDate.of(2024, 1, 1)
-    private val callbackRe = Regex("""^\s*(?:-\s*)?\[(?:回访\s*[:：]|@)\s*(\d{4}-\d{2}-\d{2})\s*\]\s*(.+?)\s*$""")
+    private val callbackRe = Regex("""^\s*(?:-\s*)?(?:\[#[A-Za-z][A-Za-z0-9_-]{0,11}\]\s*)?\[(?:回访\s*[:：]|@)\s*(\d{4}-\d{2}-\d{2})\s*\]\s*(.+?)\s*$""")
     private val cjkRunRe = Regex("""[\u4e00-\u9fff]+""")
     private val stripEdgeRe = Regex("""^[\s，。！？、；：“”‘’"'()（）\[\]【】《》—…·.,!?;:~`]+|[\s，。！？、；：“”‘’"'()（）\[\]【】《》—…·.,!?;:~`]+$""")
     private val sentenceSplitRe = Regex("""[。！？!?；;\n]+""")

@@ -71,7 +71,7 @@
   },
   {
     "name": "oit_memory_edit",
-    "description": "新增、修正或删除记忆卡中的实时事件。action为add/correct/remove；target逐字匹配现有实时事件，add时为空；text为新内容，remove时为空。随正式回复显示生效。",
+    "description": "新增、修正或删除记忆卡中的实时事件。action为add/correct/remove；add时target为空、程序自动分配[#E*]编号；correct/remove时target可填短编号（如E1或#E1）或匹配原正文；text为新内容，remove时为空。随正式回复显示生效。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -97,6 +97,34 @@
         "target",
         "text"
       ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_memory_search",
+    "description": "按关键词或日期范围检索当前对话对象更早的本地归档聊天记录与历史消息（只读）。回忆往事、核对旧约定或用户提起很久以前的话题时按需调用；不要把检索结果伪称成用户刚刚说过的话。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "date_from": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "date_to": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 15
+        }
+      },
+      "required": [],
       "additionalProperties": false
     }
   },

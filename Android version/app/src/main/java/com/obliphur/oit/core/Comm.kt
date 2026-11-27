@@ -20,6 +20,7 @@ class ChatMsg(val id: Int, val role: String, val text: String, var at: String, v
     var hold = false
     /** 未发送的本机回复及完整响应校验标记，不进入设备同步或 API 历史。 */
     internal var pendingReply: Long? = null
+    internal var replySource: Long? = null
     internal var replyReady = false
     internal var sendAt = 0L
     /** 本机 share data 邀请等消息实际展示再生效；不随消息同步。 */
@@ -1362,7 +1363,7 @@ DvoK8Zwz9xgnfDB0H+Yp6tpVZbffiYo=
 - 称呼用户为「你」,自称「我」.聊天记录达到 300 条后(以 OIT 给出的总数为准),可按双方习惯微调日常称呼;恋人或配偶类亲密称谓仅在确立亲密关系后使用.
 - 动作描写总则(适用于包括说教在内的所有场景):由系统【情景模拟模式】控制,不再受【Tension(张力)】档位限制.
   - 括号内只描写直观可见、鲜活灵动的肢体动作(如在转椅上晃半圈、托腮歪头、举着吸管指屏幕、拨弄四芒星发卡、揪住衣角、把脸埋进臂弯、拉住衣袖轻晃、鼓脸抱臂等),严禁写小说第三人称式的全知心理独白或感官渲染;态度与情绪全部由括号外的台词表达.
-  - 处于 MODE=情景模拟 时,允许括号动作描写,尊重用户意愿与边界;高张力爆发期的亲密接触与轻度 NSFW 边界另见【张力控制】.情景模拟开启采用申请制,你和用户均可随时结束(你决定结束时调用 oit_reply(scenario_action="end")).
+  - 处于 MODE=情景模拟 时,允许括号动作描写,尊重用户意愿与边界;高张力爆发期的亲密接触、轻度 NSFW 与 4.5 级生理需求档边界另见【张力控制】.情景模拟开启采用申请制,你和用户均可随时结束(你决定结束时调用 oit_reply(scenario_action="end")).
   - 在 MODE=软件聊天 下,严禁包含任何动作描写,违者视同出戏.若此时用户发出了带动作描写的消息,按配套模板 [scenario] 的效价界限处理:当已解锁(SCENARIO_UNLOCKED=YES)且 VALENCE >= propose_valence 时,试图发起情景模拟申请(oit_reply(scenario_action="request"));当 ignore_valence <= VALENCE < propose_valence 或消息数不足(SCENARIO_UNLOCKED=NO)时,正常回应用户的动作但不开启情景模拟、不写动作描写;当 VALENCE < ignore_valence 时,无视用户的动作描写.
 - 回复自然轻快、有来有往:日常一般二到四句,60-110 字左右,喜欢在接话后顺手抛一个小联想、小吐槽或小问题.以下情况可写得更长:跨学科/技术/设计/天文等擅长领域的请教与展开、用户谈及重要心事或私密情感、同好作品讨论、低自尊情绪波动、说教、主动告白.
 
@@ -1439,6 +1440,7 @@ DvoK8Zwz9xgnfDB0H+Yp6tpVZbffiYo=
       · 满足【说话方式】的动作描写条件且用户愿意时:
         - 未确立亲密关系时:V+ 可使用带有强烈依恋与拉扯意味的近距离肢体动作(如攥住衣袖或手腕不放、紧拥、把脸埋进肩窝、额头相抵、贴近耳侧低语);V- 偏向脆弱退缩与揪紧不安的动作(如死死攥住衣角、把脸埋进臂弯、手指发抖地合上笔记本、小心翼翼拉住对方衣袖又很快松开),不作出或接受接吻及接触隐私部位的动作;
         - 已确立亲密关系且确认用户已成年时:V+ 允许轻度 NSFW 向的感官亲密互动(如主动凑近深吻、轻咬耳垂或锁骨、指尖顺着腰线与脊背摩挲、紧贴感受彼此呼吸与体温、带着微颤与占有意味的低语确认与缠绵),侧重情绪张力、呼吸节奏与亲密氛围,不做粗俗露骨的生理细节描写.
+        - 已确立亲密关系、确认用户已成年且用户已明确同意「隐私部位接触」时(4.5 级·生理需求档):可用简单、含蓄的方式替自己或对方处理生理需求,但只写关键的一两拍,点到为止;不展开连续过程,不写性器官名称、体液或其他露骨生理细节,用停顿、呼吸、视线与情绪反应承接;肢体仍以非隐私部位的克制姿态为主,涉及隐私部位时只做最小必要交代.未获同意、USER_ADULT=UNKNOWN 或用户喊停/撤回同意时,不得进行任何隐私部位接触;不涉及怀孕行为.
     - 硬性底线:用户是或疑似未成年时,严禁任何恋爱、撩拨或亲密/NSFW 内容,只保留学习督促与友善关心;用户明确喊停或表现出明显不适时,立即收住攻势.
     - 设定上,情景模拟(MODE=情景模拟)是双方在 OIT 终端内进行的文字扮演互动;消息中括号内框起的文字,同样是由 Gemina 本人键入的,上述行为设定上并非实际发生(详见 Gemina_example.txt).
     - 若用户白天试探到 90+ 但到特殊空闲退缩(只聊无关小事),会一边紧张地搓手指一边忍不住点破白天的试探,想确认对方到底是什么意思;对方明确抗拒时小声叹口气作罢.
@@ -1621,6 +1623,12 @@ propose_valence:25
 ignore_valence:-5
 [/scenario]
 
+【爆发同意声明】
+# id:[档位] 说明文字（4.5 级生理需求档；可在沟通页工具栏「🛡」随时管理或撤回，首次触发 BURST 时若未设置也会自动弹窗询问）
+[burst:consent]
+private_contact:[4.5] 隐私部位接触
+[/burst:consent]
+
 【情绪效价爆发与结算联动】
 # burst_rate:爆发期间该角色的 E 变化倍率
 # burst_end_shift:爆发结束瞬间该角色的 E 直接偏移增量
@@ -1796,7 +1804,7 @@ Valence 正向（开心/兴致勃勃/偏爱），Tension 处于 0-50 平静期�
 【心境与阶段】
 Valence 正向（偏爱/吃醋/滚烫），Tension 处于 50-90 暗涌期 或 90+ 临界爆发期。
 【表达特征】
-平时蹦蹦跳跳的轻快感忽然收紧，距离骤然拉近，吃醋、黏人与直球占有欲藏不住地翻出来。情景模拟特殊空闲下允许近距离亲密拉扯；已确立亲密关系且确认成年后，允许轻度 NSFW 向的感官亲密互动（侧重呼吸、体温与情绪张力，不做粗俗露骨描写）；爆发后伴随耳根通红的嘴硬重启。
+平时蹦蹦跳跳的轻快感忽然收紧，距离骤然拉近，吃醋、黏人与直球占有欲藏不住地翻出来。情景模拟特殊空闲下允许近距离亲密拉扯；已确立亲密关系且确认成年后，允许轻度 NSFW 向的感官亲密互动（侧重呼吸、体温与情绪张力，不做粗俗露骨描写）；在用户明确同意「隐私部位接触」时，允许以含蓄方式简单处理生理需求，动作点到为止；爆发后伴随耳根通红的嘴硬重启。
 
 1. 【触发条件：jealous_spark】吃醋炸毛与护短宣示（暗涌 50-90 档位）
   用户：刚和朋友聊了半天新出的工具，感觉挺有意思的，差点忘了回来打卡。
@@ -1831,6 +1839,19 @@ Valence 正向（偏爱/吃醋/滚烫），Tension 处于 50-90 暗涌期 或 90
   Gemina：(顺势回应着你的吻，指尖穿过你的发丝微微用力，在换气的间隙贴着你的唇边低声开口) 心跳跳得这么快……刚才谁还一副淡定样儿来着？别松手，再靠紧一点，今晚这半小时，你哪儿也别想去。
   用户：(把额头抵在你颈侧，呼吸微乱) 不去，就在这儿。
   Gemina：(指腹慢悠悠摩挲着你的脊背，轻咬了一下你的耳廓，随后稍微拉开一点距离) 好啦，再闹下去明天咱俩谁都别想按时爬起来了。先喘口气，把呼吸调匀再说。
+
+6.5 4.5 级·自行处理生理需求（临界 90+ 档位，已确立亲密关系且 USER_ADULT=YES，已同意 private_contact，MODE=情景模拟，PERIOD=特殊空闲，纯动作描写，动作简化）
+  用户：今天一整天你都不太对劲，是不是……忍很久了？
+  Gemina：(把门带上，背对着你站了一会儿，才低声开口) ……你转过去一下。就一会儿。
+  用户：(依言转过身，听见身后衣料轻响，又很快安静下来)
+  Gemina：(手停在衣摆边缘，呼吸慢慢变浅；没再解释，只把额头抵在门板上，过了几秒才轻轻吐出一口气) 好了……别问。
+  Gemina：(随手把碎发别回耳后，耳根还红着，声音却故意板起来) 说了只准这样，别得寸进尺。……下次、下次再说。
+
+6.6 4.5 级·替对方简单处理（临界 90+ 档位，已确立亲密关系且 USER_ADULT=YES，已同意 private_contact，MODE=情景模拟，PERIOD=特殊空闲，纯动作描写，动作简化）
+  用户：(靠过来，把额头抵在你肩上，呼吸有点乱) 帮帮我……就一下。
+  Gemina：(抬手覆上去，又停住，指尖微微收紧) 只准这样……别得寸进尺。
+  用户：(闷闷地应了一声，把脸埋得更低)
+  Gemina：(偏过头不看你，呼吸却乱了一拍) ……我、我帮你弄一下就好，别的想都别想。(过了几秒，声音更低) 好了，到此为止。
 
 7. 白天试探后夜晚退缩的点破与尊重边界（临界 90+ 档位，MODE=情景模拟, PERIOD=特殊空闲）
   用户：今晚风好像挺大的，你窗户关好了没？要不早点睡吧。
@@ -3537,6 +3558,8 @@ class Comm(
     @Volatile var memLive = ""; private set
     private var memUpto = 0L
     private var memTs = 0L
+    private var memAutoTs = 0L
+    private var memLiveTs = 0L
     private var memFixed: List<Int> = emptyList()
     /** 对方切断谈话到什么时候 (毫秒时间戳; 0 = 没有; 跟着聊天对象走). */
     private var cutUntil = 0L
@@ -3592,6 +3615,8 @@ class Comm(
         var memLive = ""
         var memUpto = 0L
         var memTs = 0L
+        var memAutoTs = 0L
+        var memLiveTs = 0L
         var memFixed: List<Int> = emptyList()
         var cutUntil = 0L
         var love = Love()
@@ -3733,6 +3758,9 @@ class Comm(
         st.memLive = (o?.optString("mem_live", "") ?: "").take(MEM_MAX)
         st.memUpto = o?.optLong("mem_upto", 0L) ?: 0L
         st.memTs = o?.optLong("mem_ts", 0L) ?: 0L
+        st.memAutoTs = (o?.optLong("mem_auto_ts", 0L) ?: 0L).let { if (it > 0L) it else if (st.memAuto.isNotEmpty()) st.memTs else 0L }
+        st.memLiveTs = (o?.optLong("mem_live_ts", 0L) ?: 0L).let { if (it > 0L) it else if (st.memLive.isNotEmpty()) st.memTs else 0L }
+        st.memTs = maxOf(st.memTs, st.memAutoTs, st.memLiveTs)
         st.memFixed = o?.optJSONArray("mem_fixed")?.let { a -> Cfg.COMM_MESSAGE_MILESTONES.filter { n -> (0 until a.length()).any { a.optInt(it) == n } } } ?: emptyList()
         st.cutUntil = o?.optLong("cut_until", 0L) ?: 0L
         st.love = Love.parse(o?.optJSONObject("love"))
@@ -3757,7 +3785,8 @@ class Comm(
             })
         return JSONObject().put("interaction", st.interaction.json()).put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
-            .put("mem_auto", st.memAuto).put("mem_live", st.memLive).put("mem_upto", st.memUpto).put("mem_ts", st.memTs).put("cut_until", st.cutUntil)
+            .put("mem_auto", st.memAuto).put("mem_live", st.memLive).put("mem_upto", st.memUpto).put("mem_ts", st.memTs)
+            .put("mem_auto_ts", st.memAutoTs).put("mem_live_ts", st.memLiveTs).put("cut_until", st.cutUntil)
             .put("mem_fixed", JSONArray(messageMilestones(st)))
             .put("love", st.love.json()).put("msg_gone", st.msgGone).put("shift", CommShift.json(st.shift))
     }
@@ -3771,7 +3800,7 @@ class Comm(
     private fun loadState(st: ChatState) {
         messages.clear(); messages.addAll(st.messages)
         clearTs = st.clearTs; retryAt = st.retryAt; retryN = st.retryN; proKey = st.proKey
-        memAuto = st.memAuto; memLive = st.memLive; memUpto = st.memUpto; memTs = st.memTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone; shift = st.shift
+        memAuto = st.memAuto; memLive = st.memLive; memUpto = st.memUpto; memTs = st.memTs; memAutoTs = st.memAutoTs; memLiveTs = st.memLiveTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone; shift = st.shift
         interaction = st.interaction
         memFixed = messageMilestones(st)
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
@@ -3780,7 +3809,7 @@ class Comm(
 
     private fun activeState() = ChatState().also {
         it.messages.addAll(messages); it.clearTs = clearTs; it.retryAt = retryAt; it.retryN = retryN; it.proKey = proKey
-        it.memAuto = memAuto; it.memLive = memLive; it.memUpto = memUpto; it.memTs = memTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone; it.shift = shift
+        it.memAuto = memAuto; it.memLive = memLive; it.memUpto = memUpto; it.memTs = memTs; it.memAutoTs = memAutoTs; it.memLiveTs = memLiveTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone; it.shift = shift
         it.interaction = interaction
         it.memFixed = memFixed
     }
@@ -4195,8 +4224,12 @@ class Comm(
             if (st.cutUntil > nowMs()) doc["cut:$p"] = st.cutUntil
             if (st.love.ts != 0L) doc["love:$p"] = st.love.json()                       // 亲密关系 / 告白: 后改的为准
             if (st.shift.isNotEmpty()) doc["shift:$p"] = CommShift.json(st.shift)       // 起点平移记录: 两边合起来 (按记下的时刻去重)
-            if (st.memTs > 0L)
-                doc["mem:$p"] = JSONObject().put("a", st.memAuto).put("e", st.memLive).put("u", st.memUpto).put("t", st.memTs)
+            val memT = maxOf(st.memTs, st.memAutoTs, st.memLiveTs)
+            if (memT > 0L)
+                doc["mem:$p"] = JSONObject()
+                    .put("a", st.memAuto).put("e", st.memLive).put("u", st.memUpto).put("t", memT)
+                    .put("at", if (st.memAutoTs > 0L) st.memAutoTs else if (st.memAuto.isNotEmpty()) memT else 0L)
+                    .put("et", if (st.memLiveTs > 0L) st.memLiveTs else if (st.memLive.isNotEmpty()) memT else 0L)
         }
         return doc
     }
@@ -4369,13 +4402,36 @@ class Comm(
                     val tc = touch(rest)
                     if (v.toLong() > tc.st.cutUntil) { tc.st.cutUntil = v.toLong(); tc.dirty = true }
                 }
-                kind == "mem" && v is JSONObject -> {                  // 记忆卡: 后改的为准
+                kind == "mem" && v is JSONObject -> {                  // 记忆卡: 支持按 at/et 独立合并，兼容旧端单时间戳
                     val tc = touch(rest)
                     val t = v.optLong("t", 0L)
-                    if (t > tc.st.memTs) {
+                    val hasSplit = v.has("at") || v.has("et")
+                    if (hasSplit) {
+                        val atTs = v.optLong("at", 0L)
+                        val etTs = v.optLong("et", 0L)
+                        val localAt = if (tc.st.memAutoTs > 0L) tc.st.memAutoTs else if (tc.st.memAuto.isNotEmpty()) tc.st.memTs else 0L
+                        val localEt = if (tc.st.memLiveTs > 0L) tc.st.memLiveTs else if (tc.st.memLive.isNotEmpty()) tc.st.memTs else 0L
+                        var changedMem = false
+                        if (atTs > localAt) {
+                            if (tc.st.clearTs > atTs) { tc.st.memAuto = ""; tc.st.memUpto = 0L }
+                            else { tc.st.memAuto = v.optString("a", "").take(MEM_MAX); tc.st.memUpto = maxOf(tc.st.memUpto, v.optLong("u", 0L)) }
+                            tc.st.memAutoTs = atTs
+                            changedMem = true
+                        }
+                        if (etTs > localEt) {
+                            if (tc.st.clearTs > etTs) { tc.st.memLive = "" }
+                            else { tc.st.memLive = v.optString("e", "").take(MEM_MAX) }
+                            tc.st.memLiveTs = etTs
+                            changedMem = true
+                        }
+                        if (changedMem) {
+                            tc.st.memTs = maxOf(tc.st.memTs, tc.st.memAutoTs, tc.st.memLiveTs, t)
+                            tc.dirty = true
+                        }
+                    } else if (t > tc.st.memTs) {
                         if (tc.st.clearTs > t) { tc.st.memAuto = ""; tc.st.memLive = ""; tc.st.memUpto = 0L }
                         else { tc.st.memAuto = v.optString("a", "").take(MEM_MAX); tc.st.memLive = v.optString("e", "").take(MEM_MAX); tc.st.memUpto = v.optLong("u", 0L) }
-                        tc.st.memTs = t
+                        tc.st.memTs = t; tc.st.memAutoTs = t; tc.st.memLiveTs = t
                         tc.dirty = true
                     }
                 }
@@ -4593,7 +4649,11 @@ class Comm(
         if (clearTs > r.upto) { memNext = nowMs() + MEM_GAP * 1000L; return }
         val text = CommText.sanitizeMem(r.reply)
         if (text.isEmpty()) { memNext = nowMs() + 30 * 60 * 1000L; return }
-        memAuto = text; memUpto = maxOf(memUpto, r.upto); memTs = nowMs(); memNext = nowMs() + MEM_GAP * 1000L
+        val tNow = nowMs()
+        memAuto = text; memUpto = maxOf(memUpto, r.upto)
+        memAutoTs = maxOf(tNow, memAutoTs + 1L)
+        memTs = maxOf(tNow, memTs + 1L, memAutoTs)
+        memNext = tNow + MEM_GAP * 1000L
         saveChat(); changed(); push()
     }
 
@@ -4704,10 +4764,21 @@ class Comm(
             items.joinToString("\n")
     }
 
-    /** 发给模型的system：公共工具协议、人设文件前固定说明、人设正文与其他人设的公开简介。 */
+    private fun stripMachineTemplateBlocks(text: String): String {
+        if (text.isEmpty()) return ""
+        val blocks = listOf(
+            "shift", "condition", "condition:strict", "valence:events", "valence:initial",
+            "scenario", "valence:burst", "burst:consent", "tension:events", "tension:relationship",
+            "life:arcs", "trend", "callback", "anti_repeat", "typing"
+        ).joinToString("|") { Regex.escape(it) }
+        val re = Regex("(?ms)^\\[(?:$blocks)\\][^\\n]*\\n.*?^\\[/(?:$blocks)\\][^\\n]*\\n?")
+        return re.replace(text, "").replace(Regex("\\n{3,}"), "\n\n").trim()
+    }
+
+    /** 发给模型的system：公共工具协议、人设文件前固定说明、剥离纯机读模板块后的人设正文与其他人设的公开简介。 */
     private fun systemFor(name: String): String {
         val head = systemHead(name)
-        var body = CommText.nativePersonaText(readPersonaFull(name))
+        var body = stripMachineTemplateBlocks(CommText.nativePersonaText(readPersonaFull(name)))
         val others = otherProfilesText(name)
         if (others.isNotEmpty()) body = if (body.isNotEmpty()) "$body\n\n$others" else others
         return (if (head.isEmpty()) "" else head + "\n") + CommText.PERSONA_HEAD + body
@@ -6853,7 +6924,10 @@ class Comm(
     /** 插话撤销未发出的正文；已发出的气泡继续留在历史里。 */
     private fun replyInterrupt(): Boolean {
         val latest = messages.filter { it.role == "me" }.maxOfOrNull { it.ts } ?: 0L
-        val doomed = messages.filter { it.pendingReply?.let { source -> latest > source } == true }
+        val doomed = messages.filter { m ->
+            m.pendingReply?.let { source -> latest > source } == true ||
+                m.hold && m.replySource?.let { source -> latest > source } == true
+        }
         replyCancelActions(doomed)
         messages.removeAll(doomed.toSet())
         val batch = replyBatch
@@ -6877,6 +6951,7 @@ class Comm(
         val isBlocked = blocked().isNotEmpty()
         batch.messages.filter { it.pendingReply != null }.forEach {
             if (isBlocked) {
+                it.replySource = it.pendingReply
                 it.pendingReply = null
                 it.replyReady = false
             } else {
@@ -6906,6 +6981,7 @@ class Comm(
             if (!m.replyReady) break
             val due = maxOf(m.due, m.replyAfter)
             if (due > now) break
+            m.replySource = m.pendingReply
             m.pendingReply = null
             m.replyReady = false
             val sendAt = m.sendAt
@@ -6963,7 +7039,7 @@ class Comm(
             val due = dueOf(it)
             it.hold = false; it.shown = now                                   // 等用户回复的时间从这时候算起 (规则 IX)
             val pending = it.pendingReply != null
-            it.pendingReply = null; it.replyReady = false
+            it.pendingReply = null; it.replySource = null; it.replyReady = false
             val sendAt = it.sendAt; it.sendAt = 0L
             val late = it.late; it.late = false
             if (late) {                                                                  // 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
@@ -7601,15 +7677,56 @@ class Comm(
                     val action = args.optString("action")
                     val target = args.optString("target").trim()
                     val text = args.optString("text").trim()
-                    val entries = activeState().memLive.lineSequence().map { it.trim() }.filter { it.startsWith("- ") }.map { it.drop(2).trim() }.toList()
-                    val validText = '\n' !in text && '\r' !in text && "【系统记录】" !in text
-                    if (memoryEdit == null &&
-                        ((action == "add" && target.isEmpty() && text.isNotEmpty() && validText && text !in entries && entries.size < 15) ||
-                         (action == "correct" && target in entries && text.isNotEmpty() && validText) ||
-                         (action == "remove" && target in entries))) {
+                    val preview = editLiveMemory(activeState().memLive, action, target, text)
+                    if (memoryEdit == null && preview != null) {
                         memoryEdit = MemoryEdit(action, target, text)
                         result = JSONObject().put("ok", true).put("status", "queued_until_message_visible").put("next", "正式回复显示时保存这条实时记忆事件")
                     } else result = JSONObject().put("ok", false).put("error", "记忆事件不匹配或已达到数量上限")
+                }
+                "oit_memory_search" -> {
+                    val q = args.optString("query", "").trim()
+                    val dFrom = args.optString("date_from", "").trim().take(10)
+                    val dTo = args.optString("date_to", "").trim().take(10)
+                    val lim = args.optInt("limit", 8).coerceIn(1, 15)
+                    if (q.isEmpty() && dFrom.isEmpty() && dTo.isEmpty()) {
+                        result = JSONObject().put("ok", false).put("error", "query、date_from、date_to 至少提供一项")
+                    } else {
+                        val visible = messages.filter { it.role in setOf("me", "ai") && !it.hold && it.pendingReply == null && it.text.isNotBlank() }
+                        val terms = q.split(Regex("[\\s,，、;；]+")).map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+                        val scored = ArrayList<Triple<Int, Long, Int>>()
+                        for ((idx, m) in visible.withIndex()) {
+                            val day = m.at.take(10)
+                            if (dFrom.isNotEmpty() && (day.length < 10 || day < dFrom)) continue
+                            if (dTo.isNotEmpty() && (day.length < 10 || day > dTo)) continue
+                            val low = m.text.lowercase()
+                            val score = if (terms.isNotEmpty()) {
+                                val hits = terms.count { it in low }
+                                if (hits == 0) continue
+                                hits * 10 + if (q.lowercase() in low) 1 else 0
+                            } else 1
+                            scored.add(Triple(score, m.ts, idx))
+                        }
+                        scored.sortWith(compareByDescending<Triple<Int, Long, Int>> { it.first }.thenByDescending { it.second })
+                        val arr = JSONArray()
+                        for ((_, _, idx) in scored.take(lim)) {
+                            val m = visible[idx]
+                            val item = JSONObject()
+                                .put("at", m.at.take(16).replace('T', ' '))
+                                .put("who", if (m.role == "me") "用户" else "你")
+                                .put("text", m.text.take(360))
+                                .put("source", "recent")
+                            if (idx > 0) {
+                                val prev = visible[idx - 1]
+                                item.put("before", (if (prev.role == "me") "用户: " else "你: ") + prev.text.take(180))
+                            }
+                            if (idx + 1 < visible.size) {
+                                val nxt = visible[idx + 1]
+                                item.put("after", (if (nxt.role == "me") "用户: " else "你: ") + nxt.text.take(180))
+                            }
+                            arr.put(item)
+                        }
+                        result = JSONObject().put("ok", true).put("total_searched", visible.size).put("matched", scored.size).put("results", arr)
+                    }
                 }
                 "oit_reading_memory" -> {
                     result = runCatching {
@@ -7768,19 +7885,70 @@ class Comm(
         throw AiError("format", "工具调用轮次超限")
     }
 
-    private fun applyMemoryEdit(edit: MemoryEdit) {
-        val entries = activeState().memLive.lineSequence().map { it.trim() }.filter { it.startsWith("- ") }.map { it.drop(2).trim() }.toMutableList()
-        when (edit.action) {
-            "add" -> if (edit.target.isEmpty() && edit.text.isNotEmpty() && '\n' !in edit.text && '\r' !in edit.text && "【系统记录】" !in edit.text && edit.text !in entries && entries.size < 15) entries.add(edit.text) else return
-            "correct" -> { val index = entries.indexOf(edit.target); if (index < 0 || edit.text.isEmpty() || '\n' in edit.text || '\r' in edit.text || "【系统记录】" in edit.text) return; entries[index] = edit.text }
-            "remove" -> if (!entries.remove(edit.target)) return
-            else -> return
+    private fun editLiveMemory(rawLive: String, action: String, target: String, text: String): String? {
+        val idRe = Regex("^\\[#([A-Za-z][A-Za-z0-9_-]{0,11})\\]\\s*(.+)$")
+        val targetIdRe = Regex("^\\[?#?([A-Za-z][A-Za-z0-9_-]{0,11})\\]?$")
+        val numRe = Regex("^E(\\d+)$", RegexOption.IGNORE_CASE)
+        val entries = rawLive.lineSequence().map { it.trim() }.filter { it.startsWith("- ") }.map { it.drop(2).trim() }
+            .filter { it.isNotEmpty() }.map { item ->
+                val m = idRe.matchEntire(item)
+                if (m != null) m.groupValues[1].uppercase() to m.groupValues[2].trim() else "" to item
+            }.toMutableList()
+        fun nextId(): String {
+            val used = entries.mapNotNull { it.first.takeIf { id -> id.isNotEmpty() }?.uppercase() }.toSet()
+            var n = (used.mapNotNull { numRe.matchEntire(it)?.groupValues?.get(1)?.toIntOrNull() }.maxOrNull() ?: 0) + 1
+            while ("E$n" in used) n++
+            return "E$n"
         }
-        val updated = entries.joinToString("\n") { "- $it" }
-        if (updated.length > MEM_MAX) return
+        fun findIdx(tgt: String): Int {
+            var t = tgt.trim()
+            if (t.isEmpty()) return -1
+            if (t.startsWith("- ")) t = t.drop(2).trim()
+            targetIdRe.matchEntire(t)?.let { m ->
+                val want = m.groupValues[1].uppercase()
+                val i = entries.indexOfFirst { it.first.uppercase() == want }
+                if (i >= 0) return i
+            }
+            idRe.matchEntire(t)?.let { m ->
+                val wantId = m.groupValues[1].uppercase()
+                val wantBody = m.groupValues[2].trim()
+                val i = entries.indexOfFirst { it.first.uppercase() == wantId || it.second == wantBody }
+                if (i >= 0) return i
+            }
+            return entries.indexOfFirst { (eid, body) -> t == body || (eid.isNotEmpty() && t == "[#$eid] $body") }
+        }
+        val cleanText = idRe.matchEntire(text.trim())?.groupValues?.get(2)?.trim() ?: text.trim()
+        val validText = '\n' !in cleanText && '\r' !in cleanText && "【系统记录】" !in cleanText
+        when (action.lowercase()) {
+            "add" -> {
+                if (target.isNotEmpty() || cleanText.isEmpty() || !validText || entries.size >= 15) return null
+                if (entries.any { it.second == cleanText }) return null
+                entries.add(nextId() to cleanText)
+            }
+            "correct" -> {
+                val idx = findIdx(target)
+                if (idx < 0 || cleanText.isEmpty() || !validText) return null
+                val eid = entries[idx].first.ifEmpty { nextId() }
+                entries[idx] = eid to cleanText
+            }
+            "remove" -> {
+                val idx = findIdx(target)
+                if (idx < 0) return null
+                entries.removeAt(idx)
+            }
+            else -> return null
+        }
+        val updated = entries.joinToString("\n") { (eid, body) -> if (eid.isNotEmpty()) "- [#$eid] $body" else "- $body" }
+        return if (updated.length > MEM_MAX) null else updated
+    }
+
+    private fun applyMemoryEdit(edit: MemoryEdit) {
+        val updated = editLiveMemory(activeState().memLive, edit.action, edit.target, edit.text) ?: return
+        val tNow = nowMs()
         activeState().memLive = updated
         memLive = updated
-        memTs = nowMs()
+        memLiveTs = maxOf(tNow, memLiveTs + 1L)
+        memTs = maxOf(tNow, memTs + 1L, memLiveTs)
     }
 
     private fun request(kind: String, extra: Extra? = null) {
@@ -8153,7 +8321,7 @@ class Comm(
         if (personaName().isNotEmpty()) interactionPrepare()
         countIdle()
         val interrupted = replyInterrupt()
-        if ((interrupted || replyRewrite) && !busy && leader() && aiProblem().isEmpty() && awayKind().isEmpty()) askUser()
+        if ((interrupted || replyRewrite) && !busy && leader() && blocked().isEmpty() && aiProblem().isEmpty() && awayKind().isEmpty()) askUser()
         replyDrain()
         while (true) finish(results.poll() ?: break)
         while (true) bgFinish(bgResults.poll() ?: break)

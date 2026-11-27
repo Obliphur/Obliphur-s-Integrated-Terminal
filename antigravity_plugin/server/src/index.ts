@@ -217,7 +217,7 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_memory_edit",
       description:
-        "新增、修正或删除记忆卡中的实时事件（action: add / correct / remove）。",
+        "新增、修正或删除记忆卡中的实时事件（action: add / correct / remove；add自动分配[#E*]编号，correct/remove可用短编号E1或正文定位）。",
       inputSchema: {
         type: "object",
         properties: {
@@ -230,13 +230,35 @@ function buildTools(): ToolSpec[] {
       },
     },
     {
+      name: "oit_memory_search",
+      description:
+        "按关键词或日期范围检索当前对话对象更早的本地归档聊天记录与历史消息（只读）。",
+      annotations: READONLY_ANNOTATIONS,
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", maxLength: 200 },
+          date_from: { type: "string", maxLength: 20 },
+          date_to: { type: "string", maxLength: 20 },
+          limit: { type: "integer", minimum: 1, maximum: 15 },
+        },
+        required: [],
+        additionalProperties: false,
+      },
+    },
+    {
       name: "oit_memory_save_auto",
       description:
-        "保存由 oit-memory-compact 子代理整理压缩后的长期记忆卡内容。",
+        "保存由 oit-memory-compact 子代理整理压缩后的长期记忆卡内容（Dreaming 模式下可附带 remove_live_ids 清理已解决/已过期的实时事件编号）。",
       inputSchema: {
         type: "object",
         properties: {
           text: { type: "string", maxLength: 4000 },
+          remove_live_ids: {
+            type: "array",
+            items: { type: "string", maxLength: 24 },
+            maxItems: 15,
+          },
           turn_id: { type: "string", maxLength: 120 },
         },
         required: ["text"],
