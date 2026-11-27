@@ -185,6 +185,34 @@ def main():
         c1.clear()
         assert not os.path.isfile(ap), "清空对话时必须同步清理冷归档 JSONL"
 
+        # 7. Gemina / Charlotte 内置文件自动升级：未改过的旧内置版本自动补齐 [burst:consent]，用户自定义修改不覆盖
+        up_tmp = tempfile.mkdtemp(prefix="oit_builtin_up_")
+        up_p = os.path.join(up_tmp, "personas")
+        os.makedirs(up_p, exist_ok=True)
+        try:
+            c_up = comm.Comm(up_tmp, up_p, now=lambda: now_t[0])
+            c_up.flush()
+            # 模拟老用户：builtin_bases 为旧版 CRC 且模板缺失 [burst:consent]
+            old_tpl = "【日程】\n08:00-09:00 idle\n"
+            with open(os.path.join(up_p, "Gemina_templates.txt"), "w", encoding="utf-8", newline="\n") as f:
+                f.write(old_tpl)
+            with open(os.path.join(up_p, "Charlotte_templates.txt"), "w", encoding="utf-8", newline="\n") as f:
+                f.write("用户自定义的 Charlotte 模板\n")
+            c_up.cfg["builtin_bases"] = {
+                "Gemina_templates.txt": comm.Comm._text_crc(old_tpl),
+                "Charlotte_templates.txt": "00000000",
+            }
+            c_up.save_cfg()
+            c_up.flush()
+            c_up2 = comm.Comm(up_tmp, up_p, now=lambda: now_t[0])
+            c_up2.set_persona("Gemina.txt")
+            assert "private_contact" in c_up2.burst_consent_rules_for(), "未修改的旧版 Gemina_templates 应自动升级补齐 [burst:consent]"
+            with open(os.path.join(up_p, "Charlotte_templates.txt"), encoding="utf-8") as f:
+                assert f.read().strip() == "用户自定义的 Charlotte 模板", "用户手动改过的内置配套文件绝不能被覆盖"
+            c_up2.flush()
+        finally:
+            shutil.rmtree(up_tmp, ignore_errors=True)
+
         print("COMM MEMORY CHECK OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

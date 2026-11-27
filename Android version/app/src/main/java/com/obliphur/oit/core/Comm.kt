@@ -133,6 +133,16 @@ object BuiltinPersonas {
     const val CHARLOTTE_PROFILE = "Charlotte_profile.txt"
     const val CHARLOTTE_EXAMPLE = "Charlotte_example.txt"
     val CHARLOTTE_FILES = listOf(CHARLOTTE_PROFILE, CHARLOTTE, CHARLOTTE_BACKGROUND, CHARLOTTE_ROUTINE, CHARLOTTE_EXAMPLE)
+    val EXTRA_BUILTIN_LEGACY_CRCS: Map<String, Set<String>> = mapOf(
+        GEMINA to setOf("d83abf94", "009d763c", "56f0825b", "13832870"),
+        GEMINA_BACKGROUND to setOf("045adc51", "3dcb9b7b"),
+        GEMINA_ROUTINE to setOf("425971cb", "5a6c9fc0"),
+        GEMINA_EXAMPLE to setOf("edac741e", "f26131ed", "9edd61ba", "ca624d8d"),
+        CHARLOTTE to setOf("31238d5e", "9664b81d", "0c92646a", "80bfe38a", "e9d2d053"),
+        CHARLOTTE_BACKGROUND to setOf("4fa29738", "bec7279f", "6a87a04f"),
+        CHARLOTTE_ROUTINE to setOf("55db6c1c", "1e890bea", "2112aef9"),
+        CHARLOTTE_EXAMPLE to setOf("6e49e1a5", "02604878", "bf588520", "f2b335b4", "93d9cfc8"),
+    )
     const val ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; " +
         "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
     const val ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
@@ -2391,6 +2401,7 @@ class Comm(
     private var backgroundBase = ""     // 同上, Claudia_background.txt
     private var exampleBase = ""
     private var profileBase = ""
+    private val builtinBases = LinkedHashMap<String, String>()
     private var claudiaSig: String? = null
     private val personaSig = HashMap<String, String>()      // 人设文件名 → 修改时间+大小
     private var personaPending: String? = null               // 正在等用户决定的人设修改
@@ -2548,6 +2559,7 @@ class Comm(
         upgradeBackground()
         upgradeExample()
         upgradeProfile()
+        upgradeExtraBuiltins()
         noteBuiltinBase()
         PersonaCodec.migrate(personas)
         PersonaCodec.migrate(personaBackupDir())
@@ -2732,6 +2744,15 @@ class Comm(
             backgroundBase = d.optString("background_base", "")
             exampleBase = d.optString("example_base", "")
             profileBase = d.optString("profile_base", "")
+            builtinBases.clear()
+            d.optJSONObject("builtin_bases")?.let { bb ->
+                val it = bb.keys()
+                while (it.hasNext()) {
+                    val k = it.next()
+                    val v = bb.optString(k, "")
+                    if (v.isNotEmpty()) builtinBases[k] = v
+                }
+            }
             legacyDone = d.optBoolean("legacy_done", false)
             // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
             proKey = d.optString("pro_key", "")
@@ -2776,6 +2797,7 @@ class Comm(
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase).put("example_base", exampleBase)
             .put("profile_base", profileBase)
+            .put("builtin_bases", JSONObject(builtinBases as Map<*, *>))
             .put("legacy_done", legacyDone).put("think_auto", thinkAuto).put("sched_follow", schedFollow).put("pro_lang", proLang)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
@@ -3978,6 +4000,34 @@ class Comm(
         log(label + if (cur.isNullOrBlank()) "已补上" else "已升级")
     }
 
+    private fun upgradeExtraBuiltins() {
+        val groups = listOf(
+            BuiltinPersonas.GEMINA to BuiltinPersonas.GEMINA_FILES,
+            BuiltinPersonas.CHARLOTTE to BuiltinPersonas.CHARLOTTE_FILES,
+        )
+        for ((mainName, groupFiles) in groups) {
+            if (!File(personas, mainName).isFile) continue
+            for (fname in groupFiles) {
+                val builtin = BuiltinPersonas.ALL[fname] ?: continue
+                val rf = File(personas, fname)
+                val cur = if (rf.isFile) runCatching { PersonaCodec.read(rf) }.getOrNull() else null
+                if (fname.lowercase().endsWith("_profile.txt")) {
+                    if (cur != null && cur.isNotBlank()) continue
+                } else if (cur != null && cur.isNotBlank()) {
+                    val curNorm = cur.replace("\r\n", "\n").trim()
+                    if (curNorm == builtin.replace("\r\n", "\n").trim()) continue
+                    val crcs = setOf(textCrc(cur), textCrc(curNorm))
+                    val savedBase = builtinBases[fname].orEmpty()
+                    val legacySet = BuiltinPersonas.EXTRA_BUILTIN_LEGACY_CRCS[fname].orEmpty()
+                    if ((savedBase.isEmpty() || savedBase !in crcs) && crcs.none { it in legacySet }) continue
+                }
+                if (runCatching { PersonaCodec.write(rf, builtin) }.isFailure) continue
+                backupPersonaFile(fname)
+                log("$fname " + if (cur.isNullOrBlank()) "已补上" else "已升级")
+            }
+        }
+    }
+
     private fun textCrc(text: String): String = "%08x".format(java.util.zip.CRC32().apply { update(text.trim().toByteArray(Charsets.UTF_8)) }.value)
 
     /** 记下默认人设的内置文件现在是不是内置版本: 是的话把这一版的校验值记成"上一次见到的内置版本".
@@ -3995,6 +4045,15 @@ class Comm(
         if (example != null && example.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE).trim() && exampleBase != textCrc(example)) { exampleBase = textCrc(example); changed = true }
         val profile = readPersonaRaw(BuiltinPersonas.PROFILE)
         if (profile != null && profile.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE).trim() && profileBase != textCrc(profile)) { profileBase = textCrc(profile); changed = true }
+        for (fname in BuiltinPersonas.GEMINA_FILES + BuiltinPersonas.CHARLOTTE_FILES) {
+            val builtin = BuiltinPersonas.ALL[fname] ?: continue
+            val raw = readPersonaRaw(fname) ?: continue
+            val norm = raw.replace("\r\n", "\n")
+            if (norm.trim() == builtin.replace("\r\n", "\n").trim()) {
+                val crc = textCrc(norm)
+                if (builtinBases[fname] != crc) { builtinBases[fname] = crc; changed = true }
+            }
+        }
         if (changed) saveCfg()
     }
 

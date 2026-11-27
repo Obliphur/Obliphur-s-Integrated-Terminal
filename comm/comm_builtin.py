@@ -1330,6 +1330,19 @@ CHARLOTTE_ROUTINE = "Charlotte_templates.txt"
 CHARLOTTE_PROFILE = "Charlotte_profile.txt"
 CHARLOTTE_EXAMPLE = "Charlotte_example.txt"
 CHARLOTTE_FILES = (CHARLOTTE_PROFILE, CHARLOTTE_PERSONA, CHARLOTTE_BACKGROUND, CHARLOTTE_ROUTINE, CHARLOTTE_EXAMPLE)
+
+# 历史上曾内置发布过的 Gemina / Charlotte 文件 CRC32（按 LF 换行 strip 后计算），
+# 用于让老用户未手动修改过的旧版本自动升级到最新内置版本（如补齐 [burst:consent] 等）。
+EXTRA_BUILTIN_LEGACY_CRCS = {
+    GEMINA_PERSONA: ("d83abf94", "009d763c", "56f0825b", "13832870"),
+    GEMINA_BACKGROUND: ("045adc51", "3dcb9b7b"),
+    GEMINA_ROUTINE: ("425971cb", "5a6c9fc0"),
+    GEMINA_EXAMPLE: ("edac741e", "f26131ed", "9edd61ba", "ca624d8d"),
+    CHARLOTTE_PERSONA: ("31238d5e", "9664b81d", "0c92646a", "80bfe38a", "e9d2d053"),
+    CHARLOTTE_BACKGROUND: ("4fa29738", "bec7279f", "6a87a04f"),
+    CHARLOTTE_ROUTINE: ("55db6c1c", "1e890bea", "2112aef9"),
+    CHARLOTTE_EXAMPLE: ("6e49e1a5", "02604878", "bf588520", "f2b335b4", "93d9cfc8"),
+}
 # 旧桌面版漏读 example_base；只凭已发布原文的摘要补救，不覆盖用户改稿。
 EXAMPLE_LEGACY_HASHES = frozenset({
     "974910106394fab130caec531867425a0b19a0c54ccc9e13eefe666329fb5525",

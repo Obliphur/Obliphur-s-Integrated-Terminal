@@ -48,6 +48,7 @@ from .comm_builtin import (
     DEFAULT_PROFILE, EXAMPLE_LEGACY_HASHES,
     GEMINA_FILES, GEMINA_PERSONA, GEMINA_PROFILE,
     CHARLOTTE_FILES, CHARLOTTE_PERSONA, CHARLOTTE_PROFILE,
+    EXTRA_BUILTIN_LEGACY_CRCS,
 )
 from .comm_persona import is_profile_name, profile_files, other_profiles_text
 from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, MENTAL_WORDS, mental_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
@@ -246,6 +247,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._upgrade_background()
         self._upgrade_example()
         self._upgrade_profile()
+        self._upgrade_extra_builtins()
         self._note_builtin_base()
         migrate_folder(self.personas)
         migrate_folder(self._persona_backup_dir)
@@ -1349,6 +1351,37 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._seg_sig = None
         self.log(label + ("已补上" if cur is None or not cur.strip() else "已升级"))
 
+    def _upgrade_extra_builtins(self):
+        """Gemina / Charlotte 等额外内置人设自动升级：只更新缺失/空白或未手动改过的旧内置版本，绝不覆盖用户修改。"""
+        bases = self.cfg.get("builtin_bases") if isinstance(self.cfg.get("builtin_bases"), dict) else {}
+        for main_name, group_files in ((GEMINA_PERSONA, GEMINA_FILES), (CHARLOTTE_PERSONA, CHARLOTTE_FILES)):
+            if not os.path.isfile(os.path.join(self.personas, main_name)):
+                continue
+            for fname in group_files:
+                builtin = BUILTIN_PERSONAS.get(fname)
+                if not builtin:
+                    continue
+                cur = self._read_persona_raw(fname)
+                if fname.lower().endswith("_profile.txt"):
+                    if cur is not None and cur.strip():
+                        continue
+                elif cur is not None and cur.strip():
+                    cur_norm = cur.replace("\r\n", "\n").strip()
+                    if cur_norm == builtin.replace("\r\n", "\n").strip():
+                        continue
+                    crcs = {self._text_crc(cur), self._text_crc(cur_norm)}
+                    saved_base = str(bases.get(fname) or "")
+                    legacy_set = set(EXTRA_BUILTIN_LEGACY_CRCS.get(fname, ()))
+                    if (not saved_base or saved_base not in crcs) and not (crcs & legacy_set):
+                        continue
+                try:
+                    write_file(os.path.join(self.personas, fname), builtin)
+                except (OSError, ValueError):
+                    continue
+                self._backup_persona_file(fname)
+                self._seg_sig = None
+                self.log(f"{fname} " + ("已补上" if cur is None or not cur.strip() else "已升级"))
+
     @staticmethod
     def _text_crc(text: str) -> str:
         return f"{zlib.crc32((text or '').strip().encode('utf-8')):08x}"
@@ -1363,7 +1396,19 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             if cur is not None and cur.strip() == BUILTIN_PERSONAS[name].strip() and self.cfg.get(key) != self._text_crc(cur):
                 self.cfg[key] = self._text_crc(cur)
                 changed = True
+        bases = dict(self.cfg.get("builtin_bases")) if isinstance(self.cfg.get("builtin_bases"), dict) else {}
+        for fname in (*GEMINA_FILES, *CHARLOTTE_FILES):
+            builtin = BUILTIN_PERSONAS.get(fname)
+            if not builtin:
+                continue
+            cur = self._read_persona_raw(fname)
+            if cur is not None and cur.replace("\r\n", "\n").strip() == builtin.replace("\r\n", "\n").strip():
+                crc = self._text_crc(cur.replace("\r\n", "\n"))
+                if bases.get(fname) != crc:
+                    bases[fname] = crc
+                    changed = True
         if changed:
+            self.cfg["builtin_bases"] = bases
             self.save_cfg()
 
     def check_claudia_integrity(self) -> bool:
