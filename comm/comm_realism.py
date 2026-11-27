@@ -12,7 +12,9 @@ import zlib
 from comm.comm_rules import (
     anti_repeat_rules,
     callback_rules,
-    life_arcs_rules,
+    life_arcs_specs,
+    persona_clock_rules,
+    persona_milestones_rules,
     trend_rules,
 )
 
@@ -38,24 +40,152 @@ def _crc32(seed: str) -> int:
     return zlib.crc32(seed.encode("utf-8")) & 0xFFFFFFFF
 
 
-def life_arcs_note(text: str, owner_name: str, today: date) -> str:
-    """按日期与确定性 CRC32 种子推进角色慢变量生活线；未声明 [life:arcs] 时返回空。"""
-    arcs = life_arcs_rules(text)
-    if not arcs:
+def _safe_birthday_in_year(birth: date, year: int) -> date:
+    """闰日 2/29 在平年按 2/28 计。"""
+    try:
+        return date(year, birth.month, birth.day)
+    except ValueError:
+        return date(year, 2, 28)
+
+
+def _milestone_state(milestones: list, today: date):
+    """返回 (当前生效里程碑或 None, 已到达的里程碑 ID 集合, 下一个未来里程碑或 None)。"""
+    reached = set()
+    active = None
+    upcoming = None
+    today_iso = today.isoformat()
+    for item in milestones:
+        if item["date"] <= today_iso:
+            reached.add(item["id"])
+            active = item
+        elif upcoming is None:
+            upcoming = item
+    return active, reached, upcoming
+
+
+def _arc_allowed(spec: dict, active_id: str, reached: set) -> bool:
+    mode = spec.get("when_mode") or ""
+    if not mode:
+        return True
+    targets = spec.get("when_stages") or ()
+    if mode == "before":
+        return targets[0] not in reached
+    if mode == "since":
+        return targets[0] in reached
+    if mode == "stage":
+        return bool(active_id) and active_id in targets
+    return True
+
+
+def _block_shuffle(owner: str, arc_id: str, block: int, count: int) -> list:
+    order = list(range(count))
+    for i in range(count - 1, 0, -1):
+        j = _crc32(f"{owner}:{arc_id}:shuf:{block}:{i}") % (i + 1)
+        order[i], order[j] = order[j], order[i]
+    return order
+
+
+def _pick_topic_index(owner: str, arc_id: str, cycle: int, count: int) -> int:
+    """确定性无相邻重复的主题轮换：每 count 轮遍历全部主题且跨轮不撞车。"""
+    if count <= 1:
+        return 0
+    if count == 2:
+        base = _crc32(f"{owner}:{arc_id}:t0") % 2
+        return (cycle + base) % 2
+    block = cycle // count
+    slot = cycle % count
+    order = _block_shuffle(owner, arc_id, block, count)
+    if block > 0:
+        prev_last = _block_shuffle(owner, arc_id, block - 1, count)[-1]
+        if order[0] == prev_last:
+            order[0], order[1] = order[1], order[0]
+    return order[slot]
+
+
+def persona_evolution_note(text: str, today: date) -> str:
+    """按日期计算动态年龄与单向人生阶段，覆盖静态人设中的初始时间切片（不修改默认人设文件）。"""
+    clock = persona_clock_rules(text)
+    milestones = persona_milestones_rules(text)
+    if not clock and not milestones:
         return ""
+
+    lines = [
+        "[OIT_PERSONA_EVOLUTION] 角色当前时间线状态"
+        "(初始人设正文仅代表初始设定，凡年龄、学历/身份或近况与此处冲突时，一律以本区块为准，自然融入言行勿透露机制):"
+    ]
+    has_item = False
+
+    if clock:
+        birth = date.fromisoformat(clock["birth"])
+        bday_this = _safe_birthday_in_year(birth, today.year)
+        age = today.year - birth.year - (1 if today < bday_this else 0)
+        if age >= 0:
+            if today == bday_this:
+                bday_hint = f"，今天正好是你{age}岁生日"
+            else:
+                next_bday = bday_this if today < bday_this else _safe_birthday_in_year(birth, today.year + 1)
+                days_left = (next_bday - today).days
+                bday_hint = f"，距离你{age + 1}岁生日还有{days_left}天" if 1 <= days_left <= 7 else ""
+            lines.append(f"- 当前年龄: {age}岁（生日 {birth.month:02d}-{birth.day:02d}{bday_hint}）")
+            has_item = True
+
+    if milestones:
+        active, _reached, upcoming = _milestone_state(milestones, today)
+        if active:
+            lines.append(f"- 当前人生阶段: {active['label']}（自 {active['date']} 起）— {active['summary']}")
+            has_item = True
+        if upcoming:
+            up_date = date.fromisoformat(upcoming["date"])
+            days_to = (up_date - today).days
+            if 1 <= days_to <= 14:
+                lines.append(f"- 临近节点: 距离「{upcoming['label']}」（{upcoming['date']}）还有{days_to}天")
+                has_item = True
+
+    return "\n".join(lines) if has_item else ""
+
+
+def life_arcs_note(text: str, owner_name: str, today: date) -> str:
+    """按日期与确定性 CRC32 种子推进角色慢变量生活线；支持里程碑阶段过滤与结束后自动更新新主题。"""
+    specs = life_arcs_specs(text)
+    if not specs:
+        return ""
+    milestones = persona_milestones_rules(text)
+    active_ms, reached_ms, _ = _milestone_state(milestones, today)
+    active_id = active_ms["id"] if active_ms else ""
+    arc_ids = [aid for aid, spec in specs.items() if _arc_allowed(spec, active_id, reached_ms)]
+    if not arc_ids:
+        return ""
+
     owner = str(owner_name or "").strip().lower()
     day_ord = today.toordinal() - _EPOCH_2024
-    arc_ids = list(arcs.keys())
     focus_idx = _crc32(f"{owner}:{today.isoformat()}:focus") % len(arc_ids)
-    lines = ["[OIT_LIFE_ARC] 你近期的个人生活进展(自然融入闲聊或主动话题，勿透露机制或编号):"]
+    lines = ["[OIT_LIFE_ARC] 你近期的个人生活进展(自然融入闲聊或主动话题，活动结束后自动切换新项，勿透露机制或编号):"]
     for idx, arc_id in enumerate(arc_ids):
-        lo, hi, stages = arcs[arc_id]
+        spec = specs[arc_id]
+        lo, hi, stages, topics = spec["min_days"], spec["max_days"], spec["stages"], spec["topics"]
         span = lo + (_crc32(f"{owner}:{arc_id}:span") % (hi - lo + 1))
         offset = _crc32(f"{owner}:{arc_id}:off") % span
-        pos = (day_ord + offset) % span
+        total = day_ord + offset
+        cycle = total // span
+        pos = total % span
         stage_idx = min(len(stages) - 1, (pos * len(stages)) // span)
+        stage_text = stages[stage_idx]
+        transition = ""
+        if topics:
+            cur_topic = topics[_pick_topic_index(owner, arc_id, cycle, len(topics))]
+            stage_text = stage_text.replace("{topic}", cur_topic)
+            if pos == 0:
+                prev_topic = topics[_pick_topic_index(owner, arc_id, cycle - 1, len(topics))]
+                transition = f" [刚开启新项，上一项「{prev_topic}」已收尾]"
+            elif pos == span - 1:
+                transition = " [今日收尾，完成后将开启下一项]"
+        else:
+            if pos == 0:
+                transition = " [新轮次开启，换新内容勿重复上轮]"
+            elif pos == span - 1:
+                transition = " [今日收尾，完成后将开启下一项]"
         mark = "★今日焦点 " if idx == focus_idx else ""
-        lines.append(f"- {mark}{arc_id}(第{pos + 1}/{span}天): {stages[stage_idx]}")
+        lines.append(f"- {mark}{arc_id}(第{pos + 1}/{span}天): {stage_text}{transition}")
     return "\n".join(lines)
 
 
@@ -272,8 +402,9 @@ def realism_note(
     cond_days: dict,
     share_enabled: bool,
 ) -> str:
-    """拼装三项拟真增强的紧凑动态块；未命中或未声明模板时返回空字符串。"""
+    """拼装拟真增强与动态时间线的紧凑动态块；未命中或未声明模板时返回空字符串。"""
     blocks = [
+        persona_evolution_note(persona_text, today),
         life_arcs_note(persona_text, owner_name, today),
         weekly_trend_note(persona_text, cond_days, today, share_enabled),
         callback_note(persona_text, mem_live, today),

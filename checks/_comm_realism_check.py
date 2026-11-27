@@ -10,11 +10,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from comm import Comm
-from comm.comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_ROUTINE
+from comm.comm_builtin import BUILTIN_PERSONAS, CHARLOTTE_ROUTINE, DEFAULT_PERSONA, DEFAULT_ROUTINE, GEMINA_ROUTINE
+from comm.comm_memory import strip_machine_template_blocks
 from comm.comm_realism import (
     anti_repeat_note,
     callback_note,
     life_arcs_note,
+    persona_evolution_note,
     realism_note,
     weekly_trend_note,
 )
@@ -22,6 +24,9 @@ from comm.comm_rules import (
     anti_repeat_rules,
     callback_rules,
     life_arcs_rules,
+    life_arcs_specs,
+    persona_clock_rules,
+    persona_milestones_rules,
     trend_rules,
 )
 
@@ -34,25 +39,70 @@ def main():
     assert claudia.strip() == (ROOT / "personas" / "Claudia.txt").read_text(encoding="utf-8").strip()
 
     arcs = life_arcs_rules(tmpl)
-    assert len(arcs) == 4 and "piano_piece" in arcs and "reading_book" in arcs
+    assert len(arcs) == 6 and "piano_piece" in arcs and "reading_book" in arcs and "uni_study" in arcs
+    assert persona_clock_rules(tmpl) == {"birth": "2008-04-12"}
+    assert persona_clock_rules(BUILTIN_PERSONAS[GEMINA_ROUTINE]) == {"birth": "2007-06-02"}
+    assert persona_clock_rules(BUILTIN_PERSONAS[CHARLOTTE_ROUTINE]) == {"birth": "2004-11-30"}
+    claudia_ms = persona_milestones_rules(tmpl)
+    assert len(claudia_ms) >= 3 and claudia_ms[0]["id"] == "post_gaokao_summer" and claudia_ms[1]["id"] == "university_y1"
     assert trend_rules(tmpl) == {"window": 7, "min_days": 3, "delta_pct": 15}
     assert callback_rules(tmpl) == {"lookahead_days": 0, "expire_days": 2, "max_due": 2}
     ar = anti_repeat_rules(tmpl)
     assert ar == {"window": 16, "min_hits": 3, "max_items": 6, "forbid": ("接住", "记下")}
 
     # 非法格式整组拒绝
+    assert persona_clock_rules("[persona:clock]\nbirth:2026-02-30\n[/persona:clock]") is None
+    assert persona_milestones_rules("[persona:milestones]\nbad:[2026-06-09] 缺少竖线\n[/persona:milestones]") == []
     assert life_arcs_rules("[life:arcs]\nbad:[9,5] a | b\n[/life:arcs]") == {}
     assert life_arcs_rules("[life:arcs]\nbad:[3,5] only_one\n[/life:arcs]") == {}
+    assert life_arcs_rules("[life:arcs]\nbad:[3,5] only_one_topic >> a | b\n[/life:arcs]") == {}
     assert trend_rules("[trend]\nwindow:99\n[/trend]") is None
     assert callback_rules("[callback]\nexpire_days:0\n[/callback]") is None
     assert anti_repeat_rules("[anti_repeat]\nwindow:2\n[/anti_repeat]") is None
     assert life_arcs_rules("") == {} and trend_rules("") is None and callback_rules("") is None and anti_repeat_rules("") is None
 
-    # 2. 角色慢变量生活线：确定性 & 跨天连续推进
+    # 1.5 动态年龄、单向人生阶段与机读块剥离（不修改默认人设正文）
+    evo_bday = persona_evolution_note(tmpl, date(2026, 4, 12))
+    assert "[OIT_PERSONA_EVOLUTION]" in evo_bday and "18岁" in evo_bday and "今天正好是你18岁生日" in evo_bday, evo_bday
+    evo_pre = persona_evolution_note(tmpl, date(2026, 6, 1))
+    assert "距离「高考后暑假」（2026-06-09）还有8天" in evo_pre and "当前人生阶段:" not in evo_pre, evo_pre
+    evo_summer = persona_evolution_note(tmpl, date(2026, 6, 15))
+    assert "当前人生阶段: 高考后暑假（自 2026-06-09 起）" in evo_summer, evo_summer
+    evo_uni = persona_evolution_note(tmpl, date(2027, 4, 12))
+    assert "19岁" in evo_uni and "当前人生阶段: 大学一年级（自 2026-09-01 起）" in evo_uni, evo_uni
+    assert "18 岁" in claudia, "原始默认人设正文应保持初始切片不被改写"
+    stripped = strip_machine_template_blocks(tmpl)
+    assert "[persona:clock]" not in stripped and "[persona:milestones]" not in stripped and "[life:arcs]" not in stripped
+
+    # 2. 角色慢变量生活线：确定性、阶段过滤 & 结束后自动更新主题
     d0 = date(2026, 11, 24)
     n0 = life_arcs_note(tmpl, "Claudia.txt", d0)
     assert n0 == life_arcs_note(tmpl, "claudia.txt", d0), "同日同角色输出必须完全确定"
     assert "[OIT_LIFE_ARC]" in n0 and "★今日焦点 " in n0
+    assert "exam_prep(" not in n0 and "summer_transition(" not in n0 and "uni_study(" in n0, "大学阶段应自动切到大学生活线"
+    n_pre = life_arcs_note(tmpl, "Claudia.txt", date(2026, 6, 1))
+    assert "exam_prep(" in n_pre and "uni_study(" not in n_pre, "高考前应保留 exam_prep 并隐藏 uni_study"
+    n_sum = life_arcs_note(tmpl, "Claudia.txt", date(2026, 6, 15))
+    assert "summer_transition(" in n_sum and "exam_prep(" not in n_sum and "uni_study(" not in n_sum
+
+    # 连续推进跨完整周期：确认今日收尾标注 + 次日自动切换新主题且不与上轮重复
+    piano_topics = life_arcs_specs(tmpl)["piano_piece"]["topics"]
+    found_end, found_new = False, False
+    for i in range(15):
+        day_note = life_arcs_note(tmpl, "Claudia.txt", d0 + timedelta(days=i))
+        piano_line = next(line for line in day_note.splitlines() if "piano_piece(" in line)
+        if "[今日收尾，完成后将开启下一项]" in piano_line:
+            found_end = True
+            next_note = life_arcs_note(tmpl, "Claudia.txt", d0 + timedelta(days=i + 1))
+            next_line = next(line for line in next_note.splitlines() if "piano_piece(" in line)
+            assert "[刚开启新项，上一项「" in next_line, next_line
+            cur_t = next(t for t in piano_topics if f"《{t}》" in next_line)
+            prev_t = next(t for t in piano_topics if f"上一项「{t}」" in next_line)
+            assert cur_t != prev_t, f"结束后应自动切换不同主题: {next_line}"
+            found_new = True
+            break
+    assert found_end and found_new, "15 天内应观察到长期活动收尾并自动切换新主题"
+
     seen_stages = {life_arcs_note(tmpl, "Claudia.txt", d0 + timedelta(days=i)) for i in range(12)}
     assert len(seen_stages) >= 4, "跨天应持续演进阶段"
     assert life_arcs_note("无生活线模板", "Assistant.txt", d0) == ""
@@ -132,11 +182,11 @@ def main():
     kt_rules = (ROOT / "Android version/app/src/main/java/com/obliphur/oit/core/CommRules.kt").read_text(encoding="utf-8")
     kt_realism = (ROOT / "Android version/app/src/main/java/com/obliphur/oit/core/CommRealism.kt").read_text(encoding="utf-8")
     kt_comm = (ROOT / "Android version/app/src/main/java/com/obliphur/oit/core/Comm.kt").read_text(encoding="utf-8")
-    for token in ("fun lifeArcs(", "fun trend(", "fun callback(", "fun antiRepeat("):
+    for token in ("fun personaClock(", "fun personaMilestones(", "fun lifeArcSpecs(", "fun lifeArcs(", "fun trend(", "fun callback(", "fun antiRepeat("):
         assert token in kt_rules, f"CommRules.kt 缺少 {token}"
-    for token in ("object CommRealism", "[OIT_LIFE_ARC]", "[OIT_WEEKLY_TREND:", "[OIT_CALLBACK_DUE]", "[OIT_ANTI_REPEAT:"):
+    for token in ("object CommRealism", "[OIT_PERSONA_EVOLUTION]", "[OIT_LIFE_ARC]", "[OIT_WEEKLY_TREND:", "[OIT_CALLBACK_DUE]", "[OIT_ANTI_REPEAT:"):
         assert token in kt_realism, f"CommRealism.kt 缺少 {token}"
-    assert "CommRealism.realismNote(" in kt_comm
+    assert "CommRealism.realismNote(" in kt_comm and "persona:clock" in kt_comm and "persona:milestones" in kt_comm
 
     print("comm_realism_check OK")
 

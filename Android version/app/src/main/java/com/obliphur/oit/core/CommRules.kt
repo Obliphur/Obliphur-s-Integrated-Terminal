@@ -213,27 +213,100 @@ object CommRules {
         return if (enabled.isEmpty()) null else Conditions(out, enabled)
     }
 
+    data class PersonaClock(val birth: String)
+    data class PersonaMilestone(val id: String, val date: String, val label: String, val summary: String)
     data class LifeArc(val minDays: Int, val maxDays: Int, val stages: List<String>)
+    data class LifeArcSpec(
+        val id: String,
+        val minDays: Int,
+        val maxDays: Int,
+        val stages: List<String>,
+        val topics: List<String> = emptyList(),
+        val whenMode: String = "",
+        val whenStages: List<String> = emptyList()
+    )
     data class TrendConfig(val window: Int = 7, val minDays: Int = 3, val deltaPct: Int = 15)
     data class CallbackConfig(val lookaheadDays: Int = 0, val expireDays: Int = 2, val maxDue: Int = 2)
     data class AntiRepeatConfig(val window: Int = 16, val minHits: Int = 3, val maxItems: Int = 6, val forbid: List<String> = emptyList())
 
-    /** 角色慢变量生活线：id:[min_days,max_days] 阶段1 | 阶段2 | ...；非法项使整组无效。 */
-    fun lifeArcs(text: String): Map<String, LifeArc> {
-        val out = linkedMapOf<String, LifeArc>()
-        val pattern = Regex("""([a-z_]{1,32})\s*[:：]\s*\[\s*(\d{1,2})\s*[,，]\s*(\d{1,2})\s*\]\s*(\S.*)""")
+    private fun parseIsoDate(raw: String): String? {
+        val m = Regex("""(\d{4})-(\d{2})-(\d{2})""").matchEntire(raw.trim()) ?: return null
+        val y = m.groupValues[1].toInt()
+        val mo = m.groupValues[2].toInt()
+        val d = m.groupValues[3].toInt()
+        if (y !in 1900..2100) return null
+        return runCatching { java.time.LocalDate.of(y, mo, d); String.format(java.util.Locale.US, "%04d-%02d-%02d", y, mo, d) }.getOrNull()
+    }
+
+    /** 动态年龄与生日配置 [persona:clock]：birth:YYYY-MM-DD；缺省或非法返回 null。 */
+    fun personaClock(text: String): PersonaClock? {
+        val entries = lines(text, "persona:clock")
+        if (entries.isEmpty()) return null
+        var birth: String? = null
+        for (line in entries) {
+            val pair = line.split(Regex("[:：]"), limit = 2).map { it.trim() }
+            if (pair.size != 2 || !pair[0].equals("birth", ignoreCase = true) || birth != null) return null
+            birth = parseIsoDate(pair[1]) ?: return null
+        }
+        return birth?.let { PersonaClock(it) }
+    }
+
+    /** 单向人生里程碑 [persona:milestones]：stage_id:[YYYY-MM-DD] 标签 | 状态说明；非法项使整组无效。 */
+    fun personaMilestones(text: String): List<PersonaMilestone> {
+        val out = mutableListOf<PersonaMilestone>()
+        val seen = mutableSetOf<String>()
+        val pattern = Regex("""([a-z][a-z0-9_]{0,31})\s*[:：]\s*\[\s*(\d{4}-\d{2}-\d{2})\s*\]\s*(\S.*)""")
+        for (line in lines(text, "persona:milestones")) {
+            val m = pattern.matchEntire(line) ?: return emptyList()
+            val id = m.groupValues[1]
+            if (!seen.add(id)) return emptyList()
+            val iso = parseIsoDate(m.groupValues[2]) ?: return emptyList()
+            val parts = m.groupValues[3].split('|', limit = 2).map { it.trim() }
+            if (parts.size != 2 || parts[0].isEmpty() || parts[1].isEmpty()) return emptyList()
+            out.add(PersonaMilestone(id, iso, parts[0].take(40), parts[1].take(240)))
+        }
+        out.sortWith(compareBy<PersonaMilestone> { it.date }.thenBy { it.id })
+        return out
+    }
+
+    /** 角色慢变量生活线完整解析：支持可选阶段门控 (@before/@since/@stage) 与主题池自动轮换 (主题1;主题2 >> 阶段1 | 阶段2)。 */
+    fun lifeArcSpecs(text: String): Map<String, LifeArcSpec> {
+        val out = linkedMapOf<String, LifeArcSpec>()
+        val pattern = Regex(
+            """([a-z_]{1,32})(?:\(\s*@(before|since|stage)\s*[:：]\s*([a-z0-9_,\s]+)\s*\))?\s*[:：]\s*\[\s*(\d{1,2})\s*[,，]\s*(\d{1,2})\s*\]\s*(\S.*)"""
+        )
         for (line in lines(text, "life:arcs")) {
             val m = pattern.matchEntire(line) ?: return emptyMap()
             val id = m.groupValues[1]
             if (id in out) return emptyMap()
-            val lo = m.groupValues[2].toInt()
-            val hi = m.groupValues[3].toInt()
-            val stages = m.groupValues[4].split('|').map { it.trim() }.filter { it.isNotEmpty() }
+            val whenMode = m.groupValues[2]
+            val whenStages = if (whenMode.isNotEmpty()) {
+                m.groupValues[3].split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            } else emptyList()
+            if (whenMode.isNotEmpty() && (whenStages.isEmpty() || ((whenMode == "before" || whenMode == "since") && whenStages.size != 1))) {
+                return emptyMap()
+            }
+            val lo = m.groupValues[4].toInt()
+            val hi = m.groupValues[5].toInt()
+            var body = m.groupValues[6].trim()
+            var topics = emptyList<String>()
+            val sepIdx = body.indexOf(">>")
+            if (sepIdx >= 0) {
+                val tRaw = body.substring(0, sepIdx)
+                topics = tRaw.split(Regex("[;；]")).map { it.trim() }.filter { it.isNotEmpty() }
+                if (topics.size !in 2..24) return emptyMap()
+                body = body.substring(sepIdx + 2).trim()
+            }
+            val stages = body.split('|').map { it.trim() }.filter { it.isNotEmpty() }
             if (lo !in 1..60 || hi !in lo..60 || stages.size !in 2..12) return emptyMap()
-            out[id] = LifeArc(lo, hi, stages)
+            out[id] = LifeArcSpec(id, lo, hi, stages, topics, whenMode, whenStages)
         }
         return out
     }
+
+    /** 角色慢变量生活线兼容接口。 */
+    fun lifeArcs(text: String): Map<String, LifeArc> =
+        lifeArcSpecs(text).mapValues { (_, s) -> LifeArc(s.minDays, s.maxDays, s.stages) }
 
     private fun intSection(text: String, section: String, bounds: Map<String, IntRange>, defaults: Map<String, Int>): Map<String, Int>? {
         val entries = lines(text, section)

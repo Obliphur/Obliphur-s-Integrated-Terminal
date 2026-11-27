@@ -27,6 +27,8 @@ MACHINE_TEMPLATE_BLOCKS = (
     "tension:events",
     "tension:relationship",
     "life:arcs",
+    "persona:clock",
+    "persona:milestones",
     "trend",
     "callback",
     "anti_repeat",

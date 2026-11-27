@@ -219,19 +219,108 @@ def condition_rules(text, strict=False):
     return (out, enabled) if enabled else None
 
 
-def life_arcs_rules(text):
-    """角色慢变量生活线：id:[min_days,max_days] 阶段1 | 阶段2 | ...；非法项使整组无效。"""
+def _parse_iso_date(raw):
+    """校验 YYYY-MM-DD 合法日期；非法返回 None。"""
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", str(raw or "").strip())
+    if not m:
+        return None
+    y, mo, d = int(m[1]), int(m[2]), int(m[3])
+    if not (1900 <= y <= 2100):
+        return None
+    try:
+        from datetime import date as _date
+        _date(y, mo, d)
+    except ValueError:
+        return None
+    return f"{y:04d}-{mo:02d}-{d:02d}"
+
+
+def persona_clock_rules(text):
+    """动态年龄与生日配置 [persona:clock]：birth:YYYY-MM-DD；缺省或非法返回 None。"""
+    lines = rule_lines(text, "persona:clock")
+    if not lines:
+        return None
     out = {}
+    for line in lines:
+        pair = re.split(r"[:：]", line, maxsplit=1)
+        if len(pair) != 2:
+            return None
+        key, raw = pair[0].strip().lower(), pair[1].strip()
+        if key != "birth" or key in out:
+            return None
+        iso = _parse_iso_date(raw)
+        if not iso:
+            return None
+        out["birth"] = iso
+    return out if "birth" in out else None
+
+
+def persona_milestones_rules(text):
+    """单向人生里程碑 [persona:milestones]：stage_id:[YYYY-MM-DD] 标签 | 状态说明；非法项使整组无效。"""
+    out = []
+    seen = set()
+    for line in rule_lines(text, "persona:milestones"):
+        m = re.fullmatch(r"([a-z][a-z0-9_]{0,31})\s*[:：]\s*\[\s*(\d{4}-\d{2}-\d{2})\s*\]\s*(\S.*)", line)
+        if not m or m[1] in seen:
+            return []
+        iso = _parse_iso_date(m[2])
+        if not iso:
+            return []
+        parts = [p.strip() for p in m[3].split("|", 1)]
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            return []
+        seen.add(m[1])
+        out.append({"id": m[1], "date": iso, "label": parts[0][:40], "summary": parts[1][:240]})
+    out.sort(key=lambda item: (item["date"], item["id"]))
+    return out
+
+
+def life_arcs_specs(text):
+    """角色慢变量生活线完整解析：支持可选阶段门控 (@before/@since/@stage) 与主题池自动轮换 (主题1;主题2 >> 阶段1 | 阶段2)。"""
+    out = {}
+    pat = re.compile(
+        r"([a-z_]{1,32})(?:\(\s*@(before|since|stage)\s*[:：]\s*([a-z0-9_,\s]+)\s*\))?\s*[:：]\s*"
+        r"\[\s*(\d{1,2})\s*[,，]\s*(\d{1,2})\s*\]\s*(\S.*)"
+    )
     for line in rule_lines(text, "life:arcs"):
-        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*\[\s*(\d{1,2})\s*[,，]\s*(\d{1,2})\s*\]\s*(\S.*)", line)
+        m = pat.fullmatch(line)
         if not m or m[1] in out:
             return {}
-        lo, hi = int(m[2]), int(m[3])
-        stages = tuple(part.strip() for part in m[4].split("|") if part.strip())
+        arc_id = m[1]
+        when_mode = m[2] or ""
+        when_stages = tuple(s.strip() for s in (m[3] or "").split(",") if s.strip()) if when_mode else ()
+        if when_mode and (not when_stages or (when_mode in ("before", "since") and len(when_stages) != 1)):
+            return {}
+        lo, hi = int(m[4]), int(m[5])
+        body = m[6].strip()
+        topics = ()
+        if ">>" in body:
+            t_raw, s_raw = body.split(">>", 1)
+            topics = tuple(t.strip() for t in re.split(r"[;；]", t_raw) if t.strip())
+            if not (2 <= len(topics) <= 24):
+                return {}
+            body = s_raw.strip()
+        stages = tuple(part.strip() for part in body.split("|") if part.strip())
         if not (1 <= lo <= hi <= 60) or not (2 <= len(stages) <= 12):
             return {}
-        out[m[1]] = (lo, hi, stages)
+        out[arc_id] = {
+            "id": arc_id,
+            "min_days": lo,
+            "max_days": hi,
+            "stages": stages,
+            "topics": topics,
+            "when_mode": when_mode,
+            "when_stages": when_stages,
+        }
     return out
+
+
+def life_arcs_rules(text):
+    """角色慢变量生活线兼容接口：返回 {arc_id: (min_days, max_days, stages)}；非法项使整组无效。"""
+    return {
+        arc_id: (spec["min_days"], spec["max_days"], spec["stages"])
+        for arc_id, spec in life_arcs_specs(text).items()
+    }
 
 
 def _int_section(text, section, bounds, defaults):

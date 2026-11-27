@@ -34,22 +34,156 @@ object CommRealism {
         return c.value and 0xFFFFFFFFL
     }
 
+    private fun safeBirthdayInYear(birth: LocalDate, year: Int): LocalDate =
+        runCatching { LocalDate.of(year, birth.monthValue, birth.dayOfMonth) }.getOrElse { LocalDate.of(year, 2, 28) }
+
+    private data class MilestoneState(
+        val active: CommRules.PersonaMilestone?,
+        val reached: Set<String>,
+        val upcoming: CommRules.PersonaMilestone?
+    )
+
+    private fun milestoneState(milestones: List<CommRules.PersonaMilestone>, today: LocalDate): MilestoneState {
+        val reached = mutableSetOf<String>()
+        var active: CommRules.PersonaMilestone? = null
+        var upcoming: CommRules.PersonaMilestone? = null
+        val todayIso = today.toString()
+        for (item in milestones) {
+            if (item.date <= todayIso) {
+                reached.add(item.id)
+                active = item
+            } else if (upcoming == null) {
+                upcoming = item
+            }
+        }
+        return MilestoneState(active, reached, upcoming)
+    }
+
+    private fun arcAllowed(spec: CommRules.LifeArcSpec, activeId: String, reached: Set<String>): Boolean = when (spec.whenMode) {
+        "" -> true
+        "before" -> spec.whenStages.firstOrNull()?.let { it !in reached } ?: true
+        "since" -> spec.whenStages.firstOrNull()?.let { it in reached } ?: true
+        "stage" -> activeId.isNotEmpty() && activeId in spec.whenStages
+        else -> true
+    }
+
+    private fun blockShuffle(owner: String, arcId: String, block: Long, count: Int): IntArray {
+        val order = IntArray(count) { it }
+        for (i in count - 1 downTo 1) {
+            val j = (crc32("$owner:$arcId:shuf:$block:$i") % (i + 1).toLong()).toInt()
+            val tmp = order[i]
+            order[i] = order[j]
+            order[j] = tmp
+        }
+        return order
+    }
+
+    private fun pickTopicIndex(owner: String, arcId: String, cycle: Long, count: Int): Int {
+        if (count <= 1) return 0
+        if (count == 2) {
+            val base = (crc32("$owner:$arcId:t0") % 2L)
+            return Math.floorMod(cycle + base, 2L).toInt()
+        }
+        val block = Math.floorDiv(cycle, count.toLong())
+        val slot = Math.floorMod(cycle, count.toLong()).toInt()
+        val order = blockShuffle(owner, arcId, block, count)
+        if (block > 0L) {
+            val prevLast = blockShuffle(owner, arcId, block - 1L, count).last()
+            if (order[0] == prevLast) {
+                val tmp = order[0]
+                order[0] = order[1]
+                order[1] = tmp
+            }
+        }
+        return order[slot]
+    }
+
+    fun personaEvolutionNote(text: String, today: LocalDate): String {
+        val clock = CommRules.personaClock(text)
+        val milestones = CommRules.personaMilestones(text)
+        if (clock == null && milestones.isEmpty()) return ""
+
+        val lines = mutableListOf(
+            "[OIT_PERSONA_EVOLUTION] 角色当前时间线状态" +
+                "(初始人设正文仅代表初始设定，凡年龄、学历/身份或近况与此处冲突时，一律以本区块为准，自然融入言行勿透露机制):"
+        )
+        var hasItem = false
+
+        if (clock != null) {
+            val birth = LocalDate.parse(clock.birth)
+            val bdayThis = safeBirthdayInYear(birth, today.year)
+            val age = today.year - birth.year - (if (today.isBefore(bdayThis)) 1 else 0)
+            if (age >= 0) {
+                val bdayHint = if (today == bdayThis) {
+                    "，今天正好是你${age}岁生日"
+                } else {
+                    val nextBday = if (today.isBefore(bdayThis)) bdayThis else safeBirthdayInYear(birth, today.year + 1)
+                    val daysLeft = ChronoUnit.DAYS.between(today, nextBday).toInt()
+                    if (daysLeft in 1..7) "，距离你${age + 1}岁生日还有${daysLeft}天" else ""
+                }
+                lines.add(String.format(Locale.US, "- 当前年龄: %d岁（生日 %02d-%02d%s）", age, birth.monthValue, birth.dayOfMonth, bdayHint))
+                hasItem = true
+            }
+        }
+
+        if (milestones.isNotEmpty()) {
+            val ms = milestoneState(milestones, today)
+            ms.active?.let {
+                lines.add("- 当前人生阶段: ${it.label}（自 ${it.date} 起）— ${it.summary}")
+                hasItem = true
+            }
+            ms.upcoming?.let {
+                val daysTo = ChronoUnit.DAYS.between(today, LocalDate.parse(it.date)).toInt()
+                if (daysTo in 1..14) {
+                    lines.add("- 临近节点: 距离「${it.label}」（${it.date}）还有${daysTo}天")
+                    hasItem = true
+                }
+            }
+        }
+
+        return if (hasItem) lines.joinToString("\n") else ""
+    }
+
     fun lifeArcsNote(text: String, ownerName: String, today: LocalDate): String {
-        val arcs = CommRules.lifeArcs(text)
-        if (arcs.isEmpty()) return ""
+        val specs = CommRules.lifeArcSpecs(text)
+        if (specs.isEmpty()) return ""
+        val ms = milestoneState(CommRules.personaMilestones(text), today)
+        val activeId = ms.active?.id ?: ""
+        val ids = specs.entries.filter { arcAllowed(it.value, activeId, ms.reached) }.map { it.key }
+        if (ids.isEmpty()) return ""
+
         val owner = ownerName.trim().lowercase(Locale.ROOT)
         val dayOrd = ChronoUnit.DAYS.between(epoch2024, today)
-        val ids = arcs.keys.toList()
         val focusIdx = (crc32("$owner:$today:focus") % ids.size.toLong()).toInt()
-        val lines = mutableListOf("[OIT_LIFE_ARC] 你近期的个人生活进展(自然融入闲聊或主动话题，勿透露机制或编号):")
+        val lines = mutableListOf("[OIT_LIFE_ARC] 你近期的个人生活进展(自然融入闲聊或主动话题，活动结束后自动切换新项，勿透露机制或编号):")
         ids.forEachIndexed { idx, arcId ->
-            val arc = arcs.getValue(arcId)
-            val span = arc.minDays + (crc32("$owner:$arcId:span") % (arc.maxDays - arc.minDays + 1).toLong()).toInt()
+            val spec = specs.getValue(arcId)
+            val span = spec.minDays + (crc32("$owner:$arcId:span") % (spec.maxDays - spec.minDays + 1).toLong()).toInt()
             val offset = (crc32("$owner:$arcId:off") % span.toLong()).toInt()
-            val pos = Math.floorMod(dayOrd + offset, span.toLong()).toInt()
-            val stageIdx = minOf(arc.stages.size - 1, (pos * arc.stages.size) / span)
+            val total = dayOrd + offset.toLong()
+            val cycle = Math.floorDiv(total, span.toLong())
+            val pos = Math.floorMod(total, span.toLong()).toInt()
+            val stageIdx = minOf(spec.stages.size - 1, (pos * spec.stages.size) / span)
+            var stageText = spec.stages[stageIdx]
+            var transition = ""
+            if (spec.topics.isNotEmpty()) {
+                val curTopic = spec.topics[pickTopicIndex(owner, arcId, cycle, spec.topics.size)]
+                stageText = stageText.replace("{topic}", curTopic)
+                if (pos == 0) {
+                    val prevTopic = spec.topics[pickTopicIndex(owner, arcId, cycle - 1L, spec.topics.size)]
+                    transition = " [刚开启新项，上一项「$prevTopic」已收尾]"
+                } else if (pos == span - 1) {
+                    transition = " [今日收尾，完成后将开启下一项]"
+                }
+            } else {
+                if (pos == 0) {
+                    transition = " [新轮次开启，换新内容勿重复上轮]"
+                } else if (pos == span - 1) {
+                    transition = " [今日收尾，完成后将开启下一项]"
+                }
+            }
             val mark = if (idx == focusIdx) "★今日焦点 " else ""
-            lines.add("- $mark$arcId(第${pos + 1}/${span}天): ${arc.stages[stageIdx]}")
+            lines.add("- $mark$arcId(第${pos + 1}/${span}天): $stageText$transition")
         }
         return lines.joinToString("\n")
     }
@@ -235,6 +369,7 @@ object CommRealism {
         condDays: Map<String, Pair<Long, Long>>,
         shareEnabled: Boolean
     ): String = listOf(
+        personaEvolutionNote(personaText, today),
         lifeArcsNote(personaText, ownerName, today),
         weeklyTrendNote(personaText, condDays, today, shareEnabled),
         callbackNote(personaText, memLive, today),
