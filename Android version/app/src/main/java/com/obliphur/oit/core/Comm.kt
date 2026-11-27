@@ -133,6 +133,28 @@ object BuiltinPersonas {
     const val CHARLOTTE_PROFILE = "Charlotte_profile.txt"
     const val CHARLOTTE_EXAMPLE = "Charlotte_example.txt"
     val CHARLOTTE_FILES = listOf(CHARLOTTE_PROFILE, CHARLOTTE, CHARLOTTE_BACKGROUND, CHARLOTTE_ROUTINE, CHARLOTTE_EXAMPLE)
+    val CLAUDIA_LEGACY_CRCS: Map<String, Set<String>> = mapOf(
+        DEFAULT to setOf(
+            "b8b1d29f", "8bd4d4f4", "6ef89cdd", "c7b06288", "473ac3ff", "f2b41000", "98ede555",
+            "96791c72", "9f73886f", "15c4af7a", "cd3c20d5", "c4bd6bfb", "c40fa8d9", "b11a9742",
+            "e17701d4", "d63e8973", "99835977", "16e5436c", "6314da6a", "fc15d985", "e44d8a3a",
+            "4fa4f4d2", "dda3b200", "e99f0ba1", "c259fb95",
+        ),
+        BACKGROUND to setOf(
+            "49c03537", "00934b78", "f2f49271", "e159829d", "8986d738", "238afd1c", "bfb1acba",
+            "4e2e879b", "0cab589f", "16ca34a2", "a6ea58af", "82da83fa", "cf900c84", "38d7b248",
+        ),
+        ROUTINE to setOf(
+            "1502f6af", "4bb4d149", "2905eb90", "4cfdb381", "8dd51183", "0ab05266", "df1c83bc",
+            "d39d64be", "826c34ed", "7b788ec6", "86f34714", "7a5e92bb", "e341c184", "7a5b0145",
+            "9b1951d3", "8fe3a647", "bf0f75cd", "4688aac2",
+        ),
+        EXAMPLE to setOf(
+            "f37bb9c3", "c4fa9ccb", "dd8f5c06", "a69750a3", "82bace4d", "f9a075dd", "3e8716a5",
+            "4ccf7f96", "99437f40", "195b0714", "582cb919", "cabeebf4", "9221594a", "bd297c97",
+            "66818bdd", "5ecc41a9", "076cec6a", "e16c9647",
+        ),
+    )
     val EXTRA_BUILTIN_LEGACY_CRCS: Map<String, Set<String>> = mapOf(
         GEMINA to setOf("d83abf94", "009d763c", "56f0825b", "13832870"),
         GEMINA_BACKGROUND to setOf("045adc51", "3dcb9b7b"),
@@ -3961,9 +3983,14 @@ class Comm(
         val f = claudiaFile()
         if (!f.isFile) return
         val current = runCatching { PersonaCodec.read(f) }.getOrNull() ?: return
-        if (current.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim()) return
-        if (CommText.nativePersonaText(current).trim() != CommText.nativePersonaText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)).trim() &&
-            current.trim() !in BuiltinPersonas.CLAUDIA_LEGACIES.map { it.trim() } && textCrc(current) != claudiaBase) return   // 用户改过的磁盘文件不动
+        val curLf = current.replace("\r\n", "\n").trim()
+        val builtinLf = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).replace("\r\n", "\n").trim()
+        if (curLf == builtinLf) return
+        val curCrc = textCrc(current)
+        if (CommText.nativePersonaText(curLf).trim() != CommText.nativePersonaText(builtinLf).trim() &&
+            curLf !in BuiltinPersonas.CLAUDIA_LEGACIES.map { it.replace("\r\n", "\n").trim() } &&
+            curCrc != claudiaBase &&
+            curCrc !in BuiltinPersonas.CLAUDIA_LEGACY_CRCS[BuiltinPersonas.DEFAULT].orEmpty()) return   // 用户改过的磁盘文件不动
         writeClaudiaBuiltin(false)
         claudiaModified = false
         claudiaNotified = ""
@@ -3990,10 +4017,15 @@ class Comm(
         val rf = File(personas, fname)
         val cur = if (rf.isFile) runCatching { PersonaCodec.read(rf) }.getOrNull() else null
         val builtin = BuiltinPersonas.ALL.getValue(fname)
-        if (cur != null && cur.isNotBlank() && (cur.trim() == builtin.trim() ||
-                (cur.trim() !in legacies.map { it.trim() } && textCrc(cur) != base &&
-                    java.security.MessageDigest.getInstance("SHA-256").digest(cur.replace("\r\n", "\n").trim().toByteArray(Charsets.UTF_8))
-                        .joinToString("") { "%02x".format(it) } !in legacyHashes))) return
+        if (cur != null && cur.isNotBlank()) {
+            val curLf = cur.replace("\r\n", "\n").trim()
+            val curCrc = textCrc(cur)
+            if (curLf == builtin.replace("\r\n", "\n").trim() ||
+                (curLf !in legacies.map { it.replace("\r\n", "\n").trim() } && curCrc != base &&
+                    curCrc !in BuiltinPersonas.CLAUDIA_LEGACY_CRCS[fname].orEmpty() &&
+                    java.security.MessageDigest.getInstance("SHA-256").digest(curLf.toByteArray(Charsets.UTF_8))
+                        .joinToString("") { "%02x".format(it) } !in legacyHashes)) return
+        }
         if (runCatching { PersonaCodec.write(rf, builtin) }.isFailure) return
         backupPersonaFile(fname)          // 记成"上次看到的样子": 不弹"修改人设"
         claudiaSig = null
@@ -4028,7 +4060,7 @@ class Comm(
         }
     }
 
-    private fun textCrc(text: String): String = "%08x".format(java.util.zip.CRC32().apply { update(text.trim().toByteArray(Charsets.UTF_8)) }.value)
+    private fun textCrc(text: String): String = "%08x".format(java.util.zip.CRC32().apply { update(text.replace("\r\n", "\n").trim().toByteArray(Charsets.UTF_8)) }.value)
 
     /** 记下默认人设的内置文件现在是不是内置版本: 是的话把这一版的校验值记成"上一次见到的内置版本".
      *  之后程序更新了内置版本, 文件只要还是 (或者用户改过又改回了) 这个旧版本, 就当没改过, 自动换成新版 ——
@@ -4036,15 +4068,15 @@ class Comm(
     private fun noteBuiltinBase() {
         var changed = false
         val cur = readPersonaRaw(BuiltinPersonas.DEFAULT)
-        if (cur != null && cur.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim() && claudiaBase != textCrc(cur)) { claudiaBase = textCrc(cur); changed = true }
+        if (cur != null && cur.replace("\r\n", "\n").trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).replace("\r\n", "\n").trim() && claudiaBase != textCrc(cur)) { claudiaBase = textCrc(cur); changed = true }
         val rt = readPersonaRaw(BuiltinPersonas.ROUTINE)
-        if (rt != null && rt.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim() && routineBase != textCrc(rt)) { routineBase = textCrc(rt); changed = true }
+        if (rt != null && rt.replace("\r\n", "\n").trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).replace("\r\n", "\n").trim() && routineBase != textCrc(rt)) { routineBase = textCrc(rt); changed = true }
         val bg = readPersonaRaw(BuiltinPersonas.BACKGROUND)
-        if (bg != null && bg.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND).trim() && backgroundBase != textCrc(bg)) { backgroundBase = textCrc(bg); changed = true }
+        if (bg != null && bg.replace("\r\n", "\n").trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND).replace("\r\n", "\n").trim() && backgroundBase != textCrc(bg)) { backgroundBase = textCrc(bg); changed = true }
         val example = readPersonaRaw(BuiltinPersonas.EXAMPLE)
-        if (example != null && example.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE).trim() && exampleBase != textCrc(example)) { exampleBase = textCrc(example); changed = true }
+        if (example != null && example.replace("\r\n", "\n").trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE).replace("\r\n", "\n").trim() && exampleBase != textCrc(example)) { exampleBase = textCrc(example); changed = true }
         val profile = readPersonaRaw(BuiltinPersonas.PROFILE)
-        if (profile != null && profile.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE).trim() && profileBase != textCrc(profile)) { profileBase = textCrc(profile); changed = true }
+        if (profile != null && profile.replace("\r\n", "\n").trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE).replace("\r\n", "\n").trim() && profileBase != textCrc(profile)) { profileBase = textCrc(profile); changed = true }
         for (fname in BuiltinPersonas.GEMINA_FILES + BuiltinPersonas.CHARLOTTE_FILES) {
             val builtin = BuiltinPersonas.ALL[fname] ?: continue
             val raw = readPersonaRaw(fname) ?: continue

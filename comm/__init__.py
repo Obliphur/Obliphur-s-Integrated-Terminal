@@ -48,7 +48,7 @@ from .comm_builtin import (
     DEFAULT_PROFILE, EXAMPLE_LEGACY_HASHES,
     GEMINA_FILES, GEMINA_PERSONA, GEMINA_PROFILE,
     CHARLOTTE_FILES, CHARLOTTE_PERSONA, CHARLOTTE_PROFILE,
-    EXTRA_BUILTIN_LEGACY_CRCS,
+    CLAUDIA_LEGACY_CRCS, EXTRA_BUILTIN_LEGACY_CRCS,
 )
 from .comm_persona import is_profile_name, profile_files, other_profiles_text
 from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, MENTAL_WORDS, mental_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
@@ -1297,12 +1297,14 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             current = read_file(path)
         except (OSError, ValueError):
             return
-        if current.strip() == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip():
+        if current.replace("\r\n", "\n").strip() == BUILTIN_PERSONAS[DEFAULT_PERSONA].replace("\r\n", "\n").strip():
             return
-        normalized = native_persona_text(current).strip()
-        if (normalized != native_persona_text(BUILTIN_PERSONAS[DEFAULT_PERSONA]).strip()
-                and current.strip() not in {x.strip() for x in CLAUDIA_LEGACIES}
-                and self._text_crc(current) != self.cfg.get("claudia_base")):
+        normalized = native_persona_text(current).replace("\r\n", "\n").strip()
+        cur_crc = self._text_crc(current)
+        if (normalized != native_persona_text(BUILTIN_PERSONAS[DEFAULT_PERSONA]).replace("\r\n", "\n").strip()
+                and current.replace("\r\n", "\n").strip() not in {x.replace("\r\n", "\n").strip() for x in CLAUDIA_LEGACIES}
+                and cur_crc != self.cfg.get("claudia_base")
+                and cur_crc not in CLAUDIA_LEGACY_CRCS.get(DEFAULT_PERSONA, ())):
             return                                  # 用户改过的: 不动 (改回上一次见到的内置版本就算没改过, 见 _note_builtin_base)
         self._write_claudia_builtin(force=False)
         self._backup_persona_file(DEFAULT_PERSONA)
@@ -1339,10 +1341,15 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             return
         cur = self._read_persona_raw(fname)
         builtin = BUILTIN_PERSONAS[fname]
-        if cur is not None and cur.strip() and (cur.strip() == builtin.strip() or (
-                cur.strip() not in {x.strip() for x in legacies} and self._text_crc(cur) != self.cfg.get(key)
-                and sha256(cur.replace("\r\n", "\n").strip().encode("utf-8")).hexdigest() not in legacy_hashes)):
-            return
+        if cur is not None and cur.strip():
+            cur_lf = cur.replace("\r\n", "\n").strip()
+            cur_crc = self._text_crc(cur)
+            if (cur_lf == builtin.replace("\r\n", "\n").strip() or (
+                    cur_lf not in {x.replace("\r\n", "\n").strip() for x in legacies}
+                    and cur_crc != self.cfg.get(key)
+                    and cur_crc not in CLAUDIA_LEGACY_CRCS.get(fname, ())
+                    and sha256(cur_lf.encode("utf-8")).hexdigest() not in legacy_hashes)):
+                return
         try:
             write_file(os.path.join(self.personas, fname), builtin)
         except (OSError, ValueError):
@@ -1384,7 +1391,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
 
     @staticmethod
     def _text_crc(text: str) -> str:
-        return f"{zlib.crc32((text or '').strip().encode('utf-8')):08x}"
+        return f"{zlib.crc32((text or '').replace(chr(13) + chr(10), chr(10)).strip().encode('utf-8')):08x}"
 
     def _note_builtin_base(self):
         """记下默认人设的内置文件现在是不是内置版本: 是的话把这一版的校验值记成"上一次见到的内置版本".
@@ -1393,7 +1400,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         changed = False
         for name, key in ((DEFAULT_PERSONA, "claudia_base"), (DEFAULT_ROUTINE, "routine_base"), (DEFAULT_BACKGROUND, "background_base"), (DEFAULT_EXAMPLE, "example_base"), (DEFAULT_PROFILE, "profile_base")):
             cur = self._read_persona_raw(name)
-            if cur is not None and cur.strip() == BUILTIN_PERSONAS[name].strip() and self.cfg.get(key) != self._text_crc(cur):
+            if cur is not None and cur.replace("\r\n", "\n").strip() == BUILTIN_PERSONAS[name].replace("\r\n", "\n").strip() and self.cfg.get(key) != self._text_crc(cur):
                 self.cfg[key] = self._text_crc(cur)
                 changed = True
         bases = dict(self.cfg.get("builtin_bases")) if isinstance(self.cfg.get("builtin_bases"), dict) else {}

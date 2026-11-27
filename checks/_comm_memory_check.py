@@ -209,6 +209,10 @@ def main():
             assert "private_contact" in c_up2.burst_consent_rules_for(), "未修改的旧版 Gemina_templates 应自动升级补齐 [burst:consent]"
             with open(os.path.join(up_p, "Charlotte_templates.txt"), encoding="utf-8") as f:
                 assert f.read().strip() == "用户自定义的 Charlotte 模板", "用户手动改过的内置配套文件绝不能被覆盖"
+            # CRLF 归一化与 Claudia claudia_differs() 假阳性防护
+            c_up2.set_persona("Claudia.txt")
+            assert not c_up2.claudia_differs(), "默认 Claudia 不应误报与默认人设不同"
+            assert comm.Comm._text_crc("line1\r\nline2") == comm.Comm._text_crc("line1\nline2")
             c_up2.flush()
         finally:
             shutil.rmtree(up_tmp, ignore_errors=True)

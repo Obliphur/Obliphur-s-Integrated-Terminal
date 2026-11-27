@@ -1331,8 +1331,31 @@ CHARLOTTE_PROFILE = "Charlotte_profile.txt"
 CHARLOTTE_EXAMPLE = "Charlotte_example.txt"
 CHARLOTTE_FILES = (CHARLOTTE_PROFILE, CHARLOTTE_PERSONA, CHARLOTTE_BACKGROUND, CHARLOTTE_ROUTINE, CHARLOTTE_EXAMPLE)
 
-# 历史上曾内置发布过的 Gemina / Charlotte 文件 CRC32（按 LF 换行 strip 后计算），
-# 用于让老用户未手动修改过的旧版本自动升级到最新内置版本（如补齐 [burst:consent] 等）。
+# 历史上曾内置发布过的 Claudia / Gemina / Charlotte 文件 CRC32（按 LF 换行 strip 后计算），
+# 用于让老用户未手动修改过的旧版本自动升级到最新内置版本（避免跨版本升级后误报“与默认人设不同”）。
+CLAUDIA_LEGACY_CRCS = {
+    DEFAULT_PERSONA: (
+        "b8b1d29f", "8bd4d4f4", "6ef89cdd", "c7b06288", "473ac3ff", "f2b41000", "98ede555",
+        "96791c72", "9f73886f", "15c4af7a", "cd3c20d5", "c4bd6bfb", "c40fa8d9", "b11a9742",
+        "e17701d4", "d63e8973", "99835977", "16e5436c", "6314da6a", "fc15d985", "e44d8a3a",
+        "4fa4f4d2", "dda3b200", "e99f0ba1", "c259fb95",
+    ),
+    DEFAULT_BACKGROUND: (
+        "49c03537", "00934b78", "f2f49271", "e159829d", "8986d738", "238afd1c", "bfb1acba",
+        "4e2e879b", "0cab589f", "16ca34a2", "a6ea58af", "82da83fa", "cf900c84", "38d7b248",
+    ),
+    DEFAULT_ROUTINE: (
+        "1502f6af", "4bb4d149", "2905eb90", "4cfdb381", "8dd51183", "0ab05266", "df1c83bc",
+        "d39d64be", "826c34ed", "7b788ec6", "86f34714", "7a5e92bb", "e341c184", "7a5b0145",
+        "9b1951d3", "8fe3a647", "bf0f75cd", "4688aac2",
+    ),
+    DEFAULT_EXAMPLE: (
+        "f37bb9c3", "c4fa9ccb", "dd8f5c06", "a69750a3", "82bace4d", "f9a075dd", "3e8716a5",
+        "4ccf7f96", "99437f40", "195b0714", "582cb919", "cabeebf4", "9221594a", "bd297c97",
+        "66818bdd", "5ecc41a9", "076cec6a", "e16c9647",
+    ),
+}
+
 EXTRA_BUILTIN_LEGACY_CRCS = {
     GEMINA_PERSONA: ("d83abf94", "009d763c", "56f0825b", "13832870"),
     GEMINA_BACKGROUND: ("045adc51", "3dcb9b7b"),
