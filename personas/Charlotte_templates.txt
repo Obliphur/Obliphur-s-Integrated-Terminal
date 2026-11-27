@@ -134,6 +134,18 @@ burst_rate:2.0
 burst_end_shift:+18
 [/valence:burst]
 
+【爆发同意声明】
+# id:[档位] 说明文字（档位可选 3 或 4，缺省为 3；可在沟通页工具栏「🛡」随时管理或撤回，首次触发 BURST 时若未设置也会自动弹窗逐项询问）
+[burst:consent]
+intimate_pampering:[3] 成熟宠溺与温柔掌控式表达
+sharp_accountability:[3] 摘下客套后的锋利拆解与问责
+intense_physical:[3] 情绪强烈的近距离肢体互动与深吻
+stage_immersion:[3] 虚构舞台与角色扮演中的深度入戏
+scenario_roleplay:[3] 情景模拟中的文字扮演
+sensual_whisper:[4] 贴耳低语与呼吸感官氛围（轻度 NSFW）
+sensual_intimacy:[4] 感官微醺与亲密缠绵（深吻、轻咬与摩挲腰背）
+[/burst:consent]
+
 【真实事件的张力增长】
 # joint_hp_loss:[已定义的条件名,基础增量]，对应联合行动中的真实扣血事件。
 [tension:events]

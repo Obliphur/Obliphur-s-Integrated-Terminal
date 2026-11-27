@@ -546,12 +546,12 @@ fun CommScreen(go: (String) -> Unit) {
     } }
     if (askClear) Confirm(tr("清空"), tr("清空聊天记录?"), true, { askClear = false }) { comm.clear() }
     if (consentDlg) {
-        val rules = comm.burstConsentRulesFor()
-        if (rules.isNotEmpty()) {
+        val items = comm.burstConsentItemsFor()
+        if (items.isNotEmpty()) {
             BurstConsentDialog(
                 name = comm.aiName(),
                 pending = consentPending > 0L,
-                rules = rules,
+                items = items,
                 current = comm.burstConsentState(),
                 onDismiss = { consentDlg = false },
                 onConfirm = { choices ->
@@ -571,14 +571,18 @@ fun CommScreen(go: (String) -> Unit) {
 private fun BurstConsentDialog(
     name: String,
     pending: Boolean,
-    rules: LinkedHashMap<String, String>,
+    items: LinkedHashMap<String, com.obliphur.oit.core.CommRules.ConsentRule>,
     current: Map<String, Boolean>,
     onDismiss: () -> Unit,
     onConfirm: (Map<String, Boolean>) -> Unit,
 ) {
     val o = LocalOit.current
-    val states = remember(rules, current) {
-        mutableStateOf(rules.keys.associateWith { current[it] == true })
+    val l3Bg = if (o.dark) Color(0xFF1D2836) else Color(0xFFEAF2FC)
+    val l4Bg = if (o.dark) Color(0xFF381E25) else Color(0xFFFCECEF)
+    val l3Badge = if (o.dark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
+    val l4Badge = if (o.dark) Color(0xFFFDA4AF) else Color(0xFFBE123C)
+    val states = remember(items, current) {
+        mutableStateOf(items.keys.associateWith { current[it] == true })
     }
     val intro = if (pending) {
         tr("{name} 即将首次进入高张力爆发（BURST）状态。请逐项勾选你同意允许的内容（未勾选的项目将被严格禁止；可随时点击工具栏「🛡」修改或撤回）。", "name" to name)
@@ -596,21 +600,34 @@ private fun BurstConsentDialog(
                     tr("提示：明确勾选同意声明有助于模型理解边界，可以增大内容被正确且保持原强度生成的概率。"),
                     color = o.dim, fontSize = 12.sp,
                 )
-                rules.forEach { (cid, label) ->
+                items.forEach { (cid, rule) ->
                     val checked = states.value[cid] == true
+                    val isL4 = rule.level >= 4
                     Row(
-                        Modifier.fillMaxWidth().clickable { states.value = states.value + (cid to !checked) },
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isL4) l4Bg else l3Bg)
+                            .clickable { states.value = states.value + (cid to !checked) }
+                            .padding(end = 10.dp, top = 2.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Checkbox(checked = checked, onCheckedChange = { states.value = states.value + (cid to it) })
-                        Text(label, color = o.text, fontSize = 13.sp)
+                        Text(rule.label, color = o.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Text(
+                            tr(if (isL4) "4级" else "3级"),
+                            color = if (isL4) l4Badge else l3Badge,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
                     }
                 }
             }
         },
         dismissButton = {
             Row {
-                TextButton({ states.value = rules.keys.associateWith { true } }) { Text(tr("全选"), color = o.accent) }
+                TextButton({ states.value = items.keys.associateWith { true } }) { Text(tr("全选"), color = o.accent) }
                 TextButton(onDismiss) { Text(tr("取消"), color = o.dim) }
             }
         },

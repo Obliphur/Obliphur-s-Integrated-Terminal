@@ -195,18 +195,35 @@ try:
             assert c.scenario_on() and not c.scenario_invite() and page.scenario_btns.winfo_manager() != "pack"
             c.set_scenario(False)
             page.refresh(force=True)
-            # 同意声明作为沟通工具栏功能：当且仅当当前人设有 [burst:consent] 时展示（无需等到首次 BURST）。
+            # 同意声明作为沟通工具栏功能：当且仅当当前人设有 [burst:consent] 时展示（无需等到首次 BURST），且 3/4 级同意项背景色不同。
             assert c.persona_name() == "Claudia.txt"
             assert not c.burst_consent_asked()
             assert page.btn_consent.winfo_manager() == "pack"
-            opened_consent = []
-            def inspect_consent(dlg):
-                from tkinter import ttk
-                opened_consent.append(len([w for w in descendants(dlg.body) if isinstance(w, ttk.Checkbutton)]))
-                dlg.cancel()
-            with patch.object(Modal, "wait", inspect_consent):
-                page.btn_consent.invoke()
-            assert opened_consent == [7], f"Claudia 同意声明应展示 7 项，实际: {opened_consent}"
+            def _inspect_consent_dialog(expected_total, expected_l3, expected_l4):
+                captured = []
+                def _inspect(dlg):
+                    from tkinter import ttk
+                    rows = []
+                    for w in descendants(dlg.body):
+                        if isinstance(w, ttk.Checkbutton):
+                            row_bg = str(w.master.cget("bg")).lower()
+                            badge = next((str(ch.cget("text")) for ch in w.master.winfo_children() if isinstance(ch, tk.Label)), "")
+                            rows.append((badge, row_bg))
+                    captured.append(rows)
+                    dlg.cancel()
+                with patch.object(Modal, "wait", _inspect):
+                    page.btn_consent.invoke()
+                assert len(captured) == 1 and len(captured[0]) == expected_total, f"同意声明数量异常: {captured}"
+                l3_bgs = {bg for badge, bg in captured[0] if badge == i18n.tr("3级")}
+                l4_bgs = {bg for badge, bg in captured[0] if badge == i18n.tr("4级")}
+                assert sum(1 for badge, _ in captured[0] if badge == i18n.tr("3级")) == expected_l3
+                assert sum(1 for badge, _ in captured[0] if badge == i18n.tr("4级")) == expected_l4
+                assert len(l3_bgs) == 1 and len(l4_bgs) == 1 and l3_bgs != l4_bgs, f"3/4 级同意项背景色必须不同: {l3_bgs} vs {l4_bgs}"
+            _inspect_consent_dialog(9, 7, 2)
+            c.set_cfg(persona="Charlotte.txt")
+            page.refresh(force=True)
+            assert page.btn_consent.winfo_manager() == "pack"
+            _inspect_consent_dialog(7, 5, 2)
             c.set_cfg(persona="Assistant.txt")
             page.refresh(force=True)
             assert not c.burst_consent_rules_for()

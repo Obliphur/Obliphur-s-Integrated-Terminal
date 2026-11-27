@@ -491,7 +491,14 @@ def main():
             st_awake = _http_json(port, bridge.token, f"/ui/state?cursor={cursor_before_sleep}")
             assert [m["text"] for m in st_awake["messages"][-2:]] == ["早安,睡醒了吗?", "昨晚休息得怎么样?"]
             assert all(m["at"].startswith("2026-11-25T06:30:") for m in st_awake["messages"][-2:])
-            assert st_awake["toolbar"]["burst_consent_available"] is True and len(st_awake["burst_consent_items"]) == 7
+            assert st_awake["toolbar"]["burst_consent_available"] is True and len(st_awake["burst_consent_items"]) == 9
+            assert sum(1 for it in st_awake["burst_consent_items"] if it.get("level") == 3) == 7
+            assert sum(1 for it in st_awake["burst_consent_items"] if it.get("level") == 4) == 2
+            c.set_cfg(persona="Charlotte.txt")
+            st_charlotte = _http_json(port, bridge.token, "/ui/state", None)
+            assert st_charlotte["toolbar"]["burst_consent_available"] is True and len(st_charlotte["burst_consent_items"]) == 7
+            assert sum(1 for it in st_charlotte["burst_consent_items"] if it.get("level") == 3) == 5
+            assert sum(1 for it in st_charlotte["burst_consent_items"] if it.get("level") == 4) == 2
             # 切到无同意声明的人设时，toolbar["burst_consent_available"] 必须为 False。
             c.set_cfg(persona="Assistant.txt")
             st_no_consent = _http_json(port, bridge.token, "/ui/state", None)
@@ -1078,18 +1085,27 @@ def main():
 
         # 10a. API 版 5 文件人设生成、修改与保存验证（含 5 级亲密动作开放度与 3/4 档同意声明模式）
         from comm import comm_author
-        from comm.comm_rules import burst_consent_rules
+        from comm.comm_rules import burst_consent_items, burst_consent_rules
         assert len(comm_author.INTIMACY_LEVELS) == 5
         assert comm_author.intimacy_level_info(0).level == 1 and comm_author.intimacy_level_info(99).level == 5
         assert "保持原强度" in comm_author.CONSENT_MODE_HINT
-        claudia_consent = burst_consent_rules(comm_author.claudia_reference_files(personas_dir).get("Claudia_templates.txt", ""))
+        claudia_tpl = comm_author.claudia_reference_files(personas_dir).get("Claudia_templates.txt", "")
+        claudia_consent = burst_consent_rules(claudia_tpl)
+        claudia_items = burst_consent_items(claudia_tpl)
         assert (
-            len(claudia_consent) == 7
+            len(claudia_consent) == 9
             and "intimate_shelter" in claudia_consent
             and "restraint_actions" in claudia_consent
             and "unequal_dynamics" in claudia_consent
             and "exclusivity" in claudia_consent
+            and claudia_items["sensual_whisper"][0] == 4
+            and claudia_items["sensual_intimacy"][0] == 4
+            and claudia_items["intimate_shelter"][0] == 3
         )
+        with open(os.path.join(personas_dir, "Charlotte_templates.txt"), encoding="utf-8") as _f:
+            charlotte_items = burst_consent_items(_f.read())
+        assert len(charlotte_items) == 7 and charlotte_items["sensual_whisper"][0] == 4 and charlotte_items["sensual_intimacy"][0] == 4
+        assert burst_consent_items("[burst:consent]\nlegacy_item:默认三级\n[/burst:consent]") == {"legacy_item": (3, "默认三级")}
         fake_prof = {"provider": "openai", "protocol": "openai", "api_key": "sk-test", "base_url": "https://api.example.com/v1", "model": "gpt-4o"}
         def _fake_chat(_prof, _sys, msgs, **_kw):
             payload = msgs[-1]["content"]

@@ -9,7 +9,7 @@ from datetime import datetime
 import config
 from comm.comm_rules import (tension_rules, tension_event, tension_relationship_rules,
                              valence_rules, valence_initial, valence_event, valence_burst_rules,
-                             scenario_rules, burst_consent_rules)
+                             scenario_rules, burst_consent_items, burst_consent_rules)
 import routine
 from i18n import tr
 from .comm_const import KEEP
@@ -601,11 +601,14 @@ class InteractionMixin:
         s = self.other_status() if status is None else status
         return bool(s) and not s.get("joint") and routine.seg_class(s) == "special"
 
-    def burst_consent_rules_for(self, pid=None):
+    def burst_consent_items_for(self, pid=None):
         from comm.comm_persona import read_persona_full, list_personas, pid_of
         target_pid = pid or self.pid
         owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == target_pid), self.persona_name())
-        return burst_consent_rules(read_persona_full(self.personas, owner_name)) if owner_name else {}
+        return burst_consent_items(read_persona_full(self.personas, owner_name)) if owner_name else {}
+
+    def burst_consent_rules_for(self, pid=None):
+        return {cid: label for cid, (_, label) in self.burst_consent_items_for(pid).items()}
 
     def burst_consent_asked(self, pid=None) -> bool:
         rules = self.burst_consent_rules_for(pid)

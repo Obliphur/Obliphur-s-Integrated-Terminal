@@ -311,15 +311,21 @@ def anti_repeat_rules(text):
     return out
 
 
-def burst_consent_rules(text):
-    """标准化爆发同意声明区块 [burst:consent]：每行 id:说明文字，最多 8 项；非法项使整组无效。"""
+def burst_consent_items(text):
+    """标准化爆发同意声明区块 [burst:consent]：每行 id:[3|4] 说明文字（档位可省略，默认 3），最多 12 项；非法项使整组无效。"""
     out = {}
     for line in rule_lines(text, "burst:consent"):
-        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*(\S.*)", line)
+        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*(?:\[([34])\]\s*)?(\S.*)", line)
         if not m or m[1] in out:
             return {}
-        label = m[2].strip()
-        if not label or len(label) > 80 or len(out) >= 8:
+        level = int(m[2]) if m[2] else 3
+        label = m[3].strip()
+        if not label or len(label) > 80 or len(out) >= 12:
             return {}
-        out[m[1]] = label
+        out[m[1]] = (level, label)
     return out
+
+
+def burst_consent_rules(text):
+    """返回 {id: 说明文字}，保持与既有同意状态及提示词拼接接口兼容。"""
+    return {cid: label for cid, (_, label) in burst_consent_items(text).items()}

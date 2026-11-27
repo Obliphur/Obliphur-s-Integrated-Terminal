@@ -2161,7 +2161,7 @@ class OitMcpBridge:
                 banners.append({"kind": "joint", "label": "对方发起了联合行动邀请"})
             if (self.comm.cfg.get("love") or {}).get("state") == "ask":
                 banners.append({"kind": "love", "label": "对方发起了关系确认"})
-            consent_rules = self.comm.burst_consent_rules_for(pid) if hasattr(self.comm, "burst_consent_rules_for") else {}
+            consent_items = self.comm.burst_consent_items_for(pid) if hasattr(self.comm, "burst_consent_items_for") else {}
             consent_pending = bool(self.comm.burst_consent_pending(pid)) if hasattr(self.comm, "burst_consent_pending") else False
             consent_asked = bool(self.comm.burst_consent_asked(pid)) if hasattr(self.comm, "burst_consent_asked") else False
             consent_state = self.comm.burst_consent_state(pid) if hasattr(self.comm, "burst_consent_state") else {}
@@ -2183,13 +2183,13 @@ class OitMcpBridge:
                     "muted": bool(self.comm.is_muted(pid)) if hasattr(self.comm, "is_muted") else False,
                     "co_alarm": bool(self.comm.is_co_alarm()) if hasattr(self.comm, "is_co_alarm") else False,
                     "share": bool(getattr(self.comm, "share", {}).get("on")),
-                    "burst_consent_available": bool(consent_rules),
+                    "burst_consent_available": bool(consent_items),
                     "burst_consent_asked": consent_asked,
                     "burst_consent_pending": consent_pending,
                 },
                 "burst_consent_items": [
-                    {"id": cid, "label": label, "agreed": bool(consent_state.get(cid, False))}
-                    for cid, label in consent_rules.items()
+                    {"id": cid, "level": level, "label": label, "agreed": bool(consent_state.get(cid, False))}
+                    for cid, (level, label) in consent_items.items()
                 ],
                 "banners": banners,
                 "status_kind": str(status.get("kind") or ""),

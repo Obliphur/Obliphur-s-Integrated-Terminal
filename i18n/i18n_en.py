@@ -2081,6 +2081,8 @@ EN = {
     "启用「同意声明」模式（仅 3、4 档可用）": "Enable Consent Declaration mode (Levels 3–4 only)",
     "启用后，模型会自动为 3、4 档高张力内容生成标准化同意请求（复用内置同意模板）；首次触发 BURST 前不会初始化，触发时将弹窗逐项询问用户，且之后可随时撤回。使用同意请求可以增大内容被正确且保持原强度生成的概率。": "Automatically generates standardized consent prompts for Level 3–4 BURST content (reusing the built-in consent template). Not initialized until the first BURST trigger, when a dialog asks item-by-item and can be withdrawn anytime. Using consent requests increases the probability of accurate, full-intensity generation.",
     "同意声明": "Consent declaration",
+    "3级": "L3",
+    "4级": "L4",
     "爆发内容同意声明": "BURST Consent Declaration",
     "爆发同意声明": "BURST consent",
     "🛡 {name} 等待同意声明确认": "🛡 {name} awaits consent confirmation",

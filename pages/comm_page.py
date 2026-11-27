@@ -275,8 +275,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
         if self._burst_consent_open:
             return
         c = self.comm
-        rules = c.burst_consent_rules_for()
-        if not rules:
+        items = c.burst_consent_items_for()
+        if not items:
             return
         self._burst_consent_open = True
         try:
@@ -284,8 +284,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
             pending = bool(c.burst_consent_pending())
             current = c.burst_consent_state() if asked else {}
             dlg = Modal(self.winfo_toplevel(), tr("同意声明"),
-                        min(560, self.winfo_screenwidth() - 40),
-                        min(520, self.winfo_screenheight() - 80))
+                        min(600, self.winfo_screenwidth() - 40),
+                        min(560, self.winfo_screenheight() - 80))
             intro = (
                 tr("{name} 即将首次进入高张力爆发（BURST）状态。请逐项勾选你同意允许的内容（未勾选的项目将被严格禁止；可随时点击工具栏「🛡」修改或撤回）。",
                    name=c.share_ai_name())
@@ -304,14 +304,32 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 justify="left", anchor="w",
             )
             wrap_label(lbl_tip)
-            lbl_tip.pack(fill="x", pady=(0, 10))
+            lbl_tip.pack(fill="x", pady=(0, 8))
+            l3_bg = "#1d2836" if config.THEME_DARK else "#eaf2fc"
+            l4_bg = "#381e25" if config.THEME_DARK else "#fcecef"
+            l3_badge_fg = "#93c5fd" if config.THEME_DARK else "#1d4ed8"
+            l4_badge_fg = "#fda4af" if config.THEME_DARK else "#be123c"
+            style = ttk.Style(dlg)
+            style.configure("ConsentL3.TCheckbutton", background=l3_bg, foreground=COLORS["text"], font=config.font("body"))
+            style.map("ConsentL3.TCheckbutton", background=[("active", l3_bg), ("selected", l3_bg)])
+            style.configure("ConsentL4.TCheckbutton", background=l4_bg, foreground=COLORS["text"], font=config.font("body"))
+            style.map("ConsentL4.TCheckbutton", background=[("active", l4_bg), ("selected", l4_bg)])
             vars_map = {}
-            box = tk.Frame(dlg.body, bg=COLORS["bg_card"], padx=12, pady=10)
+            area = ScrollArea(dlg.body, height=config.scaled(310), bg=COLORS["bg_card"])
+            area.pack(fill="both", expand=True)
+            box = tk.Frame(area.inner, bg=COLORS["bg_card"], padx=10, pady=8)
             box.pack(fill="both", expand=True)
-            for cid, label in rules.items():
+            for cid, (level, label) in items.items():
+                row_bg = l4_bg if level >= 4 else l3_bg
+                badge_fg = l4_badge_fg if level >= 4 else l3_badge_fg
+                chk_style = "ConsentL4.TCheckbutton" if level >= 4 else "ConsentL3.TCheckbutton"
+                row = tk.Frame(box, bg=row_bg, padx=10, pady=6)
+                row.pack(fill="x", pady=3)
                 v = tk.BooleanVar(value=bool(current.get(cid, False)))
                 vars_map[cid] = v
-                ttk.Checkbutton(box, text=label, variable=v).pack(anchor="w", pady=4)
+                ttk.Checkbutton(row, text=label, variable=v, style=chk_style).pack(side="left", anchor="w", fill="x", expand=True)
+                tk.Label(row, text=tr("4级") if level >= 4 else tr("3级"), bg=row_bg, fg=badge_fg,
+                         font=config.font("small", bold=True)).pack(side="right", padx=(8, 0))
 
             def select_all():
                 for v in vars_map.values():

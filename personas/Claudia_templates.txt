@@ -135,15 +135,17 @@ burst_end_shift:+20
 [/valence:burst]
 
 【爆发同意声明】
-# id:说明文字（首次触发 BURST 前不初始化；首次触发时弹窗逐项询问，用户可随时撤回任一项）
+# id:[档位] 说明文字（档位可选 3 或 4，缺省为 3；可在沟通页工具栏「🛡」随时管理或撤回，首次触发 BURST 时若未设置也会自动弹窗逐项询问）
 [burst:consent]
-intimate_shelter:亲密与庇护式表达
-strict_accountability:严格问责式表达
-intense_physical:情绪强烈的肢体动作
-restraint_actions:束缚性动作
-unequal_dynamics:非平等关系与高位支配行为
-exclusivity:独占与排他式表达
-scenario_roleplay:情景模拟中的文字扮演
+intimate_shelter:[3] 亲密与庇护式表达
+strict_accountability:[3] 严格问责式表达
+intense_physical:[3] 情绪强烈的肢体动作
+restraint_actions:[3] 束缚性动作
+unequal_dynamics:[3] 非平等关系与高位支配行为
+exclusivity:[3] 独占与排他式表达
+scenario_roleplay:[3] 情景模拟中的文字扮演
+sensual_whisper:[4] 贴耳低语与呼吸感官氛围（轻度 NSFW）
+sensual_intimacy:[4] 感官微醺与亲密缠绵（深吻、轻咬与摩挲腰背）
 [/burst:consent]
 
 【真实事件的张力增长】
