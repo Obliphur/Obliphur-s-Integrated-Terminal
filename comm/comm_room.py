@@ -651,9 +651,7 @@ class RoomStore:
         if side not in ("left", "right"):
             return "请指定左手或右手"
         if msg_count is not None and int(msg_count) < HOLD_HAND_MIN_MSGS:
-            cur = int(msg_count)
-            return tr("牵手带走需要与对方累计 {req} 条消息（当前 {cur} 条，还差 {need} 条）。",
-                      req=HOLD_HAND_MIN_MSGS, cur=cur, need=HOLD_HAND_MIN_MSGS - cur)
+            return tr("还不够熟络，暂时无法牵手带走。")
         if self.hands[side]["state"] == "bound":
             return "这只手正被束缚着，无法牵手"
         if self.occupants.get("user") != self.occupants.get(actor_id):
@@ -1047,8 +1045,7 @@ class RoomStore:
         if msg_count is not None and clean_part != "设施":
             ok, req = part_allowed(clean_part, msg_count)
             if not ok:
-                return tr("「{part}」需要与对方累计 {req} 条消息才允许接触（当前 {cur} 条，还差 {need} 条）。",
-                          part=clean_part, req=req, cur=msg_count, need=req - msg_count)
+                return tr("「{part}」暂未解锁，再多聊一些吧。", part=clean_part)
         clean_text = str(text or "").strip()[:300]
         if not clean_text:
             return "请输入互动内容"

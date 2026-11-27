@@ -550,6 +550,26 @@ class RoomPage(tk.Frame):
                     "hold_min": HOLD_HAND_MIN_MSGS,
                 },
             }
+        if atype == "queue_actions":
+            items = body.get("actions") or []
+            if not isinstance(items, list) or not items:
+                return {"ok": False, "toast": tr("请至少勾选一项互动。"), "warn": True}
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                hand = str(item.get("hand") or "")
+                part = str(item.get("part") or "")
+                target_id = str(item.get("target_id") or "")
+                target_name = str(item.get("target_name") or "")
+                text = str(item.get("text") or "").strip()
+                secret = bool(item.get("secret", False))
+                msg_count = self.total_msgs_with(target_id)
+                err = self.store.queue_hand_action(
+                    hand, target_id, target_name, part, text, msg_count=msg_count, secret=secret
+                )
+                if err:
+                    return {"ok": False, "toast": tr(err), "warn": True, "state": self._build_web_state()}
+            return {"ok": True, "state": self._build_web_state()}
         if atype == "queue_action":
             hand = str(body.get("hand") or "")
             part = str(body.get("part") or "")

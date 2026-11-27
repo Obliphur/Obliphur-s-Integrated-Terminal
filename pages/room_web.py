@@ -454,6 +454,34 @@ _ROOM_HTML = r"""<!DOCTYPE html>
   .input:focus, .textarea:focus { border-color: var(--accent); }
   .textarea { min-height: 68px; resize: vertical; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+  .part-table {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
+  }
+  .part-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    padding: 5px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg);
+    font-size: 12.5px; cursor: pointer;
+    transition: border-color .12s, background .12s;
+  }
+  .part-row:hover:not(.disabled) { border-color: var(--accent); }
+  .part-row.checked { border-color: var(--accent); background: rgba(103,213,247,0.1); }
+  .part-row.disabled { opacity: 0.45; cursor: not-allowed; }
+  .part-row-left { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .part-tags { display: flex; gap: 4px; flex-shrink: 0; }
+  .part-tag {
+    font-size: 11px; padding: 1px 5px; border-radius: 4px;
+    background: rgba(103,213,247,0.18); color: var(--accent);
+    white-space: nowrap;
+  }
+  .part-tag.gaze { background: rgba(196,167,231,0.2); color: #c4a7e7; }
+  .sel-summary {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    font-size: 12px; color: var(--text-dim);
+    padding: 5px 8px; border-radius: 6px;
+    background: var(--bg); border: 1px solid var(--border);
+  }
+  .sel-summary b { color: var(--accent); font-weight: 600; }
   .radio-opt {
     display: flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: pointer;
   }
@@ -969,8 +997,11 @@ async function openActorModal(actorId, actorName) {
   const res = await doAction({ type: "actor_interact_info", actor_id: actorId });
   if (!res.ok || !res.info) return;
   const info = res.info;
-  let selectedHand = info.available_hands[0] || "";
-  let selectedPart = (info.parts[0] && info.parts[0].label) || "肩膀";
+  const leftBound = info.hands.left.state === "bound";
+  const rightBound = info.hands.right.state === "bound";
+  let activeHand = !leftBound ? "left" : (!rightBound ? "right" : "");
+  let gazeChecked = false;
+  const handPart = { left: "", right: "" };
   let customPartInput = null;
   let secretCheck = null;
   let textArea = null;
@@ -998,7 +1029,7 @@ async function openActorModal(actorId, actorName) {
     if (info.holding_side) {
       bHold.textContent = "松开握持";
     } else if (!info.hold_ok) {
-      bHold.textContent = `🤝 牵手带走 (需${info.hold_min || 100}条)`;
+      bHold.textContent = "🤝 牵手带走 (未解锁)";
       bHold.disabled = true;
     } else {
       bHold.textContent = "🤝 牵手带走";
@@ -1011,73 +1042,129 @@ async function openActorModal(actorId, actorName) {
     top.append(meta, btns);
     body.appendChild(top);
 
-    // 选左右手（独立且可同时作出；目光注视不占手，可共存）
+    // 切换当前正在安排动作的手（左手 / 右手各自独立，可同时选）
     const handRow = document.createElement("div");
     handRow.style.cssText = "display:flex;align-items:center;gap:12px;flex-wrap:wrap;";
-    handRow.innerHTML = `<span class="field-label" style="margin:0;">使用哪只手：</span>`;
-    const leftBound = info.hands.left.state === "bound";
-    const rightBound = info.hands.right.state === "bound";
-    if (!selectedHand || (selectedHand === "left" && leftBound) || (selectedHand === "right" && rightBound)) {
-      selectedHand = !leftBound ? "left" : (!rightBound ? "right" : "");
-    }
-    const handInputs = [];
-    const channels = [
+    handRow.innerHTML = `<span class="field-label" style="margin:0;">当前设置：</span>`;
+    const handDefs = [
       { id: "left", label: "左手" + (info.hands.left.state === "holding" ? " (握住)" : (leftBound ? " (被束缚)" : "")), disabled: leftBound },
       { id: "right", label: "右手" + (info.hands.right.state === "holding" ? " (握住)" : (rightBound ? " (被束缚)" : "")), disabled: rightBound },
     ];
-    for (const ch of channels) {
+    for (const ch of handDefs) {
       const lbl = document.createElement("label");
       lbl.className = "radio-opt" + (ch.disabled ? " disabled" : "");
       const inp = document.createElement("input");
       inp.type = "radio"; inp.name = "m_hand"; inp.value = ch.id;
       inp.disabled = ch.disabled;
-      inp.checked = selectedHand === ch.id;
-      inp.addEventListener("change", () => { selectedHand = ch.id; });
-      handInputs.push({ inp, lbl, baseDisabled: ch.disabled });
+      inp.checked = activeHand === ch.id;
+      inp.addEventListener("change", () => {
+        activeHand = ch.id;
+        syncTable();
+      });
       lbl.append(inp, document.createTextNode(ch.label));
       handRow.appendChild(lbl);
     }
-    const gazeHint = document.createElement("span");
-    gazeHint.className = "dim-tip";
-    gazeHint.textContent = "（目光注视不占手，可与左右手动作共存）";
-    handRow.appendChild(gazeHint);
+    const tip = document.createElement("span");
+    tip.className = "dim-tip";
+    tip.textContent = "（切左手/右手各选一项，目光注视可自由多选共存）";
+    handRow.appendChild(tip);
     body.appendChild(handRow);
 
-    const warn = document.createElement("div");
-    warn.style.cssText = "color:var(--danger);font-size:12px;display:none;";
-    warn.textContent = "双手正被束缚，当前仅可选择「目光注视」。";
-    body.appendChild(warn);
+    const summaryEl = document.createElement("div");
+    summaryEl.className = "sel-summary";
+    body.appendChild(summaryEl);
 
-    const syncHandState = () => {
-      const customVal = customPartInput ? customPartInput.value.trim() : "";
-      const isGaze = !customVal && selectedPart === "目光注视";
-      for (const h of handInputs) {
-        h.inp.disabled = h.baseDisabled || isGaze;
-        h.lbl.className = "radio-opt" + (h.inp.disabled ? " disabled" : "");
-      }
-      warn.style.display = (leftBound && rightBound && !isGaze) ? "block" : "none";
+    if (leftBound && rightBound) {
+      const warn = document.createElement("div");
+      warn.style.cssText = "color:var(--danger);font-size:12px;";
+      warn.textContent = "双手正被束缚，当前仅可勾选「目光注视」。";
+      body.appendChild(warn);
+    }
+
+    const rowRefs = [];
+    const makeRow = (p) => {
+      const isGaze = p.label === "目光注视";
+      const disabled = !p.allowed || (!isGaze && leftBound && rightBound);
+      const row = document.createElement("label");
+      row.className = "part-row" + (disabled ? " disabled" : "");
+      const left = document.createElement("span");
+      left.className = "part-row-left";
+      const chk = document.createElement("input");
+      chk.type = "checkbox";
+      chk.disabled = disabled;
+      chk.addEventListener("change", () => {
+        if (isGaze) {
+          gazeChecked = chk.checked;
+        } else if (activeHand) {
+          if (chk.checked) {
+            handPart[activeHand] = p.label;
+          } else if (handPart[activeHand] === p.label) {
+            handPart[activeHand] = "";
+          }
+        }
+        syncTable();
+      });
+      const txt = document.createElement("span");
+      txt.textContent = p.allowed ? p.label : `${p.label} (未解锁)`;
+      left.append(chk, txt);
+      const tags = document.createElement("span");
+      tags.className = "part-tags";
+      row.append(left, tags);
+      rowRefs.push({ p, isGaze, disabled, row, chk, tags });
+      return row;
     };
 
-    // 部位列表
+    const syncTable = () => {
+      for (const r of rowRefs) {
+        r.tags.innerHTML = "";
+        let anyChecked = false;
+        if (r.isGaze) {
+          anyChecked = gazeChecked;
+          r.chk.checked = gazeChecked;
+          if (gazeChecked) {
+            const tg = document.createElement("span");
+            tg.className = "part-tag gaze";
+            tg.textContent = "目光";
+            r.tags.appendChild(tg);
+          }
+        } else {
+          const hasL = handPart.left === r.p.label;
+          const hasR = handPart.right === r.p.label;
+          anyChecked = hasL || hasR;
+          r.chk.checked = activeHand ? (handPart[activeHand] === r.p.label) : false;
+          if (hasL) {
+            const tg = document.createElement("span");
+            tg.className = "part-tag";
+            tg.textContent = "左手";
+            r.tags.appendChild(tg);
+          }
+          if (hasR) {
+            const tg = document.createElement("span");
+            tg.className = "part-tag";
+            tg.textContent = "右手";
+            r.tags.appendChild(tg);
+          }
+        }
+        r.row.className = "part-row" + (r.disabled ? " disabled" : "") + (anyChecked ? " checked" : "");
+      }
+      const cVal = customPartInput ? customPartInput.value.trim() : "";
+      const lTxt = (activeHand === "left" && cVal) ? cVal : (handPart.left || "未选");
+      const rTxt = (activeHand === "right" && cVal) ? cVal : (handPart.right || "未选");
+      summaryEl.innerHTML =
+        `<span>目光：<b>${gazeChecked ? "目光注视" : "未选"}</b></span>` +
+        `<span>左手：<b>${lTxt}</b></span>` +
+        `<span>右手：<b>${rTxt}</b></span>`;
+    };
+
+    // 部位多选表格
     const pTitle = document.createElement("div");
     pTitle.className = "field-label";
-    pTitle.textContent = "选择互动部位：";
+    pTitle.textContent = "选择互动部位（多选表格：目光 + 左手 + 右手可共存）：";
     body.appendChild(pTitle);
     const grid = document.createElement("div");
-    grid.className = "grid2";
+    grid.className = "part-table";
     for (const p of info.parts) {
-      const lbl = document.createElement("label");
-      lbl.className = "radio-opt" + (!p.allowed ? " disabled" : "");
-      const inp = document.createElement("input");
-      inp.type = "radio"; inp.name = "m_part"; inp.value = p.label;
-      inp.disabled = !p.allowed;
-      inp.checked = selectedPart === p.label;
-      inp.addEventListener("change", () => {
-        selectedPart = p.label;
-        syncHandState();
-      });
-      lbl.append(inp, document.createTextNode(p.allowed ? p.label : `${p.label} (需${p.req}条)`));
-      grid.appendChild(lbl);
+      grid.appendChild(makeRow(p));
     }
     body.appendChild(grid);
 
@@ -1088,16 +1175,9 @@ async function openActorModal(actorId, actorName) {
       pt.textContent = "基于当前位置的互动：";
       body.appendChild(pt);
       const pg = document.createElement("div");
-      pg.className = "grid2";
+      pg.className = "part-table";
       for (const p of info.pos_parts) {
-        const lbl = document.createElement("label");
-        lbl.className = "radio-opt" + (!p.allowed ? " disabled" : "");
-        const inp = document.createElement("input");
-        inp.type = "radio"; inp.name = "m_part"; inp.value = p.label;
-        inp.disabled = !p.allowed;
-        inp.addEventListener("change", () => { selectedPart = p.label; syncHandState(); });
-        lbl.append(inp, document.createTextNode(p.allowed ? p.label : `${p.label} (需${p.req}条)`));
-        pg.appendChild(lbl);
+        pg.appendChild(makeRow(p));
       }
       body.appendChild(pg);
     }
@@ -1106,15 +1186,15 @@ async function openActorModal(actorId, actorName) {
     cRow.style.cssText = "display:flex;align-items:center;gap:8px;";
     const cLbl = document.createElement("span");
     cLbl.className = "dim-tip";
-    cLbl.textContent = info.custom_ok ? "或自定义部位：" : `自定义部位 (需${info.custom_min}条)：`;
+    cLbl.textContent = info.custom_ok ? "或为当前手自定义部位：" : "自定义部位 (未解锁)：";
     customPartInput = document.createElement("input");
     customPartInput.className = "input";
     customPartInput.style.flex = "1";
-    customPartInput.disabled = !info.custom_ok;
-    customPartInput.addEventListener("input", syncHandState);
+    customPartInput.disabled = !info.custom_ok || (leftBound && rightBound);
+    customPartInput.addEventListener("input", syncTable);
     cRow.append(cLbl, customPartInput);
     body.appendChild(cRow);
-    syncHandState();
+    syncTable();
 
     const secLbl = document.createElement("label");
     secLbl.className = "radio-opt";
@@ -1136,17 +1216,26 @@ async function openActorModal(actorId, actorName) {
     {
       label: "加入待发动作", accent: true,
       onClick: async () => {
-        const part = (info.custom_ok && customPartInput.value.trim()) ? customPartInput.value.trim() : selectedPart;
-        const handToSend = (part === "目光注视") ? "gaze" : selectedHand;
-        const r = await doAction({
-          type: "queue_action",
-          hand: handToSend,
-          target_id: actorId,
-          target_name: actorName,
-          part,
-          text: textArea.value.trim(),
-          secret: !!secretCheck.checked,
-        });
+        const text = textArea.value.trim();
+        const secret = !!secretCheck.checked;
+        const cVal = (info.custom_ok && customPartInput.value.trim()) ? customPartInput.value.trim() : "";
+        const leftPart = (activeHand === "left" && cVal) ? cVal : handPart.left;
+        const rightPart = (activeHand === "right" && cVal) ? cVal : handPart.right;
+        const actions = [];
+        if (gazeChecked) {
+          actions.push({ hand: "gaze", target_id: actorId, target_name: actorName, part: "目光注视", text, secret });
+        }
+        if (leftPart && !leftBound) {
+          actions.push({ hand: "left", target_id: actorId, target_name: actorName, part: leftPart, text, secret });
+        }
+        if (rightPart && !rightBound) {
+          actions.push({ hand: "right", target_id: actorId, target_name: actorName, part: rightPart, text, secret });
+        }
+        if (!actions.length) {
+          showToast("请至少勾选一项互动（目光 / 左手 / 右手）。", true);
+          return;
+        }
+        const r = await doAction({ type: "queue_actions", actions });
         if (r.ok) closeModal();
       },
     },
