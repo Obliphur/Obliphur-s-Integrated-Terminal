@@ -1,5 +1,8 @@
 
 
+import json
+import queue
+import threading
 import tkinter as tk
 from tkinter import ttk
 from datetime import datetime, timedelta
@@ -8,6 +11,8 @@ import config
 import i18n
 from config import COLORS
 from i18n import tr
+from .hour_log_web import _HOUR_LOG_HTML
+from .webview2_host import LocalWebServer, WebView2Host, is_webview2_available
 from .widgets import attach_smooth_scroll, cfg
 
 
@@ -129,10 +134,325 @@ class HourLogPage(tk.Frame):
         self.rows = {}
         self.halves = {}           # 第 i 行的后半小时: (输入框, 内容)
         self._split = {}           # 第 i 行此刻是不是分成了两格
-        self._build()
+        self._destroyed = False
+        self._visible = False
+        self._use_webview = is_webview2_available()
+        self._tk_built = False
+        self._wv_host: WebView2Host | None = None
+        self._wv_loading: tk.Label | None = None
+        self._web_server: LocalWebServer | None = None
+        self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._ui_poll_job = None
+        self._wv_show_job = None
+        self._scroll_seq = 0
+        self._scroll_row = 0
+        self._focus_cell = ""
 
+        self.bind("<Destroy>", self._on_page_destroy)
+        if self._use_webview:
+            self._build_webview()
+        else:
+            self._build()
+
+    # ---- WebView2 原生内嵌层 ----
+
+    def _build_webview(self):
+        self._web_server = LocalWebServer(
+            html_provider=lambda tok: _HOUR_LOG_HTML.replace("__TOKEN__", json.dumps(tok)),
+            get_state=lambda: self._call_on_ui(self._build_web_state),
+            handle_action=lambda body: self._call_on_ui(lambda: self._handle_web_action(body)),
+            thread_name="oit-hourlog-web",
+        )
+        self._schedule_ui_poll()
+        self._wv_host = WebView2Host(
+            self,
+            bg=COLORS["bg"],
+            on_ready=self._on_webview_ready,
+            on_error=self._fallback_to_tk,
+        )
+        self._wv_host.pack(fill="both", expand=True)
+        self._wv_loading = tk.Label(
+            self,
+            text=tr("正在加载整点记录…"),
+            bg=COLORS["bg"],
+            fg=COLORS["text_dim"],
+            font=config.font("body"),
+        )
+        self._wv_loading.place(relx=0.5, rely=0.5, anchor="center")
+
+    def _start_webview_after_show(self):
+        self._wv_show_job = None
+        if self._destroyed or not self._visible or not self._use_webview:
+            return
+        if self._wv_host is None or self._web_server is None:
+            return
+        url = self._web_server.start()
+        self._wv_host.lift()
+        self._wv_host.start(url)
+        self._wv_host.set_visible(True)
+        self.after(120, self._sync_webview_visible)
+        self._web_server.notify("update")
+
+    def _on_webview_ready(self):
+        if self._wv_loading is not None:
+            try:
+                self._wv_loading.place_forget()
+            except tk.TclError:
+                pass
+        if self._wv_host is not None:
+            self._wv_host.set_visible(self._visible)
+            if self._visible:
+                self.after_idle(self._sync_webview_visible)
+                self.after(200, self._sync_webview_visible)
+
+    def _sync_webview_visible(self):
+        if self._destroyed or not self._use_webview or self._wv_host is None:
+            return
+        self._wv_host.sync_bounds()
+        self._wv_host.set_visible(self._visible)
+        if self._visible:
+            self._wv_host.notify_parent_moved()
+
+    def _fallback_to_tk(self, _reason: str = ""):
+        if self._destroyed or not self._use_webview:
+            return
+        self._use_webview = False
+        if self._wv_host is not None:
+            try:
+                self._wv_host.close()
+                self._wv_host.destroy()
+            except Exception:
+                pass
+            self._wv_host = None
+        if self._wv_loading is not None:
+            try:
+                self._wv_loading.destroy()
+            except Exception:
+                pass
+            self._wv_loading = None
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:
+                pass
+            self._web_server = None
+        if not self._tk_built:
+            self._build()
+        self.refresh()
+
+    def _on_page_destroy(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        self._destroyed = True
+        self._visible = False
+        for attr in ("_wv_show_job", "_ui_poll_job"):
+            job = getattr(self, attr, None)
+            if job:
+                try:
+                    self.after_cancel(job)
+                except tk.TclError:
+                    pass
+                setattr(self, attr, None)
+        if self._wv_host is not None:
+            try:
+                self._wv_host.close()
+            except Exception:
+                pass
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:
+                pass
+
+    def _schedule_ui_poll(self):
+        if self._destroyed or not self._use_webview:
+            return
+        self._drain_ui_queue()
+        try:
+            self._ui_poll_job = self.after(30, self._schedule_ui_poll)
+        except tk.TclError:
+            self._ui_poll_job = None
+
+    def _drain_ui_queue(self):
+        while not self._destroyed:
+            try:
+                fn, done, box = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                box["val"] = fn()
+            except Exception as exc:
+                box["err"] = exc
+            finally:
+                done.set()
+
+    def _call_on_ui(self, fn):
+        if self._destroyed:
+            return {"ok": False, "error": "closed"}
+        if threading.current_thread() is threading.main_thread():
+            return fn()
+        done = threading.Event()
+        box: dict = {}
+        self._ui_queue.put((fn, done, box))
+        try:
+            self.after(0, self._drain_ui_queue)
+        except (tk.TclError, RuntimeError):
+            pass
+        if not done.wait(timeout=15.0):
+            return {"ok": False, "error": "timeout"}
+        if "err" in box:
+            raise box["err"]
+        return box.get("val")
+
+    def _build_web_state(self) -> dict:
+        now = datetime.now()
+        self.view_date = self.dm.today_date
+        enabled = bool(self.dm.hour_enabled)
+        awaiting = self.dm.awaiting_slot()
+        try:
+            seed = self.fog()
+        except Exception:
+            seed = None
+        pending = []
+        rows_out = []
+        for h in range(24):
+            start = self._slot_start(h)
+            end = start + timedelta(hours=1)
+            split = self.split(start)
+            if not split and seed is not None and self.split_all() and not (
+                start <= now < end or (awaiting is not None and start <= awaiting < end)
+            ):
+                split = True
+            self._split[h] = split
+            if split:
+                mid = start + timedelta(minutes=30)
+                raw_cells = [(0, start, mid, self._get(h, 0)), (1, mid, end, self._get(h, 1))]
+            else:
+                raw_cells = [(0, start, end, self._get(h))]
+            locked = False
+            shown = False
+            cells_out = []
+            for i, a, b, text in raw_cells:
+                wait = awaiting is not None and a <= awaiting < b
+                hidden = seed is not None and not (a <= now < b or wait or self.rest(a, b, text))
+                shown = shown or not hidden
+                if hidden:
+                    cells_out.append({
+                        "i": i,
+                        "text": fog_noise(seed, a),
+                        "disabled": True,
+                        "wait": False,
+                    })
+                    continue
+                draft = self._drafts.get((h, i))
+                if draft is not None and (text or not draft.strip()):
+                    self._drafts.pop((h, i), None)
+                    draft = None
+                shown_text = draft if draft is not None else text
+                if draft is not None and not self.sealed(a, b):
+                    pending.append((h, i, draft))
+                done = b <= now
+                lock = self.locked(a, b, text, now)
+                lock = lock or self.dm.is_fixed_auto(text, f"{self.view_date}/{h}")
+                locked = locked or lock
+                cells_out.append({
+                    "i": i,
+                    "text": shown_text,
+                    "disabled": not (enabled and done and not lock),
+                    "wait": wait,
+                })
+            ended = end <= now or (split and start + timedelta(minutes=30) <= now)
+            is_wait = awaiting is not None and start <= awaiting < end
+            is_now = enabled and start <= now < end
+            label = f"{start.hour:02d}:00" if seed is None or shown else "???"
+            if seed is not None and not shown:
+                pass
+            elif is_now:
+                label += tr("   ◂ 现在")
+            elif is_wait:
+                label += tr("   ◂ 待填写")
+            elif locked:
+                label += "   🔒"
+            tone = "accent" if (is_wait or is_now) else ("active" if (enabled and ended and not locked) else "")
+            rows_out.append({"h": h, "label": label, "label_tone": tone, "cells": cells_out})
+
+        for h, i, draft in pending:
+            self.after_idle(self._commit_text, h, i, draft, False)
+
+        return {
+            "colors": {
+                "bg": COLORS.get("bg", "#0f131b"),
+                "bg_card": COLORS.get("bg_card", "#171c28"),
+                "border": COLORS.get("border", "#2a3346"),
+                "text": COLORS.get("text", "#e6edf7"),
+                "text_dim": COLORS.get("text_dim", "#8b97ad"),
+                "accent": COLORS.get("accent", "#67d5f7"),
+                "accent_hover": COLORS.get("accent_hover", "#8be0fa"),
+                "success": COLORS.get("success", "#22c55e"),
+            },
+            "title": tr("📝  整点记录"),
+            "settings_label": tr("⚙  设置"),
+            "enabled": enabled,
+            "state_text": tr("当前: {state}").format(state=tr("开启") if enabled else tr("关闭_状态")),
+            "date_text": tr("{date}(今天)").format(date=self.view_date) + ("" if enabled else tr("   ·  记录已关闭")),
+            "rows": rows_out,
+            "scroll_seq": self._scroll_seq,
+            "scroll_row": self._scroll_row,
+            "focus_cell": self._focus_cell,
+        }
+
+    def _commit_text(self, h: int, i: int, raw_text: str, enter: bool = False):
+        if h < 0 or h >= 24:
+            return None
+        now = datetime.now()
+        split = bool(self._split.get(h))
+        a, b = self._cell(h, i)
+        cur = self._get(h, i if split else None)
+        if not self.dm.hour_enabled or b > now:
+            return None
+        if self.locked(a, b, cur, now) or self.dm.is_fixed_auto(cur, f"{self.view_date}/{h}"):
+            return None
+        text = str(raw_text or "").strip()
+        if text != cur:
+            if text and self.sealed(a, b):
+                if not enter:
+                    self._drafts[(h, i)] = raw_text
+                    return None
+                import toast
+                if not toast.ask(tr("确认修改这个格子吗?") + "\n" + tr("记录封锁: 填写后就不能再修改了.") + "\n\n" + text,
+                                 title=tr("确认修改"), ok_text=tr("确认修改")):
+                    self._drafts[(h, i)] = raw_text
+                    return False
+            self._drafts.pop((h, i), None)
+            was = cur
+            s = self._slot_start(h)
+            if split:
+                self.dm.set_half_text(s.strftime('%Y-%m-%d'), s.hour, i, text)
+            else:
+                self.dm.set_hour_text(s.strftime('%Y-%m-%d'), s.hour, text)
+            if self.on_text_changed:
+                self.on_text_changed()
+            if text and not str(was or "").strip():
+                self.on_filled()
+            self.refresh()
+        return True
+
+    def _handle_web_action(self, body: dict) -> dict:
+        atype = str(body.get("type") or "")
+        if atype == "open_settings":
+            self.after(0, self._open_settings)
+            return {"ok": True}
+        if atype == "commit":
+            h = int(body.get("h", -1))
+            i = int(body.get("i", 0))
+            raw_text = str(body.get("text") or "")
+            enter = bool(body.get("enter", False))
+            res = self._commit_text(h, i, raw_text, enter=enter)
+            return {"ok": res is not False, "state": self._build_web_state()}
+        return {"ok": False, "error": f"unknown_action:{atype}"}
 
     def _build(self):
+        self._tk_built = True
         bg, card = COLORS["bg"], COLORS["bg_card"]
 
         hdr = tk.Frame(self, bg=bg)
@@ -286,6 +606,15 @@ class HourLogPage(tk.Frame):
 
 
     def refresh(self):
+        if self._destroyed:
+            return
+        if self._use_webview:
+            self.view_date = self.dm.today_date
+            if self._web_server is not None:
+                self._web_server.notify("update")
+            return
+        if not self._tk_built:
+            return
         now = datetime.now()
         self.view_date = self.dm.today_date
         enabled = bool(self.dm.hour_enabled)
@@ -373,10 +702,39 @@ class HourLogPage(tk.Frame):
             self.after_idle(self._commit, h, i)
 
     def show(self):
+        self._visible = True
         aw = self.dm.awaiting_slot()
-        self.refresh()
         now = datetime.now().replace(minute=0, second=0, microsecond=0)
-        row = self._row_of(aw if aw else now)
+        self.view_date = self.dm.today_date
+        row = min(max(self._row_of(aw if aw else now), 0), 23)
+        if self._use_webview:
+            self._scroll_seq += 1
+            self._scroll_row = row
+            if aw:
+                split = self.split(self._slot_start(row))
+                self._focus_cell = f"{row}:{1 if (split and aw.minute >= 30) else 0}"
+            else:
+                self._focus_cell = ""
+            if self._wv_show_job is not None:
+                try:
+                    self.after_cancel(self._wv_show_job)
+                except tk.TclError:
+                    pass
+            self._wv_show_job = self.after(60, self._start_webview_after_show)
+            self.refresh()
+            return
+        self.refresh()
         self._scroll_to(row)
         if aw and row in self.rows:
             (self.halves[row][0] if self._split.get(row) and aw.minute >= 30 else self.rows[row][1]).focus_set()
+
+    def hide(self):
+        self._visible = False
+        if self._wv_show_job is not None:
+            try:
+                self.after_cancel(self._wv_show_job)
+            except tk.TclError:
+                pass
+            self._wv_show_job = None
+        if self._wv_host is not None:
+            self._wv_host.set_visible(False)

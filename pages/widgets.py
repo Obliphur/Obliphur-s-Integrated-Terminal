@@ -70,11 +70,12 @@ class ScrollArea(tk.Frame):
         self._scroller = attach_smooth_scroll(self.canvas, self.scroll, self.inner, self._win)
         self._oit_scroller = self._scroller
         self.canvas._oit_scroller = self._scroller
+        self.inner._oit_scroller = self._scroller
         self._install_wheel_dispatcher()
-        self.bind_children()
 
     def bind_children(self):
-        """兼容旧调用方; 新控件只绑定一次，实际路由仍可由顶层分发器完成。"""
+        """兼容旧调用方与检查脚本; 每个新控件只绑定一次，实际路由仍可由顶层分发器完成。"""
+        self._install_wheel_dispatcher()
         def walk(widget):
             if not getattr(widget, "_oit_wheel", False):
                 try:
@@ -530,11 +531,9 @@ class _Snapshot:
         if not self.hwnd:
             return
         api = self.api()
-        ctypes, wt, u, g, k, d = api
+        ctypes, wt, u, g, k, _d = api
         try:
-            g.GdiFlush()                                # 新页面的绘制全部交给系统
-            if d is not None:
-                d.DwmFlush()                            # 等这一帧真正显示到屏幕上
+            g.GdiFlush()                                # 新页面的绘制全部交给系统, 不阻塞等待 DwmFlush 垂直同步
         except Exception:
             pass
         try:
@@ -722,7 +721,7 @@ class _SmoothScroll:
         if sz != self._inner_size:
             self._inner_size = sz
             try:
-                self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+                self.canvas.configure(scrollregion=(0, 0, max(1, event.width), max(1, event.height)))
             except Exception:
                 pass
 
@@ -769,7 +768,10 @@ class _SmoothScroll:
 
     def moveto(self, fraction: float):
         self._cancel_pending()
-        self._apply_covered(lambda: self.canvas.yview_moveto(fraction))
+        try:
+            self.canvas.yview_moveto(fraction)
+        except Exception:
+            pass
         self._after_scroll()
 
     def _after_scroll(self):
@@ -790,7 +792,7 @@ class _SmoothScroll:
     def _schedule(self):
         if self._scroll_job is None:
             try:
-                self._scroll_job = self.canvas.after(16, self._flush)
+                self._scroll_job = self.canvas.after(8, self._flush)
             except Exception:
                 self._scroll_job = None
 
@@ -818,16 +820,10 @@ class _SmoothScroll:
         except Exception:
             return
 
-        def do():
-            if yv is not None:
-                self.canvas.yview(*yv)
-            if wh:
-                self.canvas.yview_scroll(wh, "units")
-
-        if yv is not None and yv[0] == "moveto":
-            self._apply_covered(do)
-        else:
-            do()
+        if yv is not None:
+            self.canvas.yview(*yv)
+        if wh:
+            self.canvas.yview_scroll(wh, "units")
         self._after_scroll()
 
 
@@ -847,7 +843,7 @@ def _client_hwnd(top):
         return None
 
 
-def _drain(widget, limit: int = 400) -> int:
+def _drain(widget, limit: int = 120) -> int:
     """处理已经排队的窗口事件 (尺寸变化 / 重绘), 不等待新事件. 返回处理了几个."""
     if _WINDOW_EVENTS is None:
         return 0
@@ -861,7 +857,7 @@ def _drain(widget, limit: int = 400) -> int:
     return n
 
 
-def settle(widget, passes: int = 4):
+def settle(widget, passes: int = 2):
     """把布局真正算完: 布局 → 尺寸变化事件 (会触发自动换行等二次调整) → 再布局…"""
     for _ in range(passes):
         try:
@@ -895,7 +891,7 @@ def frozen(widget):
     finally:
         try:
             if depth == 0:
-                settle(top, passes=2)       # 冻结状态下把布局 (含二次布局) 算完
+                settle(top, passes=1)       # 冻结状态下把布局算完
         finally:
             _freeze_depth[key] -= 1
             if _freeze_depth[key] <= 0:
@@ -908,9 +904,10 @@ def frozen(widget):
                                              | _RDW_UPDATENOW)
                     except Exception:
                         pass
-                # 重绘请求已经排队, 立刻一口气画完, 不留到下一轮事件循环里零碎地画
                 try:
-                    settle(top, passes=1)
+                    top.update_idletasks()
+                except Exception:
+                    pass
                 finally:
                     if snap is not None:
                         snap.close()            # 新页面已经完整显示, 撤掉定格画面

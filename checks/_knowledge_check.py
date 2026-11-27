@@ -310,7 +310,16 @@ pr_b = kb.propose("ADD_CARD", subject="math", title="批量技巧乙",
 _root2 = _tk.Tk()
 _root2.withdraw()
 try:
-    page2 = KnowledgePage(_root2, str(base))
+    # 先验证 WebView2 模式下的状态输出与无 Tk 残留
+    page_wv = KnowledgePage(_root2, str(base))
+    page_wv.kb = kb
+    st_wv = page_wv._build_web_state()
+    assert not page_wv._tk_built, "WebView2 模式下不应残留旧 Tk 界面控件"
+    assert any(x["id"] == pr_a["pr_id"] for x in st_wv["items"]["proposals"])
+    page_wv.destroy()
+
+    with patch("pages.knowledge_page.is_webview2_available", return_value=False):
+        page2 = KnowledgePage(_root2, str(base))
     page2.kb = kb
     page2.show()
     page2.tabs.select(3)  # 待审提案

@@ -275,6 +275,9 @@ class PagesMixin:
             cfg(self._nav_indicator, bg=P.get("line", COLORS["accent"]) if on else COLORS["accent"])
 
     def _build_timer_page(self, body):
+        self._build_timer_page_tk(body)
+
+    def _build_timer_page_tk(self, body):
         bg, card = COLORS["bg"], COLORS["bg_card"]
 
         hdr = tk.Frame(body, bg=bg)

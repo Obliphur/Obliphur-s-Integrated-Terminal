@@ -23,6 +23,7 @@ from pages.share_dock import AiDataView, ShareDock
 from pages.widgets import LoadingCover, cfg, frozen
 from pages.knowledge_page import KnowledgePage
 from pages.room_page import RoomPage
+from pages.timer_web import TimerPage
 from .app_sidebar import SidebarMixin
 
 
@@ -492,9 +493,7 @@ class WindowMixin(SidebarMixin):
         self.pages.add_factory("net", make_net)
         yield
         def make_timer():
-            page = tk.Frame(self.content, bg=bg)
-            self._build_timer_page(page)
-            return page
+            return TimerPage(self.content, self)
         self.pages.add_factory("timer", make_timer)
         self._ensure_page("timer")
         yield
@@ -530,10 +529,9 @@ class WindowMixin(SidebarMixin):
                 self._rebuilding = False
 
     def _rebuild_ui(self, cover=None):
-        if "comm" in self.pages:
-            self.pages["comm"].hide()
-        if "room" in self.pages:
-            self.pages["room"].hide()
+        for k in ("comm", "room", "timer", "log", "knowledge"):
+            if k in self.pages and hasattr(self.pages[k], "hide"):
+                self.pages[k].hide()
         for job in (self.midnight_job, self.hourly_job, self.update_job,
                     self.net_job, getattr(self, "apply_job", None)):
             if job:
@@ -730,13 +728,16 @@ class WindowMixin(SidebarMixin):
                     f.hide()
             elif f.winfo_manager() == "grid":
                 f.grid_remove()
-                if k == "room":
+                if k in ("room", "comm", "timer", "log", "knowledge") and hasattr(f, "hide"):
                     f.hide()
         if key == "prescript":
             page = self.pages["prescript"]
             page.place(x=0, y=0, relwidth=1, relheight=1)
             page.lift()
             page.show()
+        elif key == "timer":
+            if hasattr(self.pages["timer"], "show"):
+                self.pages["timer"].show()
         elif key == "cal":
             self.pages["cal"].show()
         elif key == "stats":

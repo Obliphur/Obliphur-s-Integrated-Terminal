@@ -64,11 +64,15 @@ c.apply_doc({"split": False, "split_interval": 8})
 assert not c.split_on() and c.split_interval() == 0
 split_settings.destroy()
 try:
+    wv_page = CommPage(root, c)
+    assert not wv_page._tk_built, "WebView2 模式下沟通页不应残留旧 Tk 界面控件"
+    wv_page.destroy()
     for language in ("zh", "en"):
         i18n.set_language(language)
         for scale in (1.0, 1.5):
             config.UI_SCALE = scale
-            page = CommPage(root, c)
+            with patch("pages.comm_page.is_webview2_available", return_value=False):
+                page = CommPage(root, c)
             page.pack(fill="both", expand=True)
             # 图片附件按钮始终是 📎；待发区展示缩略图和独立取消按钮，剪贴板位图写入临时文件，并监听 <<Paste>>。
             assert page.entry.bind("<<Paste>>")

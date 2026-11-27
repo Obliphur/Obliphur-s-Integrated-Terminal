@@ -15,6 +15,7 @@ from i18n import tr
 ROOM_FILE = "comm_rooms.json"
 MAX_ROOM_LOGS = 500
 CUSTOM_PART_MIN_MSGS = 200
+HOLD_HAND_MIN_MSGS = 100
 
 IDLE_ACTIVITIES = (
     ("弹琴", 20, 30, "{who} 坐到钢琴前，静静弹起了琴（预计 {m} 分钟）。"),
@@ -35,6 +36,13 @@ FACILITY_ACTIONS = {
 }
 
 # (part_id, display_label, min_messages)
+ACTION_CHANNEL_LABELS = {
+    "left": "左手",
+    "right": "右手",
+    "both": "双手",
+    "gaze": "目光",
+}
+
 BODY_PARTS = (
     ("gaze", "目光注视", 0),
     ("sleeve", "衣袖 / 衣角", 0),
@@ -640,20 +648,22 @@ class RoomStore:
 
     # ---- 牵手与跟随（带角色出去 / 被带出去） ----
 
-    def hold_hand(self, side: str, actor_id: str, actor_name: str = "") -> str:
+    def hold_hand(self, side: str, actor_id: str, actor_name: str = "", msg_count: int | None = None) -> str:
         if side not in ("left", "right"):
             return "请指定左手或右手"
+        if msg_count is not None and int(msg_count) < HOLD_HAND_MIN_MSGS:
+            cur = int(msg_count)
+            return tr("牵手带走需要与对方累计 {req} 条消息（当前 {cur} 条，还差 {need} 条）。",
+                      req=HOLD_HAND_MIN_MSGS, cur=cur, need=HOLD_HAND_MIN_MSGS - cur)
         if self.hands[side]["state"] == "bound":
             return "这只手正被束缚着，无法牵手"
-        if self.hands[side]["state"] == "used":
-            return "这只手已安排了待发动作"
         if self.occupants.get("user") != self.occupants.get(actor_id):
             return "对方不在你当前所在的房间"
         self.holding_hands[side] = actor_id
-        self.hands[side] = {"state": "holding", "note": f"牵着 {actor_name or actor_id}"[:24]}
+        self.hands[side] = {"state": "holding", "note": f"握住 {actor_name or actor_id}"[:24]}
         rid = self.current_room_id()
         self.append_log(rid, "sys", "系统", ["all"], "sys",
-                        tr("你用{hand}牵住了 {who} 的手。",
+                        tr("你用{hand}握住了 {who} 的手。",
                            hand="左手" if side == "left" else "右手", who=actor_name or actor_id))
         self.save()
         return ""
@@ -1009,10 +1019,11 @@ class RoomStore:
             self.room_counts[sender] = self.room_counts.get(sender, 0) + 1
             self.last_user_interact[sender] = now
 
-    # ---- 双手槽位与部位互动 ----
+    # ---- 双手槽位、独立目光与部位互动 ----
 
     def available_hands(self) -> list[str]:
-        return [side for side in ("left", "right") if self.hands[side]["state"] == "free"]
+        """自由或握住状态的手都可脱离当前动作作出新动作，仅被束缚时不可用。"""
+        return [side for side in ("left", "right") if self.hands[side]["state"] != "bound"]
 
     def hand_label(self, side: str) -> str:
         name = "左手" if side == "left" else "右手"
@@ -1021,23 +1032,20 @@ class RoomStore:
         if st == "bound":
             return f"{name}: 被束缚" + (f"({note})" if note else "")
         if st == "holding":
-            return f"{name}: {note or '牵手中'}"
-        if st == "used":
-            return f"{name}: 已安排" + (f"({note})" if note else "")
-        return f"{name}: 空闲"
+            return f"{name}: {note or '握住'}"
+        return f"{name}: 自由"
 
     def queue_hand_action(self, hand: str, target_id: str, target_name: str, part: str, text: str,
                           msg_count: int | None = None, secret: bool = False) -> str:
-        if hand not in ("left", "right"):
-            return "请指定左手或右手"
-        st = self.hands[hand]["state"]
-        if st == "bound":
-            return "这只手正被束缚着，暂时无法行动"
-        if st == "holding":
-            return "这只手正牵着别人（可点手部标签松开）"
-        if st == "used":
-            return "这只手已经安排了待发动作"
         clean_part = str(part or "").strip()[:30]
+        if hand not in ("left", "right", "both", "gaze"):
+            return "请指定左手、右手、双手或目光"
+        if hand == "both":
+            if self.hands["left"]["state"] == "bound" or self.hands["right"]["state"] == "bound":
+                return "有手正被束缚着，暂时无法使用双手动作"
+        elif hand in ("left", "right"):
+            if self.hands[hand]["state"] == "bound":
+                return "这只手正被束缚着，暂时无法行动"
         if msg_count is not None and clean_part != "设施":
             ok, req = part_allowed(clean_part, msg_count)
             if not ok:
@@ -1046,7 +1054,22 @@ class RoomStore:
         clean_text = str(text or "").strip()[:300]
         if not clean_text:
             return "请输入互动内容"
-        self.hands[hand] = {"state": "used", "note": f"{target_name}·{clean_part}"[:24]}
+
+        # 自由或握住状态的手安排新动作时自动脱离原握持，并替换同通道旧待发动作
+        if hand == "gaze":
+            self.pending_actions = [a for a in self.pending_actions if a.get("hand") != "gaze"]
+        elif hand == "both":
+            for s in ("left", "right"):
+                if self.hands[s]["state"] == "holding":
+                    self.holding_hands[s] = ""
+                    self.hands[s] = {"state": "free", "note": ""}
+            self.pending_actions = [a for a in self.pending_actions if a.get("hand") not in ("left", "right", "both")]
+        else:
+            if self.hands[hand]["state"] == "holding":
+                self.holding_hands[hand] = ""
+                self.hands[hand] = {"state": "free", "note": ""}
+            self.pending_actions = [a for a in self.pending_actions if a.get("hand") not in (hand, "both")]
+
         self.pending_actions.append({
             "hand": hand,
             "target_id": target_id,
@@ -1059,10 +1082,7 @@ class RoomStore:
 
     def remove_pending_action(self, index: int):
         if 0 <= index < len(self.pending_actions):
-            item = self.pending_actions.pop(index)
-            side = item.get("hand")
-            if side in ("left", "right") and self.hands[side]["state"] == "used":
-                self.hands[side] = {"state": "free", "note": ""}
+            self.pending_actions.pop(index)
 
     def set_hand_bound(self, side: str, bound: bool, note: str = ""):
         sides = ("left", "right") if side == "both" else ((side,) if side in ("left", "right") else ())
@@ -1070,7 +1090,7 @@ class RoomStore:
             if bound:
                 self.holding_hands[s] = ""
                 self.hands[s] = {"state": "bound", "note": str(note or "")[:40]}
-                self.pending_actions = [a for a in self.pending_actions if a.get("hand") != s]
+                self.pending_actions = [a for a in self.pending_actions if a.get("hand") not in (s, "both")]
             elif self.hands[s]["state"] == "bound":
                 self.hands[s] = {"state": "free", "note": ""}
         self.save()
@@ -1078,7 +1098,7 @@ class RoomStore:
     def reset_turn_hands(self, save: bool = True, advance_turn: bool = False):
         self.pending_actions = []
         for side in ("left", "right"):
-            if self.hands[side]["state"] == "used":
+            if self.hands[side]["state"] not in ("free", "holding", "bound"):
                 self.hands[side] = {"state": "free", "note": ""}
         if save:
             self.save()
@@ -1283,7 +1303,7 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
             vol_tag = f"[在「{e.get('pos') or '原处'}」轻语]" if e.get("volume") == "whisper" else "[正常音量]"
             acts = e.get("actions") or []
             act_txt = "；".join(
-                f"[{'左手' if a.get('hand') == 'left' else '右手'}{'·隐秘' if a.get('secret') else ''}→{a.get('target_name')}·{a.get('part')}] {a.get('text')}"
+                f"[{ACTION_CHANNEL_LABELS.get(a.get('hand'), '手部')}{'·隐秘' if a.get('secret') else ''}→{a.get('target_name')}·{a.get('part')}] {a.get('text')}"
                 for a in acts
             )
             body = f"{act_txt} {e.get('text', '')}".strip()

@@ -110,6 +110,13 @@ class DailyMixin:
     def _show_sleep_cover(self):
         """盖住整个窗口 (侧边栏也盖住): 空白背景, 正中一个"起床". 程序照常运行, 只是用户碰不到别的功能."""
         self._hide_sleep_cover()
+        # 隐藏内嵌 WebView2 宿主，避免原生子窗口浮在睡眠遮罩之上
+        for k in ("comm", "room", "timer", "log", "knowledge"):
+            if k in self.pages and hasattr(self.pages[k], "hide"):
+                try:
+                    self.pages[k].hide()
+                except Exception:
+                    pass
         bg = COLORS["bg"]
         cover = tk.Frame(self.root, bg=bg)
         cover.place(x=0, y=0, relwidth=1, relheight=1)
@@ -158,6 +165,12 @@ class DailyMixin:
                 cover.destroy()
             except tk.TclError:
                 pass
+            cur = getattr(self, "current_page", "")
+            if cur in ("comm", "room", "timer", "log", "knowledge") and cur in self.pages and hasattr(self.pages[cur], "show"):
+                try:
+                    self.pages[cur].show()
+                except Exception:
+                    pass
 
     def _sleep_focus_guard(self, event):
         """睡眠中: 键盘焦点跑到被盖住的控件上 (Tab) 就拉回"起床"按钮, 免得用空格 / 回车按到下面的按钮."""

@@ -30,6 +30,11 @@ class CommVoiceMixin:
         self._voice_active = False
 
     def _voice_scroll(self, m):
+        if getattr(self, "_wv_active", False):
+            srv = getattr(self, "_web_server", None)
+            if srv is not None:
+                srv.notify("scroll_to", {"msg_id": m["id"]})
+            return
         self.update_idletasks()
         if m["id"] not in self._rendered:
             msgs = self.comm.visible()

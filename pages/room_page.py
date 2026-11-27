@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """🏠 情景房间子页面（PC 优先）：分人设房间、钥匙与内部反锁、按条数解锁部位、定向听觉隔离与 NPC 自主移动/对话。"""
 
+import os
+import queue
 import sys
 import threading
 import tkinter as tk
@@ -13,6 +15,7 @@ from comm.comm_persona import list_personas, persona_system, persona_title
 from comm.comm_room import (
     BODY_PARTS,
     CUSTOM_PART_MIN_MSGS,
+    HOLD_HAND_MIN_MSGS,
     RoomStore,
     build_actor_turn_prompt,
     build_map_generation_prompt,
@@ -25,11 +28,13 @@ from comm.comm_room import (
 )
 from config import COLORS
 from i18n import tr
+from .room_web import RoomWebServer
+from .webview2_host import WebView2Host, is_webview2_available
 from .widgets import Modal, cfg
 
 
 class RoomPage(tk.Frame):
-    """独立全尺寸情景房间子页面，由沟通页进入。"""
+    """独立全尺寸情景房间子页面，由沟通页进入（Windows 优先使用原生内嵌 WebView2，无运行时自动回退 Tk）。"""
 
     def __init__(self, master, comm, data_dir: str, username=None,
                  on_back=None, on_open_page=None, on_open_settings=None,
@@ -47,8 +52,9 @@ class RoomPage(tk.Frame):
 
         self.store = comm.room_store if (comm is not None and hasattr(comm, "room_store")) else RoomStore(data_dir)
         if comm is not None:
-            comm.on_room_changed = lambda: self.after(0, self.refresh) if self.winfo_exists() else None
+            comm.on_room_changed = lambda: self.after(0, self.refresh) if (not self._destroyed and self.winfo_exists()) else None
         self._visible = False
+        self._destroyed = False
         self._auto_job = None
         self._busy_actors: set[str] = set()
         self._generating_map = False
@@ -56,8 +62,21 @@ class RoomPage(tk.Frame):
         self._var_volume = tk.StringVar(value="normal")
         self._room_ids: list[str] = []
 
+        self._use_webview = is_webview2_available()
+        self._wv_host: WebView2Host | None = None
+        self._wv_loading: tk.Label | None = None
+        self._web_server: RoomWebServer | None = None
+        self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._ui_poll_job = None
+        self._wv_show_job = None
+        self._tk_built = False
+
+        self.bind("<Destroy>", self._on_page_destroy)
         self._sync_persona_rooms()
-        self._build()
+        if self._use_webview:
+            self._build_webview()
+        else:
+            self._build()
         self.refresh()
 
     def _sync_persona_rooms(self):
@@ -95,9 +114,502 @@ class RoomPage(tk.Frame):
         chat_n = self.comm.msg_total_for(actor_id) if (self.comm and hasattr(self.comm, "msg_total_for")) else 0
         return chat_n + self.store.room_msg_count(actor_id)
 
-    # ══════════════ 界面构建 ══════════════
+    # ══════════════ WebView2 原生内嵌与本地服务 ══════════════
+
+    def _build_webview(self):
+        self._web_server = RoomWebServer(
+            get_state=lambda: self._call_on_ui(self._build_web_state),
+            handle_action=lambda body: self._call_on_ui(lambda: self._handle_web_action(body)),
+        )
+        self._schedule_ui_poll()
+
+        self._wv_host = WebView2Host(
+            self,
+            bg=COLORS["bg"],
+            on_ready=self._on_webview_ready,
+            on_error=self._fallback_to_tk,
+        )
+        self._wv_host.pack(fill="both", expand=True)
+
+        self._wv_loading = tk.Label(
+            self,
+            text=tr("正在加载小屋界面…"),
+            bg=COLORS["bg"],
+            fg=COLORS["text_dim"],
+            font=config.font("body"),
+        )
+        self._wv_loading.place(relx=0.5, rely=0.5, anchor="center")
+
+    def _on_webview_ready(self):
+        if self._wv_loading is not None:
+            try:
+                self._wv_loading.place_forget()
+            except tk.TclError:
+                pass
+        if self._wv_host is not None:
+            self._wv_host.set_visible(self._visible)
+            if self._visible:
+                self.after_idle(self._sync_webview_visible)
+                self.after(250, self._sync_webview_visible)
+                self.after(800, self._sync_webview_visible)
+                self.after(1000, self._dump_webview_diag)
+
+    def _dump_webview_diag(self):
+        """将当前 WebView2 嵌入状态写入临时诊断日志，便于排查显示问题。"""
+        if self._destroyed or not self._use_webview or self._wv_host is None:
+            return
+        try:
+            import ctypes
+            import tempfile
+            from ctypes import wintypes
+
+            u32 = ctypes.windll.user32
+            h = self._wv_host._host_hwnd
+            hr = wintypes.RECT()
+            u32.GetClientRect(h, ctypes.byref(hr))
+            ch = u32.GetWindow(h, 5) if h else 0
+            cr = wintypes.RECT()
+            if ch:
+                u32.GetWindowRect(ch, ctypes.byref(cr))
+            anc = []
+            cur = h
+            buf = ctypes.create_unicode_buffer(64)
+            for _ in range(6):
+                if not cur:
+                    break
+                u32.GetClassNameW(cur, buf, 64)
+                st = u32.GetWindowLongW(cur, -16)
+                anc.append(f"{cur}:{buf.value}(vis={int(bool(u32.IsWindowVisible(cur)))},ws={int(bool(st & 0x10000000))})")
+                cur = u32.GetParent(cur)
+            log_dir = os.path.join(tempfile.gettempdir(), "OIT")
+            os.makedirs(log_dir, exist_ok=True)
+            with open(os.path.join(log_dir, "room_webview_diag.txt"), "w", encoding="utf-8") as f:
+                f.write(
+                    f"ready={self._wv_host.ready} visible={self._visible} "
+                    f"host_hwnd={h} host_vis={bool(u32.IsWindowVisible(h)) if h else False} "
+                    f"host_client=({hr.left},{hr.top},{hr.right},{hr.bottom}) "
+                    f"child_hwnd={ch} child_vis={bool(u32.IsWindowVisible(ch)) if ch else False} "
+                    f"child_rect=({cr.left},{cr.top},{cr.right},{cr.bottom}) "
+                    f"ancestors={' -> '.join(anc)} "
+                    f"url={self._web_server.url if self._web_server else ''}\n"
+                )
+        except Exception:
+            pass
+
+    def _sync_webview_visible(self):
+        if self._destroyed or not self._use_webview or self._wv_host is None:
+            return
+        self._wv_host.sync_bounds()
+        self._wv_host.set_visible(self._visible)
+        if self._visible:
+            self._wv_host.notify_parent_moved()
+
+    def _fallback_to_tk(self, _reason: str = ""):
+        if self._destroyed or not self._use_webview:
+            return
+        self._use_webview = False
+        if self._wv_host is not None:
+            try:
+                self._wv_host.close()
+                self._wv_host.destroy()
+            except Exception:
+                pass
+            self._wv_host = None
+        if self._wv_loading is not None:
+            try:
+                self._wv_loading.destroy()
+            except Exception:
+                pass
+            self._wv_loading = None
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:
+                pass
+            self._web_server = None
+        if not self._tk_built:
+            self._build()
+        self.refresh()
+
+    def _on_page_destroy(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        self._destroyed = True
+        self._visible = False
+        if self._auto_job:
+            try:
+                self.after_cancel(self._auto_job)
+            except tk.TclError:
+                pass
+            self._auto_job = None
+        if self._ui_poll_job:
+            try:
+                self.after_cancel(self._ui_poll_job)
+            except tk.TclError:
+                pass
+            self._ui_poll_job = None
+        if self._wv_host is not None:
+            try:
+                self._wv_host.close()
+            except Exception:
+                pass
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:
+                pass
+
+    def _schedule_ui_poll(self):
+        if self._destroyed or not self._use_webview:
+            return
+        self._drain_ui_queue()
+        try:
+            self._ui_poll_job = self.after(30, self._schedule_ui_poll)
+        except tk.TclError:
+            self._ui_poll_job = None
+
+    def _drain_ui_queue(self):
+        while not self._destroyed:
+            try:
+                fn, done, box = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                box["val"] = fn()
+            except Exception as exc:
+                box["err"] = exc
+            finally:
+                done.set()
+
+    def _call_on_ui(self, fn):
+        """将 HTTP 工作线程的请求安全切回 Tk 主线程执行。"""
+        if self._destroyed:
+            return {"ok": False, "error": "closed"}
+        if threading.current_thread() is threading.main_thread():
+            return fn()
+        done = threading.Event()
+        box: dict = {}
+        self._ui_queue.put((fn, done, box))
+        try:
+            self.after(0, self._drain_ui_queue)
+        except (tk.TclError, RuntimeError):
+            pass
+        if not done.wait(timeout=5.0):
+            return {"ok": False, "error": "timeout"}
+        if "err" in box:
+            raise box["err"]
+        return box.get("val")
+
+    def _build_web_state(self) -> dict:
+        room = self.store.current_room()
+        rid = room["id"]
+        names = self._persona_names()
+
+        lock_reason = room.get("locked_reason") or ""
+        if room.get("locked_inside"):
+            if lock_reason == "focus":
+                lock_tag = tr(" · 专注中已反锁")
+            elif lock_reason == "sleep":
+                lock_tag = tr(" · 睡眠中已反锁")
+            else:
+                lock_tag = tr(" · 已内部反锁")
+        else:
+            lock_tag = ""
+
+        occ_ids = self.store.occupants_in(rid)
+        occupants_pairs = [(aid, names.get(aid, aid)) for aid in occ_ids]
+        map_text, hotspots = render_room_map(room, occupants_pairs)
+        self._hotspots = hotspots
+
+        sched = self._schedule_status_map()
+        occ_list = []
+        for aid in occ_ids:
+            name = names.get(aid, aid)
+            is_me = (aid == "user")
+            pos_tag = self.store.position_of(aid)
+            act_tag = "" if is_me else self.store.activity_label(aid, schedule_kind=sched.get(aid, ""))
+            extras = [x for x in (pos_tag, act_tag) if x and x != "房间中央"]
+            suffix = f" ({' · '.join(extras)})" if extras else ""
+            occ_list.append({
+                "id": aid,
+                "name": name,
+                "is_me": is_me,
+                "chip_text": f"@{name}" + (" [我]" if is_me else "") + suffix,
+            })
+
+        rooms = self.store.room_list()
+        self._room_ids = [r["id"] for r in rooms]
+        rooms_ui = []
+        rooms_overview = []
+        shareable_rooms = []
+        for r in rooms:
+            cnt = len(self.store.occupants_in(r["id"]))
+            badge = self._room_badge(r)
+            rooms_ui.append({
+                "id": r["id"],
+                "name": r["name"],
+                "label": f"{badge} {r['name']} ({cnt}人)",
+            })
+            occ_txt = "、".join(names.get(a, a) for a in self.store.occupants_in(r["id"])) or tr("空")
+            if r.get("is_public"):
+                key_txt = tr("公共空间（无需钥匙）")
+            else:
+                key_txt = tr("钥匙持有：{k}", k="、".join(names.get(k, k) for k in (r.get("keys") or [])))
+                if self.store.has_key("user", r["id"]):
+                    shareable_rooms.append({"id": r["id"], "name": r["name"]})
+            lock_txt = tr(" [已内部反锁]") if r.get("locked_inside") else ""
+            rooms_overview.append(f"{badge} {r['name']}{lock_txt} — {key_txt} | 在场：{occ_txt}")
+
+        personas_ui = []
+        if self.comm:
+            for p in list_personas(self.comm.personas):
+                personas_ui.append({"id": p, "name": names.get(p, p)})
+
+        npc_on = bool(self.comm.cfg.get("room_npc_chat", False)) if self.comm else False
+        interval = int(self.comm.cfg.get("room_npc_interval") or 30) if self.comm else 30
+        prob = int(self.comm.cfg.get("room_npc_prob") or 30) if self.comm else 30
+        idle_m = int(self.comm.cfg.get("room_npc_idle_min") or 15) if self.comm else 15
+        auto_status_text = (
+            tr("● 自动行动已开 ({s}s/{p}% · {m}m静默)", s=interval, p=prob, m=idle_m)
+            if npc_on else tr("○ 自动行动未开 (点此设置)")
+        )
+
+        vol = self._var_volume.get() or "normal"
+        if vol == "whisper":
+            pos = self.store.position_of("user")
+            listeners = [names.get(a, a) for a in self.store.listeners_for_volume(rid, "user", "whisper") if a != "user"]
+            vol_hint = (
+                tr("仅「{pos}」可听：{who}", pos=pos, who="、".join(listeners))
+                if listeners else tr("仅「{pos}」可听（附近暂无其他人）", pos=pos)
+            )
+        else:
+            vol_hint = tr("房间内所有人都能听见")
+
+        if self._generating_map:
+            busy_text = tr("正在绘制字符画地图…")
+        elif self._busy_actors:
+            who = "、".join(names.get(a, a) for a in sorted(self._busy_actors))
+            busy_text = tr("{who} 正在行动…", who=who)
+        else:
+            busy_text = ""
+
+        return {
+            "colors": {
+                "bg": COLORS.get("bg", "#0f131b"),
+                "bg_card": COLORS.get("bg_card", "#171c28"),
+                "border": COLORS.get("border", "#2a3346"),
+                "text": COLORS.get("text", "#e6edf7"),
+                "text_dim": COLORS.get("text_dim", "#8b97ad"),
+                "accent": COLORS.get("accent", "#67d5f7"),
+                "accent_hover": COLORS.get("accent_hover", "#8be0fa"),
+            },
+            "room": {
+                "id": rid,
+                "name": room["name"],
+                "theme": room.get("theme") or "",
+                "ambience": room.get("ambience") or "",
+                "locked_inside": bool(room.get("locked_inside")),
+            },
+            "lock_tag": lock_tag,
+            "rooms": rooms_ui,
+            "shareable_rooms": shareable_rooms,
+            "rooms_overview": rooms_overview,
+            "personas": personas_ui,
+            "map_text": map_text,
+            "hotspots": hotspots,
+            "occupants": occ_list,
+            "hands": {
+                "left": {"state": self.store.hands["left"]["state"], "label": self.store.hand_label("left")},
+                "right": {"state": self.store.hands["right"]["state"], "label": self.store.hand_label("right")},
+            },
+            "pending_actions": list(self.store.pending_actions),
+            "logs": self.store.user_display_logs(rid, names),
+            "volume": vol,
+            "vol_hint": vol_hint,
+            "npc_on": npc_on,
+            "auto_status_text": auto_status_text,
+            "busy_text": busy_text,
+            "generating_map": self._generating_map,
+        }
+
+    def _handle_web_action(self, body: dict) -> dict:
+        atype = str(body.get("type") or "")
+        if atype == "back":
+            self.after(0, self._go_back)
+            return {"ok": True}
+        if atype == "open_settings":
+            self.after(0, self._open_comm_settings)
+            return {"ok": True}
+        if atype == "open_page":
+            page = str(body.get("page") or "")
+            if page and callable(self.on_open_page):
+                self.after(0, lambda p=page: self.on_open_page(p))
+            return {"ok": True}
+        if atype == "open_music":
+            if callable(self.on_music):
+                self.after(0, self.on_music)
+                return {"ok": True}
+            return {"ok": True, "toast": tr("请从沟通页打开音乐演奏功能。")}
+        if atype == "open_coread":
+            if callable(self.on_coread):
+                self.after(0, self.on_coread)
+                return {"ok": True}
+            return {"ok": True, "toast": tr("共读入口暂不可用。")}
+        if atype == "open_joint":
+            if callable(self.on_joint):
+                self.after(0, self.on_joint)
+                return {"ok": True}
+            return {"ok": True, "toast": tr("联合行动入口暂不可用。")}
+        if atype == "switch_room":
+            rid = str(body.get("room_id") or "")
+            err = self.store.enter_room("user", rid, self._actor_name("user"), name_map=self._persona_names())
+            st = self._build_web_state()
+            if err:
+                return {"ok": False, "toast": err, "warn": True, "state": st}
+            return {"ok": True, "state": st}
+        if atype == "toggle_lock":
+            room = self.store.current_room()
+            err = self.store.set_room_lock(room["id"], "user", not room.get("locked_inside"), self._actor_name("user"))
+            st = self._build_web_state()
+            if err:
+                return {"ok": False, "toast": tr(err), "warn": True, "state": st}
+            return {"ok": True, "state": st}
+        if atype == "move_position":
+            label = str(body.get("label") or "")
+            if self.store.move_position("user", label, self._actor_name("user")):
+                self._notify_room_action_change()
+                return {
+                    "ok": True,
+                    "toast": tr("你移动到了「{pos}」，现在点击人物可触发相关位置互动。", pos=label),
+                    "state": self._build_web_state(),
+                }
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "move_near":
+            target_pos = str(body.get("target_pos") or "")
+            if target_pos:
+                self.store.move_position("user", target_pos, self._actor_name("user"))
+                self._notify_room_action_change()
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "release_hand":
+            side = str(body.get("side") or "")
+            if side in ("left", "right") and self.store.hands[side]["state"] == "holding":
+                self.store.release_hand(side, self._persona_names())
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "toggle_hold":
+            actor_id = str(body.get("actor_id") or "")
+            actor_name = str(body.get("actor_name") or self._actor_name(actor_id))
+            holding_side = next((s for s in ("left", "right") if self.store.holding_hands.get(s) == actor_id), "")
+            if holding_side:
+                self.store.release_hand(holding_side, self._persona_names())
+                self._notify_room_action_change()
+                return {"ok": True, "state": self._build_web_state()}
+            free = self.store.available_hands()
+            if not free:
+                return {"ok": False, "toast": tr("当前没有可用的手来牵住对方。"), "warn": True}
+            err = self.store.hold_hand(free[0], actor_id, actor_name, msg_count=self.total_msgs_with(actor_id))
+            if err:
+                return {"ok": False, "toast": tr(err), "warn": True}
+            self._notify_room_action_change()
+            return {
+                "ok": True,
+                "toast": tr("已牵住 {name} 的手，切换房间时会把对方一起带出去。", name=actor_name),
+                "state": self._build_web_state(),
+            }
+        if atype == "actor_interact_info":
+            actor_id = str(body.get("actor_id") or "")
+            msg_count = self.total_msgs_with(actor_id)
+            user_pos = self.store.position_of("user")
+            target_pos = self.store.position_of(actor_id)
+            pos_opts = position_interactions_for(user_pos, target_pos)
+            holding_side = next((s for s in ("left", "right") if self.store.holding_hands.get(s) == actor_id), "")
+            parts = []
+            for _pid, plabel, req in BODY_PARTS:
+                ok, _ = part_allowed(plabel, msg_count)
+                parts.append({"label": plabel, "req": req, "allowed": ok})
+            pos_parts = []
+            for _pid, plabel, req in pos_opts:
+                ok, _ = part_allowed(plabel, msg_count)
+                pos_parts.append({"label": plabel, "req": req, "allowed": ok})
+            return {
+                "ok": True,
+                "info": {
+                    "msg_count": msg_count,
+                    "user_pos": user_pos,
+                    "target_pos": target_pos,
+                    "holding_side": holding_side,
+                    "available_hands": self.store.available_hands(),
+                    "hands": {
+                        "left": {"state": self.store.hands["left"]["state"]},
+                        "right": {"state": self.store.hands["right"]["state"]},
+                    },
+                    "parts": parts,
+                    "pos_parts": pos_parts,
+                    "custom_ok": msg_count >= CUSTOM_PART_MIN_MSGS,
+                    "custom_min": CUSTOM_PART_MIN_MSGS,
+                    "hold_ok": msg_count >= HOLD_HAND_MIN_MSGS,
+                    "hold_min": HOLD_HAND_MIN_MSGS,
+                },
+            }
+        if atype == "queue_action":
+            hand = str(body.get("hand") or "")
+            if not hand:
+                return {"ok": False, "toast": tr("请先选择动作通道（左手 / 右手 / 双手 / 目光）。"), "warn": True}
+            target_id = str(body.get("target_id") or "")
+            target_name = str(body.get("target_name") or "")
+            part = str(body.get("part") or "")
+            text = str(body.get("text") or "").strip()
+            secret = bool(body.get("secret", False))
+            if body.get("is_facility"):
+                err = self.store.queue_hand_action(hand, target_id, target_name, "设施", text)
+            else:
+                msg_count = self.total_msgs_with(target_id)
+                err = self.store.queue_hand_action(
+                    hand, target_id, target_name, part, text, msg_count=msg_count, secret=secret
+                )
+            if err:
+                return {"ok": False, "toast": tr(err), "warn": True}
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "remove_pending":
+            idx = int(body.get("index", -1))
+            self.store.remove_pending_action(idx)
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "set_volume":
+            vol = str(body.get("volume") or "normal")
+            if vol in ("normal", "whisper"):
+                self._var_volume.set(vol)
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "send":
+            text = str(body.get("text") or "").strip()
+            self._send_text(text)
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "grant_key":
+            rid = str(body.get("room_id") or "")
+            to_id = str(body.get("to_id") or "")
+            names = self._persona_names()
+            err = self.store.grant_key(rid, "user", to_id, self._actor_name("user"), names.get(to_id, to_id))
+            st = self._build_web_state()
+            if err:
+                return {"ok": False, "toast": tr(err), "warn": True, "state": st}
+            rname = (self.store.rooms.get(rid) or {}).get("name", rid)
+            return {
+                "ok": True,
+                "toast": tr("已把「{r}」的钥匙分给 {p}", r=rname, p=names.get(to_id, to_id)),
+                "state": st,
+            }
+        if atype == "create_room":
+            theme = str(body.get("theme") or "").strip()
+            desc = str(body.get("desc") or "").strip()
+            is_pub = bool(body.get("is_public", False))
+            if not theme:
+                return {"ok": False, "toast": tr("请先输入房间主题"), "warn": True}
+            self._generate_room_async(theme, desc, is_pub)
+            return {"ok": True, "state": self._build_web_state()}
+        return {"ok": False, "error": f"unknown_action:{atype}"}
+
+    # ══════════════ Tk 降级界面构建（无 WebView2 时使用） ══════════════
 
     def _build(self):
+        self._tk_built = True
         bg = COLORS["bg"]
         card = COLORS["bg_card"]
         border = COLORS["border"]
@@ -245,19 +757,52 @@ class RoomPage(tk.Frame):
 
     # ══════════════ 生命周期与刷新 ══════════════
 
+    def _start_webview_after_show(self):
+        self._wv_show_job = None
+        if self._destroyed or not self._visible or not self._use_webview:
+            return
+        if self._wv_host is None or self._web_server is None:
+            return
+        url = self._web_server.start()
+        self._wv_host.start(url)
+        self._wv_host.set_visible(True)
+        self.after(120, self._sync_webview_visible)
+        if self._web_server is not None:
+            self._web_server.notify_update("show")
+
     def show(self):
         self._visible = True
         if self.comm is not None:
             self.comm.room_viewing = True
         self._sync_persona_rooms()
+        if self._use_webview and self._wv_host is not None and self._web_server is not None:
+            if self._wv_show_job is not None:
+                try:
+                    self.after_cancel(self._wv_show_job)
+                except tk.TclError:
+                    pass
+            # 用短延时彻底避开 frozen() 内的 settle()/update_idletasks() 冻结期
+            self._wv_show_job = self.after(60, self._start_webview_after_show)
+            self.refresh()
+            self._schedule_auto_tick()
+            return
         self.refresh()
         self._schedule_auto_tick()
-        self.entry.focus_set()
+        if self._tk_built:
+            self.entry.focus_set()
 
     def hide(self):
         self._visible = False
+        if self._wv_show_job is not None:
+            try:
+                self.after_cancel(self._wv_show_job)
+            except tk.TclError:
+                pass
+            self._wv_show_job = None
         if self.comm is not None:
             self.comm.room_viewing = False
+        if self._use_webview and self._wv_host is not None:
+            self._wv_host.set_visible(False)
         if self._auto_job:
             try:
                 self.after_cancel(self._auto_job)
@@ -281,10 +826,25 @@ class RoomPage(tk.Frame):
         return "🔑" if self.store.has_key("user", r["id"]) else "🔒"
 
     def refresh(self):
+        if self._destroyed:
+            return
         self._sync_persona_rooms()
         room = self.store.current_room()
         rid = room["id"]
         names = self._persona_names()
+
+        if self._use_webview:
+            occ_ids = self.store.occupants_in(rid)
+            occupants = [(aid, names.get(aid, aid)) for aid in occ_ids]
+            _, hotspots = render_room_map(room, occupants)
+            self._hotspots = hotspots
+            self._room_ids = [r["id"] for r in self.store.room_list()]
+            if self._web_server is not None:
+                self._web_server.notify_update("refresh")
+            return
+
+        if not self._tk_built:
+            return
 
         lock_reason = room.get("locked_reason") or ""
         if room.get("locked_inside"):
@@ -479,6 +1039,12 @@ class RoomPage(tk.Frame):
         w.configure(state="disabled")
 
     def _update_busy_label(self, names: dict[str, str]):
+        if self._use_webview:
+            if self._web_server is not None:
+                self._web_server.notify_update("busy")
+            return
+        if not self._tk_built:
+            return
         if self._generating_map:
             cfg(self.lbl_busy, text=tr("正在绘制字符画地图…"))
         elif self._busy_actors:
@@ -904,6 +1470,12 @@ class RoomPage(tk.Frame):
 
     def _send(self):
         text = self.entry.get("1.0", "end").strip()
+        if not text and not self.store.pending_actions:
+            return
+        self.entry.delete("1.0", "end")
+        self._send_text(text)
+
+    def _send_text(self, text: str):
         actions = list(self.store.pending_actions)
         if not text and not actions:
             return
@@ -911,7 +1483,6 @@ class RoomPage(tk.Frame):
         volume = self._var_volume.get() or "normal"
         targets = self.store.listeners_for_volume(room_id, "user", volume)
 
-        self.entry.delete("1.0", "end")
         self.store.append_log(room_id, "user", self._actor_name("user"), targets,
                               "action" if actions and not text else "say", text,
                               actions=actions, volume=volume, pos=self.store.position_of("user"))

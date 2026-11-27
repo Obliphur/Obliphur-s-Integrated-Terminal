@@ -3,10 +3,14 @@
 
 消息是增量画的: 新消息只加一行, 不重画整页 (整页重画会有卡顿感); 宽度 / 头像设置变了才重画."""
 
+import base64
 import os
 import json
+import queue
 import sys
+import threading
 import tkinter as tk
+import urllib.parse
 from datetime import datetime
 from tkinter import ttk
 
@@ -20,6 +24,8 @@ from config import COLORS
 from i18n import tr
 from .widgets import Modal, ScrollArea, cfg, focus_name, frozen, wrap_label
 from .comm_voice import CommVoiceMixin
+from .comm_web import CommWebServer
+from .webview2_host import WebView2Host, is_webview2_available
 
 
 def _take_camera_photo():
@@ -56,9 +62,34 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self._first_draw = True
         self._sig = None             # 画法变了 (宽度 / 头像) 才需要重画
         self._photos = {}            # (路径, 大小, 修改时间) → PhotoImage
-        self._build()
+        self._destroyed = False
+        self._visible = False
+        self._reading_mode_flag = False
+        self._use_webview = is_webview2_available()
+        self._wv_active = False
+        self._wv_host: WebView2Host | None = None
+        self._wv_loading: tk.Label | None = None
+        self._web_server: CommWebServer | None = None
+        self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._ui_poll_job = None
+        self._wv_show_job = None
+        self._wv_last_status_sig = None
+        self._tk_built = False
+        self._who_labels = []
+        self._cfg_ids = []
+        self._burst_consent_prompted = None
+        self._burst_consent_open = False
+        self._pending_image = ""
+        self._pending_image_photo = None
+
+        self.bind("<Destroy>", self._on_comm_destroy)
+        if self._use_webview:
+            self._ensure_webview()
+        else:
+            self._build()
 
     def _build(self):
+        self._tk_built = True
         bg = COLORS["bg"]
         hdr = tk.Frame(self, bg=bg)
         hdr.pack(fill="x", padx=28, pady=(18, 6))
@@ -179,10 +210,516 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.entry.bind("<Return>", self._on_return)
         self.entry.bind("<<Paste>>", self._paste_image)
 
+    # ---- WebView2 原生内嵌层 ----
+
+    def _ensure_webview(self):
+        if not self._use_webview or self._wv_host is not None or self._destroyed:
+            return
+        self._web_server = CommWebServer(
+            get_state=lambda limit: self._call_on_ui(lambda: self._build_web_state(limit)),
+            handle_action=lambda body: self._call_on_ui(lambda: self._handle_web_action(body)),
+            resolve_media=lambda kind, name: self._call_on_ui(lambda: self._resolve_web_media(kind, name)),
+        )
+        self._schedule_ui_poll()
+        self._wv_host = WebView2Host(
+            self,
+            bg=COLORS["bg"],
+            on_ready=self._on_webview_ready,
+            on_error=self._fallback_to_tk,
+        )
+        self._wv_host.pack(fill="both", expand=True)
+        self._wv_loading = tk.Label(
+            self,
+            text=tr("正在加载沟通界面…"),
+            bg=COLORS["bg"],
+            fg=COLORS["text_dim"],
+            font=config.font("body"),
+        )
+        self._wv_loading.place(relx=0.5, rely=0.5, anchor="center")
+        self._wv_active = True
+
+    def _start_webview_after_show(self):
+        self._wv_show_job = None
+        if self._destroyed or not self._visible or not self._use_webview:
+            return
+        self._ensure_webview()
+        if self._wv_host is None or self._web_server is None:
+            return
+        url = self._web_server.start()
+        self._wv_host.lift()
+        self._wv_host.start(url)
+        self._wv_host.set_visible(True)
+        self.after(120, self._sync_webview_visible)
+        if self._web_server is not None:
+            self._web_server.notify("update")
+
+    def _on_webview_ready(self):
+        if self._wv_loading is not None:
+            try:
+                self._wv_loading.place_forget()
+            except tk.TclError:
+                pass
+        if self._wv_host is not None:
+            self._wv_host.set_visible(self._visible)
+            if self._visible:
+                self.after_idle(self._sync_webview_visible)
+                self.after(250, self._sync_webview_visible)
+                self.after(800, self._sync_webview_visible)
+
+    def _sync_webview_visible(self):
+        if self._destroyed or not self._wv_active or self._wv_host is None:
+            return
+        self._wv_host.sync_bounds()
+        self._wv_host.set_visible(self._visible)
+        if self._visible:
+            self._wv_host.notify_parent_moved()
+
+    def _fallback_to_tk(self, _reason: str = ""):
+        if self._destroyed:
+            return
+        self._use_webview = False
+        self._wv_active = False
+        if self._wv_host is not None:
+            try:
+                self._wv_host.close()
+                self._wv_host.destroy()
+            except Exception:
+                pass
+            self._wv_host = None
+        if self._wv_loading is not None:
+            try:
+                self._wv_loading.destroy()
+            except Exception:
+                pass
+            self._wv_loading = None
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:
+                pass
+            self._web_server = None
+        if not self._tk_built:
+            self._build()
+        self.refresh(force=True)
+
+    def _on_comm_destroy(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        self._destroyed = True
+        self._visible = False
+        self._wv_active = False
+        if self._ui_poll_job:
+            try:
+                self.after_cancel(self._ui_poll_job)
+            except tk.TclError:
+                pass
+            self._ui_poll_job = None
+        if self._wv_host is not None:
+            try:
+                self._wv_host.close()
+            except Exception:
+                pass
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:
+                pass
+
+    def _schedule_ui_poll(self):
+        if self._destroyed or not self._use_webview:
+            return
+        self._drain_ui_queue()
+        try:
+            self._ui_poll_job = self.after(30, self._schedule_ui_poll)
+        except tk.TclError:
+            self._ui_poll_job = None
+
+    def _drain_ui_queue(self):
+        while not self._destroyed:
+            try:
+                fn, done, box = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                box["val"] = fn()
+            except Exception as exc:
+                box["err"] = exc
+            finally:
+                done.set()
+
+    def _call_on_ui(self, fn):
+        if self._destroyed:
+            return {"ok": False, "error": "closed"}
+        if threading.current_thread() is threading.main_thread():
+            return fn()
+        done = threading.Event()
+        box: dict = {}
+        self._ui_queue.put((fn, done, box))
+        try:
+            self.after(0, self._drain_ui_queue)
+        except (tk.TclError, RuntimeError):
+            pass
+        if not done.wait(timeout=5.0):
+            return {"ok": False, "error": "timeout"}
+        if "err" in box:
+            raise box["err"]
+        return box.get("val")
+
+    def _media_url(self, kind: str, name: str = "", mtime: float = 0.0) -> str:
+        if not self._web_server:
+            return ""
+        q = f"kind={urllib.parse.quote(kind)}&token={urllib.parse.quote(self._web_server.token)}"
+        if name:
+            q += f"&name={urllib.parse.quote(name)}"
+        if mtime:
+            q += f"&v={int(mtime)}"
+        return f"/api/media?{q}"
+
+    def _resolve_web_media(self, kind: str, name: str) -> str:
+        c = self.comm
+        if kind == "avatar_me":
+            return c.avatar_path("me") or ""
+        if kind == "avatar_ai":
+            return c.avatar_path("ai") or ""
+        if kind == "avatar_ai_full":
+            cur = c.avatar_path("ai")
+            if not cur:
+                return ""
+            full = avatar_mod.full_path(c.avatar_dest("ai"))
+            return full if os.path.isfile(full) else cur
+        if kind == "chat_img" and name:
+            return c.chat_image_path(name)
+        if kind == "pending_img":
+            return self._pending_image or ""
+        return ""
+
+    def _build_web_state(self, limit: int = 80) -> dict:
+        c = self.comm
+        blocked = c.blocked()
+        status_text = blocked or (tr(c.error) if c.error else "")
+        other_text, other_kind = c.other_status_display()
+        tension_text = c.tension_display(config.COMM_SHOW_TENSION)
+
+        cfg_options = [{"value": o["id"], "label": o["name"]} for o in c.config_options()]
+        cfg_current = c.current_config() or ""
+        who_pairs = comm_mod.persona_labels(comm_mod.list_personas(c.personas))
+        self._who_labels = who_pairs
+        who_options = [{"value": n, "label": lab} for n, lab in who_pairs]
+        who_current = c.persona_name() or ""
+
+        invites = []
+        if c.burst_consent_pending():
+            invites.append({
+                "text": tr("🛡 {name} 等待同意声明确认", name=c.share_ai_name()),
+                "buttons": [{"label": tr("确认"), "action": {"type": "open_consent"}}],
+            })
+        if c.coread_offer():
+            invites.append({
+                "text": tr("📚 {name} 想和你共同阅读", name=c.share_ai_name()),
+                "buttons": [
+                    {"label": tr("接受"), "action": {"type": "coread_respond", "accept": True}},
+                    {"label": tr("拒绝"), "action": {"type": "coread_respond", "accept": False}},
+                ],
+            })
+        if c.share_invite():
+            invites.append({
+                "text": tr("{name} 想看你们的数据", name=c.share_ai_name()),
+                "buttons": [
+                    {"label": tr("接受"), "action": {"type": "share_respond", "accept": True}},
+                    {"label": tr("拒绝"), "action": {"type": "share_respond", "accept": False}},
+                ],
+            })
+        if c.joint_invite():
+            invites.append({
+                "text": "",
+                "buttons": [
+                    {"label": tr("接受"), "action": {"type": "joint_respond", "accept": True}},
+                    {"label": tr("拒绝"), "action": {"type": "joint_respond", "accept": False}},
+                ],
+            })
+        if c.love_invite():
+            invites.append({
+                "text": tr("{name} 向你告白", name=c.share_ai_name()),
+                "buttons": [
+                    {"label": tr("接受"), "action": {"type": "love_respond", "accept": True}},
+                    {"label": tr("拒绝"), "action": {"type": "love_respond", "accept": False}},
+                ],
+            })
+
+        draft = c.joint_label()
+        requests = c.request_draft_labels()
+        pending = " · ".join(([draft] if draft else []) + requests)
+        draft_text = pending or c.joint_status_text()
+
+        pending_img_url = ""
+        pending_img_label = ""
+        if self._pending_image and os.path.isfile(self._pending_image):
+            try:
+                mt = os.path.getmtime(self._pending_image)
+            except OSError:
+                mt = 0.0
+            pending_img_url = self._media_url("pending_img", mtime=mt)
+            pending_img_label = self._pending_image_label()
+
+        show_avatar = bool(c.cfg.get("show_avatar"))
+        me_av_path = c.avatar_path("me") if show_avatar else ""
+        ai_av_path = c.avatar_path("ai") if show_avatar else ""
+        me_av_url = self._media_url("avatar_me", mtime=os.path.getmtime(me_av_path)) if (me_av_path and os.path.isfile(me_av_path)) else ""
+        ai_av_url = self._media_url("avatar_ai", mtime=os.path.getmtime(ai_av_path)) if (ai_av_path and os.path.isfile(ai_av_path)) else ""
+        ai_full_url = self._media_url("avatar_ai_full", mtime=os.path.getmtime(ai_av_path)) if (ai_av_path and os.path.isfile(ai_av_path)) else ""
+
+        all_msgs = c.visible()
+        has_more = len(all_msgs) > limit
+        sliced = all_msgs[-limit:] if limit > 0 else all_msgs
+        voice_enabled = bool(c.voice.data.get("enabled"))
+
+        kb = None
+        msgs_out = []
+        for m in sliced:
+            img_name = str(m.get("img") or "").strip()
+            img_path = c.chat_image_path(img_name) if img_name else ""
+            img_url = ""
+            if img_path and os.path.isfile(img_path):
+                img_url = self._media_url("chat_img", name=img_name)
+            try:
+                when = datetime.fromisoformat(m["at"]).strftime("%H:%M")
+            except (KeyError, ValueError):
+                when = ""
+            cits = []
+            if m.get("role") != "me" and m.get("kb_citations"):
+                if kb is None:
+                    from knowledge import get_knowledge
+                    kb = get_knowledge(c.dir)
+                for cit in m["kb_citations"]:
+                    if isinstance(cit, dict) and kb.resolve_trace(cit.get("card_id", "")):
+                        cits.append({"card_id": cit["card_id"], "title": cit.get("title", "")})
+            msgs_out.append({
+                "id": m["id"],
+                "role": m.get("role", "ai"),
+                "text": m.get("text", ""),
+                "time": when,
+                "img_url": img_url,
+                "kb_citations": cits,
+                "voice_enabled": voice_enabled,
+            })
+
+        return {
+            "colors": {
+                "bg": COLORS.get("bg", "#0f131b"),
+                "bg_card": COLORS.get("bg_card", "#171c28"),
+                "border": COLORS.get("border", "#2a3346"),
+                "text": COLORS.get("text", "#e6edf7"),
+                "text_dim": COLORS.get("text_dim", "#8b97ad"),
+                "accent": COLORS.get("accent", "#67d5f7"),
+                "accent_hover": COLORS.get("accent_hover", "#8be0fa"),
+                "accent_fill": COLORS.get("accent_fill", COLORS.get("accent", "#2563eb")),
+                "on_accent_fill": COLORS.get("on_accent_fill", COLORS.get("on_accent", "#ffffff")),
+                "danger": COLORS.get("danger", "#ef4444"),
+            },
+            "labels": {
+                "title": tr("💬  沟通"),
+                "clear": tr("清空"),
+                "send": tr("发送"),
+                "trace_prefix": tr("结论溯源") + ": ",
+                "reading_lock": tr("正在共读，请在阅读网页里的聊天框继续沟通。"),
+                "end_reading": tr("结束阅读并恢复沟通"),
+            },
+            "cfg_options": cfg_options,
+            "cfg_current": cfg_current,
+            "who_options": who_options,
+            "who_current": who_current,
+            "other_text": other_text,
+            "other_dot_color": comm_mod.STATUS_COLORS.get(other_kind, COLORS.get("text_dim", "#8b97ad")),
+            "tension_text": tension_text,
+            "status_text": status_text,
+            "status_danger": bool(blocked or c.error),
+            "blocked": bool(blocked),
+            "muted": bool(c.is_muted()),
+            "co_alarm_active": bool(c.co_alarm_pid() and c.co_alarm_pid() == c.pid),
+            "share_state": "on" if c.share_on() else ("asking" if c.share_asking() else "off"),
+            "shift_asking": bool(c.shift_asking()),
+            "show_consent_btn": bool(c.burst_consent_rules_for()),
+            "invites": invites,
+            "draft_text": draft_text,
+            "draft_is_pending": bool(pending),
+            "pending_image_url": pending_img_url,
+            "pending_image_label": pending_img_label,
+            "show_avatar": show_avatar,
+            "me_avatar_url": me_av_url,
+            "ai_avatar_url": ai_av_url,
+            "ai_full_avatar_url": ai_full_url,
+            "me_char": (self.username() or "我")[:1],
+            "ai_char": (comm_mod.persona_title(c.persona_name())[:1] or "?"),
+            "voice_enabled": voice_enabled,
+            "reading_mode": bool(self._reading_mode_flag or getattr(c, "reading_mode", False)),
+            "has_more": has_more,
+            "messages": msgs_out,
+        }
+
+    def _handle_web_action(self, body: dict) -> dict:
+        atype = str(body.get("type") or "")
+        if atype == "pick_who":
+            name = str(body.get("name") or "")
+            if name and name != self.comm.persona_name():
+                self.comm.set_persona(name)
+                self._ver = -1
+                self.refresh(force=True)
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "pick_config":
+            cid = str(body.get("id") or "")
+            if cid != self.comm.current_config():
+                self.comm.set_config(cid)
+                self._ver = -1
+                self.refresh(force=True)
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "send":
+            text = str(body.get("text") or "").strip()
+            return self._send_from_web(text)
+        if atype == "paste_image_data":
+            data_url = str(body.get("data_url") or "")
+            if "," not in data_url:
+                return {"ok": False, "toast": tr("剪贴板图片无效"), "warn": True}
+            try:
+                raw = base64.b64decode(data_url.split(",", 1)[1])
+            except Exception:
+                return {"ok": False, "toast": tr("剪贴板图片解码失败"), "warn": True}
+            if len(raw) > ai_assist.OCR_MAX_BYTES:
+                return {"ok": False, "toast": tr("图片太大了 (最大 4.5 MB)"), "warn": True}
+            mime = ai_assist.image_mime(raw)
+            if not mime:
+                return {"ok": False, "toast": tr("只支持 PNG / JPG / WEBP / GIF 图片"), "warn": True}
+            ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(mime, ".png")
+            import tempstore
+            tmp_path = tempstore.mktemp("comm_paste", ext)
+            with open(tmp_path, "wb") as f:
+                f.write(raw)
+            self._set_pending_image(tmp_path)
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "clear_pending_image":
+            self._clear_pending_image()
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "clear_package_drafts":
+            self._clear_package_drafts()
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "toggle_mute":
+            self._toggle_mute()
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "co_alarm":
+            self._co_alarm()
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "toggle_share":
+            self._toggle_share()
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "coread_respond":
+            self._coread_respond(bool(body.get("accept")))
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "share_respond":
+            self._share_respond(bool(body.get("accept")))
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "joint_respond":
+            self._joint_respond(bool(body.get("accept")))
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "love_respond":
+            self._love_respond(bool(body.get("accept")))
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "voice_play":
+            mid = body.get("msg_id")
+            m = next((x for x in self.comm.visible() if x.get("id") == mid), None)
+            if m is not None:
+                self._voice_manual(m)
+            return {"ok": True}
+        # 弹窗 / 切页类动作异步交给 Tk 主线程，不阻塞 WebView2
+        if atype == "open_room":
+            if callable(self.on_room):
+                self.after(0, self.on_room)
+            return {"ok": True}
+        if atype == "clear":
+            self.after(0, self._clear)
+            return {"ok": True}
+        if atype == "help":
+            self.after(0, self._help)
+            return {"ok": True}
+        if atype == "joint":
+            self.after(0, self._joint)
+            return {"ok": True}
+        if atype == "shift":
+            self.after(0, self._shift)
+            return {"ok": True}
+        if atype == "ocr":
+            self.after(0, self._ocr)
+            return {"ok": True}
+        if atype == "pick_image":
+            self.after(0, self._pick_image)
+            return {"ok": True}
+        if atype == "take_photo":
+            self.after(0, self._take_photo)
+            return {"ok": True}
+        if atype == "review_performance":
+            self.after(0, self._review_performance)
+            return {"ok": True}
+        if atype == "reading":
+            self.after(0, self._reading)
+            return {"ok": True}
+        if atype == "open_consent":
+            self.after(0, self._open_burst_consent)
+            return {"ok": True}
+        if atype == "end_reading":
+            if callable(self.on_coread_end):
+                self.after(0, self.on_coread_end)
+            return {"ok": True}
+        if atype == "open_trace":
+            cid = str(body.get("card_id") or "")
+            if cid:
+                def _show_trace():
+                    from .knowledge_page import show_trace
+                    from knowledge import get_knowledge
+                    kb = get_knowledge(self.comm.dir)
+                    show_trace(self, cid, kb, self._open_knowledge_card)
+                self.after(0, _show_trace)
+            return {"ok": True}
+        return {"ok": False, "error": f"unknown_action:{atype}"}
+
+    def _send_from_web(self, text: str) -> dict:
+        if getattr(self.comm, "reading_mode", False):
+            return {"ok": False, "toast": tr("正在共读，请在阅读网页里的聊天框继续沟通.")}
+        image = None
+        if self._pending_image:
+            try:
+                if os.path.getsize(self._pending_image) > ai_assist.OCR_MAX_BYTES:
+                    return {"ok": False, "toast": tr("图片太大了 (最大 4.5 MB)"), "warn": True}
+                with open(self._pending_image, "rb") as stream:
+                    image = stream.read()
+                if not ai_assist.image_mime(image):
+                    return {"ok": False, "toast": tr("只支持 PNG / JPG / WEBP / GIF 图片"), "warn": True}
+            except OSError:
+                return {"ok": False, "toast": tr("打不开这张图片."), "warn": True}
+        why = self.comm.send(text, image=image)
+        if why == "empty":
+            return {"ok": False}
+        if why:
+            self._report(why)
+            return {"ok": False, "toast": tr(why), "warn": True, "state": self._build_web_state()}
+        self._pending_image = ""
+        self._pending_image_photo = None
+        self.refresh(force=True)
+        return {"ok": True, "state": self._build_web_state()}
+
     # ---- 显示 ----
 
     def show(self):
+        self._visible = True
         self.comm.set_viewing(True)
+        if self._use_webview:
+            if self._wv_show_job is not None:
+                try:
+                    self.after_cancel(self._wv_show_job)
+                except tk.TclError:
+                    pass
+            self._wv_show_job = self.after(60, self._start_webview_after_show)
+            self.refresh(force=False)
+            self._voice_start()
+            self._voice_job = self.after(100, self._voice_poll)
+            return
         self.refresh(force=False)
         self.entry.focus_set()
         self._to_end()
@@ -190,12 +727,25 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self._voice_job = self.after(100, self._voice_poll)
 
     def hide(self):
+        self._visible = False
+        if self._wv_show_job is not None:
+            try:
+                self.after_cancel(self._wv_show_job)
+            except tk.TclError:
+                pass
+            self._wv_show_job = None
+        if self._wv_host is not None:
+            self._wv_host.set_visible(False)
         self._voice_cancel()
         self.comm.set_viewing(False)
 
     def set_reading_mode(self, enabled):
         """阅读网页聊天独占当前人设时, 遮住原沟通页直到结束阅读."""
         enabled = bool(enabled)
+        self._reading_mode_flag = enabled
+        if self._wv_active and self._web_server is not None:
+            self._web_server.notify("update")
+            return
         if enabled and self._reading_lock is None:
             lock = self._reading_lock = tk.Frame(self, bg=COLORS["bg"])
             tk.Label(lock, text=tr("正在共读，请在阅读网页里的聊天框继续沟通。"),
@@ -354,11 +904,20 @@ class CommPage(CommVoiceMixin, tk.Frame):
         c = self.comm
         blocked = c.blocked()
         text = blocked or (tr(c.error) if c.error else "")
-        cfg(self.lbl_status, text=text, fg=COLORS["danger"] if (blocked or c.error) else COLORS["text_dim"])
         other, kind = c.other_status_display()
+        tension = c.tension_display(config.COMM_SHOW_TENSION)
+        if self._wv_active:
+            sig = (text, other, kind, tension)
+            if sig != self._wv_last_status_sig:
+                self._wv_last_status_sig = sig
+                if self._web_server is not None:
+                    self._web_server.notify("update")
+            return
+        if not self._tk_built:
+            return
+        cfg(self.lbl_status, text=text, fg=COLORS["danger"] if (blocked or c.error) else COLORS["text_dim"])
         cfg(self.lbl_other_dot, text="●" if other else "", fg=comm_mod.STATUS_COLORS.get(kind, COLORS["text_dim"]))
         cfg(self.lbl_other, text=other)
-        tension = c.tension_display(config.COMM_SHOW_TENSION)
         cfg(self.lbl_tension, text=tension)
         if tension and not self.lbl_tension.winfo_manager():
             self.lbl_tension.pack(fill="x", padx=30, pady=(0, 2), after=self.other_row)
@@ -366,9 +925,27 @@ class CommPage(CommVoiceMixin, tk.Frame):
             self.lbl_tension.pack_forget()
 
     def refresh(self, force: bool = False):
+        if self._destroyed:
+            return
         c = self.comm
         self._resize_job = None
         self._sync_status()
+        if self._wv_active:
+            blocked = c.blocked()
+            pending_consent = c.burst_consent_pending()
+            if pending_consent:
+                prompt_key = (c.pid, pending_consent)
+                if self._burst_consent_prompted != prompt_key and not self._burst_consent_open:
+                    self._burst_consent_prompted = prompt_key
+                    self.after(60, self._open_burst_consent)
+            if force or blocked != self._blocked or c.version != self._ver:
+                self._ver = c.version
+                self._blocked = blocked
+                if self._web_server is not None:
+                    self._web_server.notify("update")
+            return
+        if not self._tk_built:
+            return
         if focus_name(self.cb_cfg) not in (str(self.cb_cfg), "popdown"):          # 正在选配置 (下拉框开着) 时不动它
             options = c.config_options()
             labels = [o["name"] for o in options]
@@ -1141,7 +1718,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
             filetypes=[(tr("图片"), "*.png *.jpg *.jpeg *.webp *.gif"), (tr("所有文件"), "*.*")])
         if not path:
             return
-        self.btn_ocr.config(state="disabled", text="…")
+        if self._tk_built:
+            self.btn_ocr.config(state="disabled", text="…")
         toast.info(tr("正在识别图片上的文字…"))
 
         def work():
@@ -1159,17 +1737,25 @@ class CommPage(CommVoiceMixin, tk.Frame):
         def done(res):
             if not self.winfo_exists():
                 return
-            self.btn_ocr.config(state="normal", text="🖼")
+            if self._tk_built:
+                self.btn_ocr.config(state="normal", text="🖼")
             if res[0] != "ok":
                 toast.warn(tr(res[1]))
             elif not res[1].strip():
                 toast.warn(tr("图片上没有识别到文字."))
-            else:
+            elif self._tk_built:
                 cur = self.entry.get("1.0", "end-1c")
                 self.entry.insert("end", ("\n" if cur.strip() else "") + res[1])
                 self.entry.focus_set()
                 self.entry.see("end")
                 toast.success(tr("文字已放进聊天框."))
+            else:
+                try:
+                    self.clipboard_clear()
+                    self.clipboard_append(res[1])
+                except Exception:
+                    pass
+                toast.success(tr("文字已识别并复制到剪贴板."))
         import threading
         threading.Thread(target=work, daemon=True).start()
 

@@ -14,6 +14,8 @@ from knowledge import get_knowledge, select_vault
 from knowledge.kb_ai import complete_card, import_previews
 from knowledge.kb_auto_import import auto_generate, clear_auto_progress, load_auto_progress
 from knowledge.kb_store import read_json
+from .knowledge_web import _KNOWLEDGE_HTML
+from .webview2_host import LocalWebServer, WebView2Host, is_webview2_available
 from .widgets import Modal, ScrollArea, wrap_label
 
 LABELS = {"title": "标题", "category": "分类", "topic": "主题", "aliases": "别名", "triggers": "触发特征",
@@ -81,8 +83,29 @@ class KnowledgePage(tk.Frame):
         self._jobs = queue.Queue()
         self._poll_job = None
         self._active_bg = 0
+        self._destroyed = False
+        self._visible = False
+        self._use_webview = is_webview2_available()
+        self._tk_built = False
+        self._wv_host: WebView2Host | None = None
+        self._wv_loading: tk.Label | None = None
+        self._web_server: LocalWebServer | None = None
+        self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._ui_poll_job = None
+        self._wv_show_job = None
+        self._web_tab = "tactical"
+        self.lists = {}
         self.bind("<Destroy>", self._destroy, add="+")
         self.subject, self.category, self.query, self.sort = tk.StringVar(value=tr("全部")), tk.StringVar(value=tr("全部分类")), tk.StringVar(), tk.StringVar(value=tr("综合权重"))
+        self.mode = tk.StringVar(value=self.kb.config.get("solver_mode", "exploration"))
+        if self._use_webview:
+            self._build_webview()
+        else:
+            self._build_tk()
+            self.show()
+
+    def _build_tk(self):
+        self._tk_built = True
         tk.Label(self, text=tr("📚  知识库"), bg=COLORS["bg"], fg=COLORS["text"], font=config.font("h1", bold=True)).pack(anchor="w", padx=18, pady=12)
         tools = tk.Frame(self, bg=COLORS["bg"])
         tools.pack(fill="x", padx=16)
@@ -93,7 +116,6 @@ class KnowledgePage(tk.Frame):
             tools.columnconfigure(col, weight=1)
         mode_row = tk.Frame(self, bg=COLORS["bg"])
         mode_row.pack(fill="x", padx=18, pady=4)
-        self.mode = tk.StringVar(value=self.kb.config.get("solver_mode", "exploration"))
         for value, label in (("exploration", "探索模式"), ("conservative", "保守模式")):
             ttk.Radiobutton(mode_row, text=tr(label), variable=self.mode, value=value,
                             command=lambda: self.kb.configure(solver_mode=self.mode.get())).pack(side="left", padx=(0, 12))
@@ -172,19 +194,399 @@ class KnowledgePage(tk.Frame):
         ttk.Button(item_row, text=tr("管理所选卡片"), command=lambda: self.details(self.active_tab())).pack(side="left", padx=(8, 0))
         self.tabs.bind("<<NotebookTabChanged>>", lambda _: self._sync_footer())
         self._sync_footer()
+
+    # ---- WebView2 原生内嵌层 ----
+
+    def _build_webview(self):
+        self._web_server = LocalWebServer(
+            html_provider=lambda tok: _KNOWLEDGE_HTML.replace("__TOKEN__", json.dumps(tok)),
+            get_state=lambda: self._call_on_ui(self._build_web_state),
+            handle_action=lambda body: self._call_on_ui(lambda: self._handle_web_action(body)),
+            thread_name="oit-kb-web",
+        )
+        self._schedule_ui_poll()
+        self._wv_host = WebView2Host(
+            self,
+            bg=COLORS["bg"],
+            on_ready=self._on_webview_ready,
+            on_error=self._fallback_to_tk,
+        )
+        self._wv_host.pack(fill="both", expand=True)
+        self._wv_loading = tk.Label(
+            self,
+            text=tr("正在加载知识库…"),
+            bg=COLORS["bg"],
+            fg=COLORS["text_dim"],
+            font=config.font("body"),
+        )
+        self._wv_loading.place(relx=0.5, rely=0.5, anchor="center")
+
+    def _start_webview_after_show(self):
+        self._wv_show_job = None
+        if self._destroyed or not self._visible or not self._use_webview:
+            return
+        if self._wv_host is None or self._web_server is None:
+            return
+        url = self._web_server.start()
+        self._wv_host.lift()
+        self._wv_host.start(url)
+        self._wv_host.set_visible(True)
+        self.after(120, self._sync_webview_visible)
+        self._web_server.notify("update")
+
+    def _on_webview_ready(self):
+        if self._wv_loading is not None:
+            try:
+                self._wv_loading.place_forget()
+            except tk.TclError:
+                pass
+        if self._wv_host is not None:
+            self._wv_host.set_visible(self._visible)
+            if self._visible:
+                self.after_idle(self._sync_webview_visible)
+                self.after(200, self._sync_webview_visible)
+
+    def _sync_webview_visible(self):
+        if self._destroyed or not self._use_webview or self._wv_host is None:
+            return
+        self._wv_host.sync_bounds()
+        self._wv_host.set_visible(self._visible)
+        if self._visible:
+            self._wv_host.notify_parent_moved()
+
+    def _fallback_to_tk(self, _reason: str = ""):
+        if self._destroyed or not self._use_webview:
+            return
+        self._use_webview = False
+        if self._wv_host is not None:
+            try:
+                self._wv_host.close()
+                self._wv_host.destroy()
+            except Exception:
+                pass
+            self._wv_host = None
+        if self._wv_loading is not None:
+            try:
+                self._wv_loading.destroy()
+            except Exception:
+                pass
+            self._wv_loading = None
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:
+                pass
+            self._web_server = None
+        if not self._tk_built:
+            self._build_tk()
         self.show()
+
+    def _schedule_ui_poll(self):
+        if self._destroyed or not self._use_webview:
+            return
+        self._drain_ui_queue()
+        try:
+            self._ui_poll_job = self.after(30, self._schedule_ui_poll)
+        except tk.TclError:
+            self._ui_poll_job = None
+
+    def _drain_ui_queue(self):
+        while not self._destroyed:
+            try:
+                fn, done, box = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                box["val"] = fn()
+            except Exception as exc:
+                box["err"] = exc
+            finally:
+                done.set()
+
+    def _call_on_ui(self, fn):
+        if self._destroyed:
+            return {"ok": False, "error": "closed"}
+        if threading.current_thread() is threading.main_thread():
+            return fn()
+        done = threading.Event()
+        box: dict = {}
+        self._ui_queue.put((fn, done, box))
+        try:
+            self.after(0, self._drain_ui_queue)
+        except (tk.TclError, RuntimeError):
+            pass
+        if not done.wait(timeout=10.0):
+            return {"ok": False, "error": "timeout"}
+        if "err" in box:
+            raise box["err"]
+        return box.get("val")
+
+    def _collect_filtered_items(self):
+        self.kb.refresh()
+        self.mode.set(self.kb.config.get("solver_mode", "exploration"))
+        subjects_vals = [tr("全部"), *[tr(v) for v in self.kb.subjects.values()]]
+        domain = next((k for k, v in self.kb.subjects.items() if tr(v) == self.subject.get()), None)
+        cat_values = [tr("全部分类"), *self.kb.categories(domain)]
+        selected_cat = self.category.get().strip()
+        if selected_cat not in cat_values:
+            selected_cat = tr("全部分类")
+            self.category.set(selected_cat)
+        active_cat = "" if selected_cat == tr("全部分类") else selected_cat
+        query = self.query.get().strip()
+        stats = read_json(self.kb.internal / "stats.json")
+        concepts = self.kb.conceptual_cards()
+        reminders = self.kb.reminder_cards()
+        cards = list(self.kb.cards.values())
+        if query:
+            ranked_ids = [hit["card_id"] for d in ([domain] if domain else self.kb.subjects)
+                          for hit in self.kb.search_tactical(d, query, 20) if hit.get("card_id") in self.kb.cards]
+            seen = set()
+            matched = []
+            for cid in ranked_ids:
+                if cid not in seen:
+                    seen.add(cid)
+                    matched.append(self.kb.cards[cid])
+            for card in cards:
+                if card["id"] not in seen and self._card_matches(card, query):
+                    seen.add(card["id"])
+                    matched.append(card)
+            cards = matched
+        mode = self.sort.get()
+        if mode == tr("频次"):
+            cards.sort(key=lambda c: -stats.get(c["id"], {}).get("freq", 0))
+        elif mode == tr("最近使用"):
+            cards.sort(key=lambda c: stats.get(c["id"], {}).get("last_used", ""), reverse=True)
+        elif mode == tr("层级视图"):
+            from knowledge.kb_rank import depth
+            cards.sort(key=lambda c: (depth(self.kb.cards, c["id"]), c.get("title", "")))
+        elif not query:
+            cards.sort(key=lambda c: (-stats.get(c["id"], {}).get("weight", 1), c.get("title", "")))
+
+        items_by_tab = {}
+        counts = {}
+        proposals_all = self.kb.proposals()
+        for key, entries in (("tactical", cards), ("conceptual", concepts), ("reminder", reminders), ("proposals", proposals_all)):
+            out = []
+            for card in entries:
+                if domain and card.get("subject") != domain:
+                    continue
+                card_cat = str(card.get("category") or (card.get("proposed_card") or {}).get("category") or "").strip()
+                if active_cat and card_cat != active_cat:
+                    continue
+                if key != "tactical" and query and not self._card_matches(card, query):
+                    continue
+                ident = card.get("pr_id") or card["id"]
+                info = tr(self.kb.subjects.get(card.get("subject"), card.get("subject", "")))
+                if card_cat:
+                    info += f"·{card_cat}"
+                st = stats.get(ident, {})
+                title = card.get("title", "")
+                if key == "tactical":
+                    info += f"  ×{st.get('freq', 0)}  w={st.get('weight', 1):.2f}"
+                    title = ("★ " if st.get("user_pinned") else "") + title
+                    if mode == tr("层级视图"):
+                        title = "  " * min(len(self.kb.ancestor_ids(ident)), 8) + title
+                elif key == "reminder":
+                    info += f"  ×{st.get('shown', 0)}  w={st.get('weight', 1):.2f}"
+                    title = ("★ " if st.get("user_pinned") else "") + title
+                elif key == "proposals":
+                    info += "  " + card["action"] + f" ×{card['squash_count']}"
+                out.append({"id": ident, "title": title, "info": info})
+            items_by_tab[key] = out
+            counts[key] = len(out)
+        return subjects_vals, cat_values, query, counts, len(proposals_all), items_by_tab
+
+    def _build_web_state(self) -> dict:
+        subjects_vals, cat_values, query, counts, total_proposals, items_by_tab = self._collect_filtered_items()
+        tabs = [
+            {"key": "tactical", "label": tr("技巧库") + (f" ({counts['tactical']})" if query else "")},
+            {"key": "conceptual", "label": tr("概念库") + (f" ({counts['conceptual']})" if query else "")},
+            {"key": "reminder", "label": tr("提醒库") + (f" ({counts['reminder']})" if query else "")},
+            {"key": "proposals", "label": tr("待审提案") + f" ({counts['proposals'] if query else total_proposals})"},
+        ]
+        return {
+            "colors": {
+                "bg": COLORS.get("bg", "#0f131b"),
+                "bg_card": COLORS.get("bg_card", "#171c28"),
+                "border": COLORS.get("border", "#2a3346"),
+                "text": COLORS.get("text", "#e6edf7"),
+                "text_dim": COLORS.get("text_dim", "#8b97ad"),
+                "accent": COLORS.get("accent", "#67d5f7"),
+                "accent_hover": COLORS.get("accent_hover", "#8be0fa"),
+                "accent_fill": COLORS.get("accent_fill", COLORS.get("accent", "#2563eb")),
+                "on_accent_fill": COLORS.get("on_accent_fill", COLORS.get("on_accent", "#ffffff")),
+            },
+            "labels": {
+                "title": tr("📚  知识库"),
+                "exploration": tr("探索模式"),
+                "conservative": tr("保守模式"),
+                "open_obsidian": tr("在 Obsidian 中打开"),
+                "new_card": tr("新建卡片"),
+                "import_notes": tr("导入笔记"),
+                "refresh": tr("刷新索引"),
+                "help": tr("知识库帮助"),
+                "settings": tr("知识库设置"),
+                "search": tr("搜索"),
+                "clear": tr("清空"),
+                "select_all": tr("全选"),
+                "clear_sel": tr("全不选"),
+                "batch_approve": tr("批量批准"),
+                "batch_delete": tr("批量删除"),
+                "batch_reject": tr("批量拒绝"),
+                "open_selected": tr("查看所选卡片或提案"),
+                "manage_selected": tr("管理所选卡片"),
+                "empty": tr("暂无条目"),
+            },
+            "mode": self.mode.get(),
+            "subjects": subjects_vals,
+            "subject": self.subject.get(),
+            "categories": cat_values,
+            "category": self.category.get(),
+            "sorts": [tr(x) for x in ("综合权重", "频次", "最近使用", "层级视图")],
+            "sort": self.sort.get(),
+            "query": self.query.get(),
+            "active_tab": self._web_tab,
+            "tabs": tabs,
+            "tab_notes": {
+                "conceptual": tr("概念性笔记仅供阅读与复习，AI 解题不会读取，也无权重排序"),
+                "reminder": tr("提醒库记录踩过的坑与易错检查点；解题命中时 AI 会顺带提醒，并随提醒次数自动拉长间隔（置顶可始终提醒）"),
+            },
+            "items": items_by_tab,
+        }
+
+    def _handle_web_action(self, body: dict) -> dict:
+        atype = str(body.get("type") or "")
+        if atype == "set_mode":
+            m = str(body.get("mode") or "exploration")
+            self.mode.set(m)
+            self.kb.configure(solver_mode=m)
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "set_subject":
+            self.subject.set(str(body.get("value") or tr("全部")))
+            self.category.set(tr("全部分类"))
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "set_category":
+            self.category.set(str(body.get("value") or tr("全部分类")))
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "set_sort":
+            self.sort.set(str(body.get("value") or tr("综合权重")))
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "set_query":
+            self.query.set(str(body.get("value") or ""))
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "set_tab":
+            t = str(body.get("tab") or "tactical")
+            if t in ("tactical", "conceptual", "reminder", "proposals"):
+                self._web_tab = t
+            return {"ok": True}
+        if atype == "refresh":
+            return {"ok": True, "state": self._build_web_state()}
+        if atype == "open_obsidian":
+            self.after(0, lambda: open_obsidian(self.kb.root, self.data_dir))
+            return {"ok": True}
+        if atype == "new_card":
+            self.after(0, self.new_card)
+            return {"ok": True}
+        if atype == "import_notes":
+            self.after(0, self.import_notes)
+            return {"ok": True}
+        if atype == "help":
+            self.after(0, self.help)
+            return {"ok": True}
+        if atype == "settings":
+            self.after(0, self.settings)
+            return {"ok": True}
+        if atype == "open_item":
+            kind = str(body.get("kind") or self._web_tab)
+            ident = str(body.get("id") or "")
+            if ident:
+                self.after(0, lambda k=kind, i=ident: self._open_item_by_id(k, i))
+            return {"ok": True}
+        if atype == "details_item":
+            kind = str(body.get("kind") or self._web_tab)
+            ident = str(body.get("id") or "")
+            if ident:
+                self.after(0, lambda k=kind, i=ident: self._details_by_id(k, i))
+            return {"ok": True}
+        if atype == "approve_selected":
+            ids = [str(x) for x in (body.get("ids") or []) if x]
+            self.after(0, lambda xs=ids: self._approve_ids(xs))
+            return {"ok": True}
+        if atype == "delete_selected":
+            kind = str(body.get("kind") or self._web_tab)
+            ids = [str(x) for x in (body.get("ids") or []) if x]
+            self.after(0, lambda k=kind, xs=ids: self._delete_ids(k, xs))
+            return {"ok": True}
+        return {"ok": False, "error": f"unknown_action:{atype}"}
+
+    def _approve_ids(self, selected: list[str]):
+        if not selected:
+            return
+        merged, errors = 0, 0
+        for pr_id in selected:
+            try:
+                self.kb.merge(pr_id, maintainer=True)
+                merged += 1
+            except (ValueError, OSError):
+                errors += 1
+        self.show()
+        if errors:
+            toast.warn(tr("已批准 {ok} 项，失败 {err} 项。", ok=merged, err=errors))
+
+    def _delete_ids(self, kind: str, selected: list[str]):
+        if not selected:
+            return
+        if kind == "proposals":
+            if not messagebox.askyesno(tr("批量拒绝提案"), tr("确定拒绝选中的 {n} 项提案吗？", n=len(selected)), parent=self):
+                return
+            for pr_id in selected:
+                self.kb.reject(pr_id, maintainer=True)
+        else:
+            if not messagebox.askyesno(tr("批量删除卡片"), tr("确定删除选中的 {n} 张卡片吗？", n=len(selected)), parent=self):
+                return
+            for card_id in selected:
+                self.kb.delete_card(card_id, maintainer=True)
+        self.show()
+
+    def _open_item_by_id(self, kind: str, key: str):
+        if kind == "proposals":
+            return self.review(key)
+        card = KnowledgePage._find_card(self, kind, key)
+        if not card:
+            return self.show()
+        if card.get("file_path") and open_obsidian(card["file_path"], self.data_dir):
+            return
+        self._details_by_id(kind, key)
+
+    def _details_by_id(self, kind: str, key: str):
+        if kind == "proposals":
+            return self.review(key)
+        card = KnowledgePage._find_card(self, kind, key)
+        if not card:
+            return self.show()
+        self._open_details_modal(kind, key, card)
 
     def _destroy(self, event):
         if event.widget is self:
-            if self._poll_job is not None:
+            self._destroyed = True
+            self._visible = False
+            for attr in ("_poll_job", "_search_job", "_wv_show_job", "_ui_poll_job"):
+                job = getattr(self, attr, None)
+                if job is not None:
+                    try:
+                        self.after_cancel(job)
+                    except tk.TclError:
+                        pass
+                    setattr(self, attr, None)
+            if self._wv_host is not None:
                 try:
-                    self.after_cancel(self._poll_job)
-                except tk.TclError:
+                    self._wv_host.close()
+                except Exception:
                     pass
-            if getattr(self, "_search_job", None):
+            if self._web_server is not None:
                 try:
-                    self.after_cancel(self._search_job)
-                except tk.TclError:
+                    self._web_server.stop()
+                except Exception:
                     pass
             self.reset_ai_context()
 
@@ -369,7 +771,22 @@ class KnowledgePage(tk.Frame):
         return all(term in haystack for term in terms)
 
     def show(self):
+        if self._destroyed:
+            return
+        self._visible = True
         self._search_job = None
+        if self._use_webview:
+            if self._wv_show_job is not None:
+                try:
+                    self.after_cancel(self._wv_show_job)
+                except tk.TclError:
+                    pass
+            self._wv_show_job = self.after(60, self._start_webview_after_show)
+            if self._web_server is not None:
+                self._web_server.notify("update")
+            return
+        if not self._tk_built:
+            return
         self.kb.refresh()
         if hasattr(self, "mode"):
             self.mode.set(self.kb.config.get("solver_mode", "exploration"))
@@ -457,12 +874,30 @@ class KnowledgePage(tk.Frame):
             self.tabs.tab(2, text=tr("提醒库"))
             self.tabs.tab(3, text=tr("待审提案") + f" ({len(self.kb.proposals())})")
 
+    def hide(self):
+        self._visible = False
+        if self._wv_show_job is not None:
+            try:
+                self.after_cancel(self._wv_show_job)
+            except tk.TclError:
+                pass
+            self._wv_show_job = None
+        if self._wv_host is not None:
+            self._wv_host.set_visible(False)
+
     def open_card(self, card_id):
         if self.show_page:
             self.show_page("knowledge")
-        self.tabs.select(0)
+        self._web_tab = "tactical"
         self.query.set("")
         self.subject.set(tr("全部"))
+        if self._use_webview:
+            self.show()
+            card = self.kb.cards.get(card_id)
+            if card:
+                self._open_details_modal("tactical", card_id, card)
+            return
+        self.tabs.select(0)
         self.show()
         if self.lists["tactical"].exists(card_id):
             self.lists["tactical"].selection_set(card_id)
@@ -501,6 +936,9 @@ class KnowledgePage(tk.Frame):
         card = KnowledgePage._find_card(self, kind, key)
         if not card:
             return self.show()
+        self._open_details_modal(kind, key, card)
+
+    def _open_details_modal(self, kind, key, card):
         dlg = modal(self, "卡片详情")
         area = ScrollArea(dlg.body, bg=COLORS["bg"])
         area.pack(fill="both", expand=True)

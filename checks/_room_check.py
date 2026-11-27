@@ -90,11 +90,14 @@ def main():
         chair_labels = [lbl for _id, lbl, _req in position_interactions_for(store.position_of("user"), "房间中央")]
         assert "按在椅子上" in chair_labels and "坐到身旁 / 腿上" in chair_labels
 
-        # 牵手带人出去 & 言语跟随 & 被对方带出去
-        assert store.hold_hand("left", "Claudia.txt", "Claudia") == ""
+        # 牵手带人出去（需 100 条消息）& 言语跟随 & 被对方带出去
+        assert store.hold_hand("left", "Claudia.txt", "Claudia", msg_count=99) != "", "不足 100 条消息不应允许牵手带走"
+        assert store.hold_hand("left", "Claudia.txt", "Claudia", msg_count=100) == ""
+        assert store.hands["left"]["state"] == "holding" and "握住" in store.hand_label("left")
         assert store.enter_room("user", "lounge", "Madam Chen") == ""
         assert store.occupants["Claudia.txt"] == "lounge", "牵手切换房间应把 Claudia 一起带出来"
         store.release_hand("left")
+        assert store.hands["left"]["state"] == "free" and "自由" in store.hand_label("left")
         store.set_following("Claudia.txt", "user", "Claudia", "Madam Chen")
         assert store.enter_room("user", "my_home", "Madam Chen") == ""
         assert store.occupants["Claudia.txt"] == "my_home", "跟随状态下切换房间应一起跟着走"
@@ -117,9 +120,23 @@ def main():
         assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "脸颊", "轻碰", msg_count=30) != ""
         assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "肩膀", "轻轻拍了拍", msg_count=30) == ""
         assert store.queue_hand_action("right", "Claudia.txt", "Claudia", "衣袖 / 衣角", "拉一下", msg_count=30) == ""
-        assert store.available_hands() == []
+        assert store.queue_hand_action("gaze", "Claudia.txt", "Claudia", "目光注视", "安静地看着她", msg_count=0) == ""
+        assert len(store.pending_actions) == 3, "左手、右手、目光应可各自独立安排待发动作"
+        assert store.queue_hand_action("both", "Claudia.txt", "Claudia", "肩膀", "双手搭上她的肩", msg_count=30) == ""
+        assert [a["hand"] for a in store.pending_actions] == ["gaze", "both"], "双手动作应替换左右手动作，但不影响独立目光"
 
-        store.set_hand_bound("left", True, note="丝带")
+        # 握住状态的手仍可脱离当前动作作出新动作
+        assert store.hold_hand("left", "Claudia.txt", "Claudia", msg_count=100) == ""
+        assert "left" in store.available_hands()
+        assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "肩膀", "松开手拍了拍肩", msg_count=100) == ""
+        assert store.hands["left"]["state"] == "free"
+
+        # 双手都被束缚时，独立目光仍可用
+        store.set_hand_bound("both", True, note="丝带")
+        assert store.available_hands() == []
+        assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "肩膀", "尝试抬手", msg_count=100) != ""
+        assert store.queue_hand_action("gaze", "Claudia.txt", "Claudia", "目光注视", "直视对方", msg_count=0) == ""
+        store.set_hand_bound("right", False)
         store.reset_turn_hands()
         assert store.hands["left"]["state"] == "bound" and store.hands["right"]["state"] == "free"
         store.set_hand_bound("both", False)
@@ -241,6 +258,53 @@ def main():
             page._on_hotspot_click(piano_hs)
             page._on_hotspot_click(book_hs)
             assert called == ["music", "coread"]
+
+            # 9. WebView2 本地服务状态接口与动作闭环验证（含 token 鉴权）
+            if page._use_webview and page._web_server is not None:
+                import json
+                import urllib.error
+                import urllib.request
+
+                url = page._web_server.start()
+                base = url.split("?")[0]
+                tok = page._web_server.token
+                # 无 token 应 403
+                try:
+                    urllib.request.urlopen(base + "api/state", timeout=3)
+                    raise AssertionError("缺少 token 应拒绝访问")
+                except urllib.error.HTTPError as e:
+                    assert e.code == 403
+
+                # 后台线程请求 /api/state 和 /api/action，同时主线程泵 Tk 事件循环
+                import threading
+                res_box = {}
+
+                def client_work():
+                    try:
+                        with urllib.request.urlopen(f"{base}api/state?token={tok}", timeout=3) as r:
+                            res_box["state"] = json.loads(r.read().decode("utf-8"))
+                        req = urllib.request.Request(
+                            f"{base}api/action?token={tok}",
+                            data=json.dumps({"type": "set_volume", "volume": "whisper"}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"},
+                            method="POST",
+                        )
+                        with urllib.request.urlopen(req, timeout=3) as r:
+                            res_box["action"] = json.loads(r.read().decode("utf-8"))
+                    except Exception as exc:
+                        res_box["err"] = exc
+
+                t = threading.Thread(target=client_work, daemon=True)
+                t.start()
+                for _ in range(100):
+                    if not t.is_alive():
+                        break
+                    root.update()
+                    _time.sleep(0.02)
+                t.join(timeout=2)
+                assert "err" not in res_box, f"WebView2 服务请求失败: {res_box.get('err')}"
+                assert res_box["state"]["ok"] and res_box["state"]["state"]["map_text"]
+                assert res_box["action"]["ok"] and res_box["action"]["state"]["volume"] == "whisper"
         finally:
             root.destroy()
 
