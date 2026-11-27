@@ -476,6 +476,18 @@ class WebPageAdapter(tk.Frame):
             node["fg"] = fg
         if bg and bg.startswith("#") and kind in ("button", "label"):
             node["bg"] = bg
+        if kind == "label":
+            anc = _cget_str(widget, "anchor")
+            if anc == "center":
+                try:
+                    mgr = widget.winfo_manager()
+                    p_anc = widget.pack_info().get("anchor", "center") if mgr == "pack" else "center"
+                except Exception:
+                    p_anc = "center"
+                if p_anc == "center":
+                    node["align"] = "center"
+            elif anc == "e":
+                node["align"] = "right"
         if style_name:
             if "Accent" in style_name:
                 node["variant"] = "accent"
@@ -1053,6 +1065,7 @@ function node(n,inGrid=false){
   else if(n.text){
     const l=document.createElement('div');l.className='label';l.textContent=n.text;
     if(n.fg)l.style.color=n.fg;if(n.bg)l.style.background=n.bg;if(n.bold)l.style.fontWeight='700';
+    if(n.align){l.style.textAlign=n.align;l.style.width='100%'}
     if(n.size&&n.size>=14)l.style.fontSize=(n.size+2)+'px';
     wrap.appendChild(l);
   }
