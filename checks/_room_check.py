@@ -124,30 +124,46 @@ def main():
         assert store.hands["left"]["state"] == "bound" and store.hands["right"]["state"] == "free"
         store.set_hand_bound("both", False)
 
-        # 5. 严格定向听觉隔离 & 房间互动条数累计
+        # 5. 按音量与位置决定谁能听到（轻语仅同位置可听，正常音量全屋可听）
         store.enter_room("Gemina.txt", c_rid, "Gemina", force=True)
+        store.move_position("user", "墙边", "Madam Chen")
+        store.move_position("Claudia.txt", "墙边", "Claudia")
+        store.move_position("Gemina.txt", "椅子", "Gemina")
+
         before_cnt = store.room_msg_count("Claudia.txt")
-        store.append_log(c_rid, "user", "我", ["Claudia.txt"], "say", "只告诉 Claudia 的秘密")
+        whisper_targets = store.listeners_for_volume(c_rid, "user", "whisper")
+        assert set(whisper_targets) == {"user", "Claudia.txt"}, f"轻语应仅同位置的人能听见: {whisper_targets}"
+        store.append_log(c_rid, "user", "我", whisper_targets, "say", "只在墙边轻语的秘密", volume="whisper", pos="墙边")
         assert store.room_msg_count("Claudia.txt") == before_cnt + 1
         assert store.room_msg_count("Gemina.txt") == 0
         c_seen = [e["text"] for e in store.visible_logs_for("Claudia.txt", c_rid)]
         g_seen = [e["text"] for e in store.visible_logs_for("Gemina.txt", c_rid)]
-        assert "只告诉 Claudia 的秘密" in c_seen and "只告诉 Claudia 的秘密" not in g_seen
+        assert "只在墙边轻语的秘密" in c_seen and "只在墙边轻语的秘密" not in g_seen
 
-        store.append_log(c_rid, "Claudia.txt", "Claudia", ["Gemina.txt"], "say", "我们俩悄悄商量")
+        # 正常音量全屋都能听到
+        normal_targets = store.listeners_for_volume(c_rid, "user", "normal")
+        assert normal_targets == ["all"]
+        store.append_log(c_rid, "user", "我", normal_targets, "say", "大家都能听见", volume="normal", pos="墙边")
+        assert "大家都能听见" in [e["text"] for e in store.visible_logs_for("Gemina.txt", c_rid)]
+
+        # 两个 NPC 在另一个位置轻语，用户听不清
+        store.move_position("Claudia.txt", "椅子", "Claudia")
+        npc_whisper = store.listeners_for_volume(c_rid, "Claudia.txt", "whisper")
+        assert set(npc_whisper) == {"Claudia.txt", "Gemina.txt"}
+        store.append_log(c_rid, "Claudia.txt", "Claudia", npc_whisper, "say", "椅子旁的小声密谋", volume="whisper", pos="椅子")
         user_view = store.user_display_logs(c_rid, {"user": "我", "Claudia.txt": "Claudia", "Gemina.txt": "Gemina"})
-        assert all("我们俩悄悄商量" not in e["text"] for e in user_view)
+        assert all("椅子旁的小声密谋" not in e["text"] for e in user_view)
         assert any(e.get("redacted") for e in user_view)
 
         # 6. AI 建房与自主行动回复解析
         gen = parse_generated_room('{"name":"旧书店","ascii_map":["┌──[书架]──┐","└──[门]──┘"]}', "书店")
         assert gen is not None and gen["name"] == "旧书店"
         parsed = parse_actor_reply(
-            '{"to":["user"],"action":"起身","speech":"我去客厅等你","move_to":"lounge","lock_door":false,"give_key":{"room_id":"'
+            '{"volume":"whisper","action":"起身","speech":"我去客厅等你","move_to":"lounge","lock_door":false,"give_key":{"room_id":"'
             + c_rid + '","to":"user"}}',
             {"user", "Claudia.txt"}, set(store.rooms.keys()),
         )
-        assert parsed["move_to"] == "lounge" and parsed["lock_door"] is False and parsed["give_key"]["to"] == "user"
+        assert parsed["volume"] == "whisper" and parsed["move_to"] == "lounge" and parsed["lock_door"] is False and parsed["give_key"]["to"] == "user"
 
         # 7. 专注/睡眠自动反锁自己的房间、空闲系统随机活动（不发言）与自动行动挑选
         assert store.enter_room("user", "lounge", "我") == ""
@@ -161,7 +177,8 @@ def main():
         assert store.rooms[c_rid]["locked_inside"] is False, "结束专注后自动解除反锁"
 
         # N 分钟内无互动 -> 系统随机移动或活动，不发言
-        now_ms = 1_700_000_000_000
+        import time as _time
+        now_ms = int(_time.time() * 1000) + 20 * 60 * 1000
         assert not store.is_recently_interacted("Gemina.txt", 15, now_ms=now_ms)
         logs_before = len(store.logs)
         res = store.perform_idle_system_step("Gemina.txt", "Gemina", now_ms=now_ms, rng=random.Random(3))

@@ -51,8 +51,7 @@ class RoomPage(tk.Frame):
         self._busy_actors: set[str] = set()
         self._generating_map = False
         self._hotspots: list[dict] = []
-        self._target_vars: dict[str, tk.BooleanVar] = {}
-        self._var_all_targets = tk.BooleanVar(value=True)
+        self._var_volume = tk.StringVar(value="normal")
         self._room_ids: list[str] = []
 
         self._sync_persona_rooms()
@@ -219,12 +218,17 @@ class RoomPage(tk.Frame):
         self.pending_frame = tk.Frame(right, bg=card)
         self.pending_frame.pack(fill="x", padx=12, pady=(2, 2))
 
-        target_bar = tk.Frame(right, bg=card)
-        target_bar.pack(fill="x", padx=12, pady=(2, 4))
-        tk.Label(target_bar, text=tr("对谁说："), bg=card, fg=COLORS["text_dim"],
+        vol_bar = tk.Frame(right, bg=card)
+        vol_bar.pack(fill="x", padx=12, pady=(2, 4))
+        tk.Label(vol_bar, text=tr("音量："), bg=card, fg=COLORS["text_dim"],
                  font=config.font("small")).pack(side="left")
-        self.target_box = tk.Frame(target_bar, bg=card)
-        self.target_box.pack(side="left", fill="x", expand=True)
+        ttk.Radiobutton(vol_bar, text=tr("正常音量"), value="normal", variable=self._var_volume,
+                        command=self._update_volume_hint).pack(side="left", padx=(2, 8))
+        ttk.Radiobutton(vol_bar, text=tr("轻语"), value="whisper", variable=self._var_volume,
+                        command=self._update_volume_hint).pack(side="left", padx=(0, 8))
+        self.lbl_vol_hint = tk.Label(vol_bar, text="", bg=card, fg=COLORS["text_dim"],
+                                     font=config.font("small"), anchor="w")
+        self.lbl_vol_hint.pack(side="left", fill="x", expand=True)
 
         inp = tk.Frame(right, bg=card)
         inp.pack(fill="x", padx=12, pady=(0, 10))
@@ -314,7 +318,7 @@ class RoomPage(tk.Frame):
 
         self._render_map(room, names)
         self._render_occupant_chips(rid, names)
-        self._render_targets(rid, names)
+        self._update_volume_hint()
         self._render_hands()
         self._render_logs(rid, names)
         self._update_busy_label(names)
@@ -389,52 +393,20 @@ class RoomPage(tk.Frame):
             if not is_me:
                 lbl.bind("<Button-1>", lambda _e, a=aid, n=name: self._open_actor_interact(a, n))
 
-    def _render_targets(self, room_id: str, names: dict[str, str]):
-        for child in self.target_box.winfo_children():
-            child.destroy()
-        npcs = [aid for aid in self.store.occupants_in(room_id) if aid != "user"]
-        old_vars = self._target_vars
-        self._target_vars = {}
-
-        def _toggle_all():
-            if self._var_all_targets.get():
-                for v in self._target_vars.values():
-                    v.set(False)
-            elif not any(v.get() for v in self._target_vars.values()):
-                self._var_all_targets.set(True)
-
-        def _toggle_one():
-            if any(v.get() for v in self._target_vars.values()):
-                self._var_all_targets.set(False)
+    def _update_volume_hint(self):
+        rid = self.store.current_room_id()
+        names = self._persona_names()
+        vol = self._var_volume.get()
+        if vol == "whisper":
+            pos = self.store.position_of("user")
+            listeners = [names.get(a, a) for a in self.store.listeners_for_volume(rid, "user", "whisper") if a != "user"]
+            if listeners:
+                hint = tr("仅「{pos}」可听：{who}", pos=pos, who="、".join(listeners))
             else:
-                self._var_all_targets.set(True)
-
-        tk.Checkbutton(
-            self.target_box, text=tr("全员"), variable=self._var_all_targets,
-            bg=COLORS["bg_card"], fg=COLORS["text"], selectcolor=COLORS["bg_card"],
-            activebackground=COLORS["bg_card"], activeforeground=COLORS["text"],
-            font=config.font("small"), command=_toggle_all,
-        ).pack(side="left", padx=(0, 6))
-
-        for aid in npcs:
-            prev = old_vars[aid].get() if aid in old_vars else False
-            var = tk.BooleanVar(value=prev)
-            self._target_vars[aid] = var
-            tk.Checkbutton(
-                self.target_box, text=names.get(aid, aid), variable=var,
-                bg=COLORS["bg_card"], fg=COLORS["text"], selectcolor=COLORS["bg_card"],
-                activebackground=COLORS["bg_card"], activeforeground=COLORS["text"],
-                font=config.font("small"), command=_toggle_one,
-            ).pack(side="left", padx=(0, 6))
-
-        if not any(v.get() for v in self._target_vars.values()):
-            self._var_all_targets.set(True)
-
-    def _selected_targets(self) -> list[str]:
-        if self._var_all_targets.get():
-            return ["all"]
-        picked = [aid for aid, v in self._target_vars.items() if v.get()]
-        return picked or ["all"]
+                hint = tr("仅「{pos}」可听（附近暂无其他人）", pos=pos)
+        else:
+            hint = tr("房间内所有人都能听见")
+        cfg(self.lbl_vol_hint, text=hint)
 
     def _render_hands(self):
         for side, lbl in (("left", self.lbl_left_hand), ("right", self.lbl_right_hand)):
@@ -485,10 +457,12 @@ class RoomPage(tk.Frame):
             elif kind == "private_hint":
                 w.insert("end", f"… {e['text']}\n", "private")
             else:
-                targets = e.get("targets") or ["all"]
-                to_str = tr("全员") if "all" in targets else "、".join(names.get(t, t) for t in targets)
                 tag = "who_me" if e.get("sender") == "user" else "who_npc"
-                w.insert("end", f"{e['sender_name']} → {to_str}：\n", tag)
+                if e.get("volume") == "whisper":
+                    header = f"{e['sender_name']}（在「{e.get('pos') or '原处'}」轻语）：\n"
+                else:
+                    header = f"{e['sender_name']}：\n"
+                w.insert("end", header, tag)
                 for a in e.get("actions") or []:
                     h = "左手" if a.get("hand") == "left" else "右手"
                     w.insert("end", f"  [{h}→{a.get('target_name')}·{a.get('part')}] {a.get('text')}\n", "act")
@@ -627,6 +601,12 @@ class RoomPage(tk.Frame):
 
         ttk.Button(top_info, text=tr("松开牵手") if holding_side else tr("🤝 牵手带走"),
                    command=toggle_hold).pack(side="right")
+        if user_pos != target_pos:
+            def move_near():
+                self.store.move_position("user", target_pos, self._actor_name("user"))
+                dlg.finish(True)
+                self.refresh()
+            ttk.Button(top_info, text=tr("走到 TA 身边"), command=move_near).pack(side="right", padx=(0, 6))
 
         hand_row = tk.Frame(dlg.body, bg=bg)
         hand_row.pack(fill="x", pady=(0, 8))
@@ -901,12 +881,13 @@ class RoomPage(tk.Frame):
         if not text and not actions:
             return
         room_id = self.store.current_room_id()
-        targets = self._selected_targets()
+        volume = self._var_volume.get() or "normal"
+        targets = self.store.listeners_for_volume(room_id, "user", volume)
 
         self.entry.delete("1.0", "end")
         self.store.append_log(room_id, "user", self._actor_name("user"), targets,
-                              "action" if actions and not text else "say", text, actions=actions)
-        # 即时动作发送后清空已用双手（束缚保持）
+                              "action" if actions and not text else "say", text,
+                              actions=actions, volume=volume, pos=self.store.position_of("user"))
         self.store.reset_turn_hands(save=True)
         self.refresh()
 
@@ -999,13 +980,15 @@ class RoomPage(tk.Frame):
             self.store.grant_key(str(gk.get("room_id") or ""), actor_id, to_id,
                                  actor_name, names.get(to_id, to_id))
 
-        # 5. 发言（在当前房间）
+        # 5. 发言（在当前房间，按音量 normal / whisper 自动决定听众）
         speech = parsed.get("speech") or ""
         action = parsed.get("action") or ""
         combined = f"（{action}）{speech}".strip() if action and speech else (f"（{action}）" if action else speech)
         if combined:
-            self.store.append_log(room_id, actor_id, actor_name,
-                                  parsed.get("to") or ["user"], "say", combined)
+            vol = parsed.get("volume") or "normal"
+            listeners = self.store.listeners_for_volume(room_id, actor_id, vol)
+            self.store.append_log(room_id, actor_id, actor_name, listeners, "say", combined,
+                                  volume=vol, pos=self.store.position_of(actor_id))
 
         # 6. 自主移动 / 拜访其他房间（bring_user=True 或牵手时可把用户一起带出去）
         move_to = parsed.get("move_to")

@@ -630,6 +630,14 @@ class RoomStore:
         self.save()
         return True
 
+    def listeners_for_volume(self, room_id: str, sender_id: str, volume: str = "normal") -> list[str]:
+        """按音量与室内位置计算听众：normal=全屋可听(["all"])；whisper=仅同一位置的在场成员可听。"""
+        if str(volume or "normal").lower() != "whisper":
+            return ["all"]
+        pos = self.position_of(sender_id)
+        same_pos = [aid for aid in self.occupants_in(room_id) if self.position_of(aid) == pos]
+        return same_pos or [sender_id]
+
     # ---- 牵手与跟随（带角色出去 / 被带出去） ----
 
     def hold_hand(self, side: str, actor_id: str, actor_name: str = "") -> str:
@@ -1077,10 +1085,12 @@ class RoomStore:
     # ---- 定向听觉隔离日志 ----
 
     def append_log(self, room_id: str, sender: str, sender_name: str, targets: list[str],
-                   kind: str, text: str, actions: list[dict] = None) -> dict:
+                   kind: str, text: str, actions: list[dict] = None,
+                   volume: str = "normal", pos: str = "") -> dict:
         clean_targets = [str(t) for t in (targets or ["all"]) if str(t)]
         if not clean_targets:
             clean_targets = ["all"]
+        vol = "whisper" if str(volume or "").lower() == "whisper" else "normal"
         entry = {
             "id": uuid.uuid4().hex[:10],
             "ts": int(time.time() * 1000),
@@ -1088,6 +1098,8 @@ class RoomStore:
             "sender": sender,
             "sender_name": sender_name,
             "targets": clean_targets,
+            "volume": vol,
+            "pos": str(pos or (self.position_of(sender) if sender != "sys" else "")),
             "kind": kind,
             "text": str(text or "").strip(),
             "actions": list(actions or []),
@@ -1119,7 +1131,7 @@ class RoomStore:
                 item["redacted"] = False
                 out.append(item)
             else:
-                target_names = "、".join(name_map.get(t, t) for t in (e.get("targets") or []))
+                where = e.get("pos") or self.position_of(e["sender"])
                 out.append({
                     "id": e["id"],
                     "ts": e["ts"],
@@ -1127,9 +1139,11 @@ class RoomStore:
                     "sender": e["sender"],
                     "sender_name": e["sender_name"],
                     "targets": e.get("targets") or [],
+                    "volume": e.get("volume", "whisper"),
+                    "pos": where,
                     "kind": "private_hint",
-                    "text": tr("{who} 对 {to} 低声说了些什么（你没有听清）。",
-                               who=e["sender_name"], to=target_names or tr("某人")),
+                    "text": tr("{who} 在「{pos}」轻声说了些什么（你不在同一位置，没有听清）。",
+                               who=e["sender_name"], pos=where),
                     "actions": [],
                     "redacted": True,
                 })
@@ -1218,40 +1232,41 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
         f"房间字符画地图：\n{map_text}\n\n"
         "【世界房间列表】\n" + "\n".join(world_lines) + "\n\n"
         "【规则】\n"
-        "1. 你只能看到发给你、对全员(all)说、或由你发出的消息；没指定你的话你听不到。\n"
+        "1. 原来的沟通页面代表手机聊天（可以随时私发给任何人）；而这里是面对面的现实房间空间，无法随意屏蔽某人，只能通过音量控制：\n"
+        "   - volume=\"normal\"（正常音量）：房间里所有人都能听见。\n"
+        "   - volume=\"whisper\"（轻语）：只有和你处于【同一室内位置】的人能听见，其他位置的人听不清。\n"
         "2. 你可以结合当前位置（如墙边、椅子、沙发、钢琴旁）做位置相关互动（如靠墙、把对方按在墙上/椅子上，前提是符合人设与关系尺度），并用 position 字段更新你的室内位置。\n"
         "3. 如果用户言语请求你跟随同行，同意可将 follow 设为 \"user\"（取消跟随设为 \"none\"，不变为 null）。\n"
         "4. 你可以自行移动去公共房间或有钥匙且未反锁的房间（move_to 填房间 id）；若想把用户一起带去那个房间（例如牵着用户或带用户出去），可将 bring_user 设为 true。\n"
         "5. 若不想被打扰可将 lock_door 设为 true 从内部反锁（false 解锁，null 不变）；分钥匙可填 give_key: {\"room_id\": \"...\", \"to\": \"user\"}。\n"
         "6. 请严格只输出一个 JSON 对象，保持你原本的人设语气：\n"
-        '{"to": ["user"], "action": "简短动作描写(可为空)", "speech": "你的台词(可为空)", '
+        '{"volume": "normal", "action": "简短动作描写(可为空)", "speech": "你的台词(可为空)", '
         '"position": null, "bind_hands": null, "follow": null, "move_to": null, "bring_user": false, "lock_door": null, "give_key": null}'
     )
     system = (persona_sys or f"你正在扮演 {actor_name}。") + room_guide
 
     history_lines = []
     for e in visible_logs:
-        targets = e.get("targets") or ["all"]
-        to_str = "全员" if "all" in targets else "、".join(all_names.get(t, t) for t in targets)
         if e.get("kind") in ("sys", "move"):
             history_lines.append(f"* {e['text']}")
         else:
+            vol_tag = f"[在「{e.get('pos') or '原处'}」轻语]" if e.get("volume") == "whisper" else "[正常音量]"
             acts = e.get("actions") or []
             act_txt = "；".join(
                 f"[{'左手' if a.get('hand') == 'left' else '右手'}→{a.get('target_name')}·{a.get('part')}] {a.get('text')}"
                 for a in acts
             )
             body = f"{act_txt} {e.get('text', '')}".strip()
-            history_lines.append(f"{e['sender_name']} → {to_str}: {body}")
+            history_lines.append(f"{e['sender_name']} {vol_tag}: {body}")
 
     hist_block = "\n".join(history_lines) if history_lines else "（房间里刚刚安静下来，还没有人说话。）"
     if trigger_reason == "auto":
         prompt = (
             f"【房间近期记录】\n{hist_block}\n\n"
-            "现在过了一小会儿。请根据当前上下文、位置与你的人设，自然决定要不要发起对话、换个室内位置、移动去别的房间或带用户一起出去。"
+            "现在过了一小会儿。请根据当前上下文、位置与你的人设，自然决定要不要用正常音量或轻语开口、换个室内位置、移动去别的房间或带用户一起出去。"
         )
     else:
-        prompt = f"【房间近期记录】\n{hist_block}\n\n请按你的人设回应当前互动，并指定说话对象。"
+        prompt = f"【房间近期记录】\n{hist_block}\n\n请按你的人设回应当前互动，并决定说话音量（normal 或 whisper）。"
     return system, [{"role": "user", "content": prompt}]
 
 
@@ -1259,17 +1274,9 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
                       default_target: str = "user") -> dict:
     obj = _extract_json(reply_text)
     if obj:
-        raw_to = obj.get("to")
-        if isinstance(raw_to, str):
-            raw_to = [raw_to]
-        targets = []
-        if isinstance(raw_to, list):
-            for t in raw_to:
-                ts = str(t or "").strip()
-                if ts == "all" or ts in valid_ids:
-                    targets.append(ts)
-        if not targets:
-            targets = [default_target] if default_target in valid_ids else ["all"]
+        vol = str(obj.get("volume") or "normal").strip().lower()
+        if vol not in ("normal", "whisper"):
+            vol = "normal"
         bind = obj.get("bind_hands")
         if bind not in ("left", "right", "both", "release"):
             bind = None
@@ -1289,7 +1296,7 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
             if follow not in ("none", "user") and follow not in valid_ids:
                 follow = None
         return {
-            "to": targets,
+            "volume": vol,
             "action": str(obj.get("action") or "").strip()[:240],
             "speech": str(obj.get("speech") or "").strip()[:1200],
             "position": position,
@@ -1301,7 +1308,7 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
             "give_key": give_key,
         }
     return {
-        "to": [default_target] if default_target in valid_ids else ["all"],
+        "volume": "normal",
         "action": "",
         "speech": str(reply_text or "").strip()[:1200],
         "position": None,
