@@ -779,8 +779,12 @@ function renderHands(hands, pending) {
     row.className = "pending-item";
     const handTxt = channelLabel(act.hand);
     const secTxt = act.secret ? "·隐秘" : "";
+    const next = pending[idx + 1];
+    const showText = !next || (next.text || "") !== (act.text || "");
     const txt = document.createElement("span");
-    txt.textContent = `[${handTxt}${secTxt} → ${act.target_name}·${act.part}] ${act.text}`;
+    txt.textContent = showText && act.text
+      ? `[${handTxt}${secTxt} → ${act.target_name}·${act.part}] ${act.text}`
+      : `[${handTxt}${secTxt} → ${act.target_name}·${act.part}]`;
     const del = document.createElement("span");
     del.className = "pending-del";
     del.textContent = "✕";
@@ -812,14 +816,19 @@ function buildLogNode(e) {
     ? `${e.sender_name}（在「${e.pos || "原处"}」轻语）：`
     : `${e.sender_name}：`;
   wrap.appendChild(hdr);
-  for (const a of (e.actions || [])) {
+  const acts = e.actions || [];
+  acts.forEach((a, idx) => {
     const act = document.createElement("div");
     act.className = "log-act";
     const h = channelLabel(a.hand);
     const sec = a.secret ? "·隐秘" : "";
-    act.textContent = `[${h}${sec}→${a.target_name}·${a.part}] ${a.text}`;
+    const next = acts[idx + 1];
+    const showText = !next || (next.text || "") !== (a.text || "");
+    act.textContent = showText && a.text
+      ? `[${h}${sec}→${a.target_name}·${a.part}] ${a.text}`
+      : `[${h}${sec}→${a.target_name}·${a.part}]`;
     wrap.appendChild(act);
-  }
+  });
   if (e.text) {
     const sp = document.createElement("div");
     sp.className = "log-speech";
