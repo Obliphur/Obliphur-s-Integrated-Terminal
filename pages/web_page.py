@@ -330,9 +330,12 @@ class WebPageAdapter(tk.Frame):
         sides = set()
         grid_cols = set()
         grid_rows = set()
+        mgrs = set()
         for ch in children:
             try:
                 mgr = ch.winfo_manager()
+                if mgr:
+                    mgrs.add(mgr)
                 if mgr == "pack":
                     sides.add(ch.pack_info().get("side", "top"))
                 elif mgr == "grid":
@@ -344,6 +347,8 @@ class WebPageAdapter(tk.Frame):
         if grid_cols and (len(grid_cols) > 1 or len(grid_rows) > 1):
             return ("grid", max(grid_cols) + 1)
         if sides and sides.issubset({"left", "right"}):
+            return ("row", 0)
+        if mgrs == {"place"} and len(children) > 1:
             return ("row", 0)
         return ("col", 0)
 
@@ -379,6 +384,15 @@ class WebPageAdapter(tk.Frame):
                     shapes.append({
                         "t": "oval", "cx": (coords[0] + coords[2]) / 2, "cy": (coords[1] + coords[3]) / 2,
                         "rx": abs(coords[2] - coords[0]) / 2, "ry": abs(coords[3] - coords[1]) / 2,
+                        "fill": canvas.itemcget(iid, "fill"), "stroke": canvas.itemcget(iid, "outline"),
+                    })
+                elif t == "arc" and len(coords) >= 4:
+                    shapes.append({
+                        "t": "arc", "cx": (coords[0] + coords[2]) / 2, "cy": (coords[1] + coords[3]) / 2,
+                        "rx": abs(coords[2] - coords[0]) / 2, "ry": abs(coords[3] - coords[1]) / 2,
+                        "start": float(canvas.itemcget(iid, "start") or 0),
+                        "extent": float(canvas.itemcget(iid, "extent") or 90),
+                        "style": str(canvas.itemcget(iid, "style") or "pieslice"),
                         "fill": canvas.itemcget(iid, "fill"), "stroke": canvas.itemcget(iid, "outline"),
                     })
                 elif t == "line" and len(coords) >= 4:
@@ -947,6 +961,26 @@ function renderSvg(svg){
       o.setAttribute('cx',sh.cx);o.setAttribute('cy',sh.cy);o.setAttribute('rx',sh.rx);o.setAttribute('ry',sh.ry);
       o.setAttribute('fill',sh.fill||'none');if(sh.stroke)o.setAttribute('stroke',sh.stroke);
       el.appendChild(o);
+    }else if(sh.t==='arc'){
+      if(Math.abs(sh.extent)>=359.9){
+        const o=document.createElementNS(SVG_NS,'ellipse');
+        o.setAttribute('cx',sh.cx);o.setAttribute('cy',sh.cy);o.setAttribute('rx',sh.rx);o.setAttribute('ry',sh.ry);
+        o.setAttribute('fill',sh.fill||'none');if(sh.stroke)o.setAttribute('stroke',sh.stroke);
+        el.appendChild(o);
+      }else{
+        const a1=sh.start*Math.PI/180,a2=(sh.start+sh.extent)*Math.PI/180;
+        const x1=sh.cx+sh.rx*Math.cos(a1),y1=sh.cy-sh.ry*Math.sin(a1);
+        const x2=sh.cx+sh.rx*Math.cos(a2),y2=sh.cy-sh.ry*Math.sin(a2);
+        const lg=Math.abs(sh.extent)>180?1:0,sw=sh.extent>=0?0:1;
+        let d='';
+        if(sh.style==='arc'){d=`M ${x1} ${y1} A ${sh.rx} ${sh.ry} 0 ${lg} ${sw} ${x2} ${y2}`}
+        else if(sh.style==='chord'){d=`M ${x1} ${y1} A ${sh.rx} ${sh.ry} 0 ${lg} ${sw} ${x2} ${y2} Z`}
+        else{d=`M ${sh.cx} ${sh.cy} L ${x1} ${y1} A ${sh.rx} ${sh.ry} 0 ${lg} ${sw} ${x2} ${y2} Z`}
+        const p=document.createElementNS(SVG_NS,'path');
+        p.setAttribute('d',d);p.setAttribute('fill',sh.style==='arc'?'none':(sh.fill||'none'));
+        if(sh.stroke)p.setAttribute('stroke',sh.stroke);
+        el.appendChild(p);
+      }
     }else if(sh.t==='line'){
       const p=document.createElementNS(SVG_NS,'polyline');
       const pts=[];for(let i=0;i+1<sh.pts.length;i+=2)pts.push(sh.pts[i]+','+sh.pts[i+1]);
