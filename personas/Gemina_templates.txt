@@ -125,6 +125,12 @@ propose_valence:25
 ignore_valence:-5
 [/scenario]
 
+【爆发同意声明】
+# id:[档位] 说明文字（4.5 级生理需求档；可在沟通页工具栏「🛡」随时管理或撤回，首次触发 BURST 时若未设置也会自动弹窗询问）
+[burst:consent]
+private_contact:[4.5] 隐私部位接触
+[/burst:consent]
+
 【情绪效价爆发与结算联动】
 # burst_rate:爆发期间该角色的 E 变化倍率
 # burst_end_shift:爆发结束瞬间该角色的 E 直接偏移增量

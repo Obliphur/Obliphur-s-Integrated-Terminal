@@ -157,7 +157,11 @@ class DeliveryMixin:
     def _reply_interrupt(self):
         """用户插话只撤销未发出的气泡，已显示的保留；旧回调随后失效。"""
         latest = max((int(m.get("ts") or 0) for m in self.messages if m["role"] == "me"), default=0)
-        doomed = {id(m) for m in self.messages if "pending_reply" in m and latest > m["pending_reply"]}
+        doomed = {
+            id(m) for m in self.messages
+            if ("pending_reply" in m and latest > m["pending_reply"])
+            or (m.get("hold") and "reply_source" in m and latest > int(m["reply_source"]))
+        }
         self._reply_cancel_actions(doomed, self.messages)
         self.messages[:] = [m for m in self.messages if id(m) not in doomed]
         batch = self._reply_batch
@@ -187,7 +191,7 @@ class DeliveryMixin:
         for m in batch.messages:
             if "pending_reply" in m:
                 if blocked:
-                    m.pop("pending_reply", None)
+                    m["reply_source"] = m.pop("pending_reply", None)
                     m.pop("reply_ready", None)
                 else:
                     m["reply_ready"] = True

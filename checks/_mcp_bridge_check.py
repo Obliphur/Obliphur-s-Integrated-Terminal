@@ -499,6 +499,10 @@ def main():
             assert st_charlotte["toolbar"]["burst_consent_available"] is True and len(st_charlotte["burst_consent_items"]) == 7
             assert sum(1 for it in st_charlotte["burst_consent_items"] if it.get("level") == 3) == 5
             assert sum(1 for it in st_charlotte["burst_consent_items"] if it.get("level") == 4) == 2
+            c.set_cfg(persona="Gemina.txt")
+            st_gemina = _http_json(port, bridge.token, "/ui/state", None)
+            assert st_gemina["toolbar"]["burst_consent_available"] is True and len(st_gemina["burst_consent_items"]) == 1
+            assert st_gemina["burst_consent_items"][0]["id"] == "private_contact" and st_gemina["burst_consent_items"][0]["level"] == 4.5
             # 切到无同意声明的人设时，toolbar["burst_consent_available"] 必须为 False。
             c.set_cfg(persona="Assistant.txt")
             st_no_consent = _http_json(port, bridge.token, "/ui/state", None)
@@ -1155,11 +1159,11 @@ def main():
         assert "萌娘百科" in takeover_feature_help_text("persona", en=False)
         assert "Moegirlpedia" in takeover_feature_help_text("persona", en=True)
 
-        # 10a. API 版 5 文件人设生成、修改与保存验证（含 5 级亲密动作开放度与 3/4 档同意声明模式）
+        # 10a. API 版 5 文件人设生成、修改与保存验证（含 6 档亲密动作开放度与 3/4/4.5 档同意声明模式）
         from comm import comm_author
         from comm.comm_rules import burst_consent_items, burst_consent_rules
-        assert len(comm_author.INTIMACY_LEVELS) == 5
-        assert comm_author.intimacy_level_info(0).level == 1 and comm_author.intimacy_level_info(99).level == 5
+        assert len(comm_author.INTIMACY_LEVELS) == 6
+        assert comm_author.intimacy_level_info(0).level == 1 and comm_author.intimacy_level_info(4.5).level == 4.5 and comm_author.intimacy_level_info(99).level == 5
         assert "保持原强度" in comm_author.CONSENT_MODE_HINT
         claudia_tpl = comm_author.claudia_reference_files(personas_dir).get("Claudia_templates.txt", "")
         claudia_consent = burst_consent_rules(claudia_tpl)
@@ -1177,12 +1181,17 @@ def main():
         with open(os.path.join(personas_dir, "Charlotte_templates.txt"), encoding="utf-8") as _f:
             charlotte_items = burst_consent_items(_f.read())
         assert len(charlotte_items) == 7 and charlotte_items["sensual_whisper"][0] == 4 and charlotte_items["sensual_intimacy"][0] == 4
+        with open(os.path.join(personas_dir, "Gemina_templates.txt"), encoding="utf-8") as _f:
+            gemina_items = burst_consent_items(_f.read())
+        assert gemina_items == {"private_contact": (4.5, "隐私部位接触")}
         assert burst_consent_items("[burst:consent]\nlegacy_item:默认三级\n[/burst:consent]") == {"legacy_item": (3, "默认三级")}
         fake_prof = {"provider": "openai", "protocol": "openai", "api_key": "sk-test", "base_url": "https://api.example.com/v1", "model": "gpt-4o"}
         def _fake_chat(_prof, _sys, msgs, **_kw):
             payload = msgs[-1]["content"]
             assert "OIT-PERSONA-ENC:" not in payload, "发给 API 的 Claudia 参考必须已解密"
-            if '"intimacy_level": 3' in payload:
+            if '"intimacy_level": 4.5' in payload:
+                assert '"consent_mode": true' in payload and "burst:consent" in payload and "隐私部位接触" in payload
+            elif '"intimacy_level": 3' in payload:
                 assert '"consent_mode": true' in payload and "burst:consent" in payload
             else:
                 assert '"intimacy_level": 2' in payload and '"consent_mode": false' in payload and "优雅浪漫" in payload
@@ -1197,11 +1206,13 @@ def main():
                 "example": "用户：你好\n角色：你好呀。", "templates": "",
                 "profile": "初始简介",
             }, ensure_ascii=False)
-        # 2 档即使传 consent_mode=True 也不启用同意声明；3 档传 True 启用
+        # 2 档即使传 consent_mode=True 也不启用同意声明；3 / 4.5 档传 True 启用
         d0 = comm_author.generate(fake_prof, "测试角色五件套", "轻松温柔", "", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=2, consent_mode=True)
         assert d0.persona == "初始主人设" and d0.background == "初始背景" and d0.example
         d0_c = comm_author.generate(fake_prof, "测试角色同意", "深情可靠", "", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=3, consent_mode=True)
         assert d0_c.persona == "初始主人设"
+        d0_45 = comm_author.generate(fake_prof, "测试角色四点五", "克制含蓄", "", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=4.5, consent_mode=True)
+        assert d0_45.persona == "初始主人设"
         d1 = comm_author.revise(fake_prof, "测试角色五件套", d0, "把语气改得更活泼", chat=_fake_chat, mode="brief", folder=personas_dir, intimacy_level=2, consent_mode=True)
         assert d1.persona == "修改后的主人设" and d1.templates
         saved_base = comm_author.save(personas_dir, "测试角色五件套", d1)

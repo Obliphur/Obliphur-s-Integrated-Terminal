@@ -304,16 +304,16 @@ object CommRules {
         return AntiRepeatConfig(window, minHits, maxItems, forbid)
     }
 
-    data class ConsentRule(val level: Int, val label: String)
+    data class ConsentRule(val level: Double, val label: String)
 
-    /** 标准化爆发同意声明区块 [burst:consent]：每行 id:[3|4] 说明文字（档位可省略，默认 3），最多 12 项；非法项使整组无效。 */
+    /** 标准化爆发同意声明区块 [burst:consent]：每行 id:[3|4|4.5] 说明文字（档位可省略，默认 3），最多 12 项；非法项使整组无效。 */
     fun burstConsentItems(text: String): LinkedHashMap<String, ConsentRule> {
         val out = linkedMapOf<String, ConsentRule>()
-        val pattern = Regex("""([a-z_]{1,32})\s*[:：]\s*(?:\[([34])\]\s*)?(\S.*)""")
+        val pattern = Regex("""([a-z_]{1,32})\s*[:：]\s*(?:\[(3|4(?:\.5)?)\]\s*)?(\S.*)""")
         for (line in lines(text, "burst:consent")) {
             val m = pattern.matchEntire(line) ?: return linkedMapOf()
             val id = m.groupValues[1]
-            val level = m.groupValues[2].toIntOrNull() ?: 3
+            val level = m.groupValues[2].toDoubleOrNull() ?: 3.0
             val label = m.groupValues[3].trim()
             if (id in out || label.isEmpty() || label.length > 80 || out.size >= 12) return linkedMapOf()
             out[id] = ConsentRule(level, label)

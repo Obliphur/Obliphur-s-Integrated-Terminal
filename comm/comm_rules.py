@@ -312,13 +312,14 @@ def anti_repeat_rules(text):
 
 
 def burst_consent_items(text):
-    """标准化爆发同意声明区块 [burst:consent]：每行 id:[3|4] 说明文字（档位可省略，默认 3），最多 12 项；非法项使整组无效。"""
+    """标准化爆发同意声明区块 [burst:consent]：每行 id:[3|4|4.5] 说明文字（档位可省略，默认 3），最多 12 项；非法项使整组无效。"""
     out = {}
     for line in rule_lines(text, "burst:consent"):
-        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*(?:\[([34])\]\s*)?(\S.*)", line)
+        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*(?:\[(3|4(?:\.5)?)\]\s*)?(\S.*)", line)
         if not m or m[1] in out:
             return {}
-        level = int(m[2]) if m[2] else 3
+        raw_lv = m[2]
+        level = 4.5 if raw_lv == "4.5" else (int(raw_lv) if raw_lv else 3)
         label = m[3].strip()
         if not label or len(label) > 80 or len(out) >= 12:
             return {}

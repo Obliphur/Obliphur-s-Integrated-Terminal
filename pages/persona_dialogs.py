@@ -73,7 +73,7 @@ def create_persona(parent, comm):
     rb_bri.pack(side="left")
 
     label(body, "亲密动作最高开放程度（V+ / BURST / 确立关系后）")
-    intimacy_var = tk.IntVar(value=comm_author.DEFAULT_INTIMACY_LEVEL)
+    intimacy_var = tk.IntVar(value=comm_author.intimacy_level_index(comm_author.DEFAULT_INTIMACY_LEVEL))
     intimacy_card = tk.Frame(body, bg=COLORS["bg_card"], padx=10, pady=8)
     intimacy_card.pack(fill="x", pady=(2, 8))
 
@@ -105,8 +105,12 @@ def create_persona(parent, comm):
     )
     wrap_label(consent_hint)
 
+    def _current_intimacy():
+        idx = max(0, min(len(comm_author.INTIMACY_LEVELS) - 1, int(intimacy_var.get())))
+        return comm_author.INTIMACY_LEVELS[idx]
+
     def _sync_intimacy(_val=None):
-        info = comm_author.intimacy_level_info(intimacy_var.get())
+        info = _current_intimacy()
         intimacy_title.configure(text=tr(info.title))
         intimacy_desc.configure(text=tr(info.description))
         intimacy_fit.configure(text=tr(info.model_fit))
@@ -117,7 +121,7 @@ def create_persona(parent, comm):
             consent_chk.configure(state="disabled")
 
     intimacy_scale = tk.Scale(
-        intimacy_card, from_=1, to=len(comm_author.INTIMACY_LEVELS), resolution=1,
+        intimacy_card, from_=0, to=len(comm_author.INTIMACY_LEVELS) - 1, resolution=1,
         orient="horizontal", variable=intimacy_var, showvalue=False,
         bg=COLORS["bg_card"], fg=COLORS["text"], troughcolor=COLORS["bg"],
         highlightthickness=0, activebackground=COLORS["accent"], command=_sync_intimacy,
@@ -155,7 +159,7 @@ def create_persona(parent, comm):
     def generate():
         title, request, profile = name.get().strip(), value(requirements).strip(), value(manual)
         mode = mode_var.get()
-        intimacy_level = intimacy_var.get()
+        intimacy_level = _current_intimacy().level
         consent_mode = bool(consent_var.get()) and intimacy_level in comm_author.CONSENT_MODE_LEVELS
         try:
             comm_author.all_file_names(comm.personas, title)

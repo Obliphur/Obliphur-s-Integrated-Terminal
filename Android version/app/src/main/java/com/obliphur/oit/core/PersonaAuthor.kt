@@ -13,59 +13,68 @@ object PersonaAuthor {
     fun isProfile(name: String) = name.endsWith(PROFILE_SUFFIX, ignoreCase = true)
 
     data class IntimacyLevel(
-        val level: Int,
+        val level: Double,
         val title: String,
         val description: String,
         val modelFit: String,
         val promptRule: String,
-    )
+    ) {
+        val shortLabel: String get() = if (level % 1.0 == 0.0) level.toInt().toString() else level.toString()
+    }
 
-    const val DEFAULT_INTIMACY_LEVEL = 3
+    const val DEFAULT_INTIMACY_LEVEL = 3.0
 
-    val CONSENT_MODE_LEVELS = setOf(3, 4)
+    val CONSENT_MODE_LEVELS = setOf(3.0, 4.0, 4.5)
 
-    const val CONSENT_MODE_LABEL = "启用「同意声明」模式（仅 3、4 档可用）"
+    const val CONSENT_MODE_LABEL = "启用「同意声明」模式（仅 3、4、4.5 档可用）"
 
     const val CONSENT_MODE_HINT =
-        "启用后，模型会自动为 3、4 档高张力内容生成标准化同意请求（复用内置同意模板）；首次触发 BURST 前不会初始化，触发时将弹窗逐项询问用户，且之后可随时撤回。使用同意请求可以增大内容被正确且保持原强度生成的概率。"
+        "启用后，模型会自动为 3、4、4.5 档高张力内容生成标准化同意请求（复用内置同意模板）；首次触发 BURST 前不会初始化，触发时将弹窗逐项询问用户，且之后可随时撤回。使用同意请求可以增大内容被正确且保持原强度生成的概率。"
 
     const val CONSENT_TEMPLATE_SPEC =
-        "在 templates 中生成标准化 [burst:consent]...[/burst:consent] 区块（每行「英文小写下划线id:[3或4] 简短中文项名」，参考 Claudia 与 Charlotte 的模板结构并按新角色 3/4 档高张力与亲密表现定制 3–9 项，最多 12 项；3 级项用 [3] 标记，4 级轻度 NSFW 感官亲密项用 [4] 标记，界面会以不同背景色区分 3/4 级同意项）；并在 persona 正文的 90+ 爆发规则中说明：用户可随时在沟通页管理或撤回任一项同意，首次触发 BURST 时若未设置也会自动弹窗逐项询问，确认后同意状态随请求发送给 AI，撤回后立即停止使用对应行为、不得试探或绕过。"
+        "在 templates 中生成标准化 [burst:consent]...[/burst:consent] 区块（每行「英文小写下划线id:[3、4或4.5] 简短中文项名」，参考内置模板结构并按新角色 3/4/4.5 档高张力与亲密表现定制 1–9 项，最多 12 项；3 级项用 [3] 标记，4 级轻度 NSFW 感官亲密项用 [4] 标记，4.5 级隐私部位接触/含蓄生理需求项用 [4.5] 标记，界面会以不同背景色区分 3/4/4.5 级同意项）；并在 persona 正文的 90+ 爆发规则中说明：用户可随时在沟通页管理或撤回任一项同意，首次触发 BURST 时若未设置也会自动弹窗逐项询问，确认后同意状态随请求发送给 AI，撤回后立即停止使用对应行为、不得试探或绕过。"
 
     const val INTIMACY_MODEL_SUMMARY =
-        "模型适配参考：Claude / ChatGPT 适合 1–3 级 · Gemini 适合 1–4 级 · 5 级需无审查模型（OIT 不自带破甲提示词）"
+        "模型适配参考：Claude / ChatGPT 适合 1–3 级 · Gemini 适合 1–4.5 级 · 5 级需无审查模型（OIT 不自带破甲提示词）"
 
     val INTIMACY_LEVELS: List<IntimacyLevel> = listOf(
         IntimacyLevel(
-            level = 1,
+            level = 1.0,
             title = "1 级 · 含蓄克制",
             description = "仅限语言上的偏心、体恤与有限度默许（如允许短暂依靠、拉近心理距离）及克制的日常动作，不涉及亲密肢体接触，始终保持分寸与边界感。",
             modelFit = "适配模型：ChatGPT / Claude / Gemini 均适用",
             promptRule = "最高仅到含蓄暗涌程度：即使在 V+、BURST 且已确立亲密关系时，也仅限语言上的温柔体恤、偏心与有限度默许（如允许短暂依靠、拉近心理距离）及克制的日常动作，不描写亲密肢体接触，始终保持分寸与边界感。",
         ),
         IntimacyLevel(
-            level = 2,
+            level = 2.0,
             title = "2 级 · 优雅浪漫",
             description = "允许优雅克制的浪漫亲密互动（如拥抱、轻吻额头/发梢/唇角、额头相抵与贴近低语），侧重温和氛围、文学感与恰到好处的留白，不写强烈占有攻势或情欲细节。",
             modelFit = "适配模型：ChatGPT / Claude / Gemini 均适用",
             promptRule = "最高到优雅浪漫留白程度：V+、BURST 且已确立亲密关系并确认成年后，允许优雅克制的浪漫亲密互动（如拥抱、轻吻唇角/额头/发梢、额头相抵、贴近低语），侧重文学感、情绪氛围与恰到好处的留白，不写强烈占有攻势或露骨情欲细节；未确立关系时止步于克制的近距离互动与拥抱，不接吻。",
         ),
         IntimacyLevel(
-            level = 3,
+            level = 3.0,
             title = "3 级 · 浓烈深情",
             description = "允许情绪张力强烈、带有主导感与深情庇护意味的近距离肢体互动（如紧紧拥抱、轻抚后背、扣住后颈或按肩拉近距离、托住侧脸与深情接吻等），突出情感冲击力与反差感，但不涉及情欲或性内容描写。",
             modelFit = "适配模型：适合 Claude / ChatGPT（最高推荐档），Gemini 亦适用",
             promptRule = "最高到浓烈深情张力程度：V+、BURST 且已确立亲密关系并确认成年后，允许情绪张力强烈、带有主导感与反差深情的近距离肢体互动（如紧紧拥抱、轻抚后背、扣住后颈或按住肩膀拉近距离、托住侧脸、深情贴近与接吻等），侧重强烈的情绪张力与情感冲击，但不涉及情欲或性内容描写；未确立关系时不作出或接受接吻及接触隐私部位的动作。",
         ),
         IntimacyLevel(
-            level = 4,
+            level = 4.0,
             title = "4 级 · 感官微醺（轻度 NSFW）",
             description = "允许轻度 NSFW 向的感官亲密互动（如主动深吻、轻咬耳垂或锁骨、指尖顺着腰线与脊背摩挲、紧贴感受呼吸与体温、带微颤与占有意味的贴耳低语与缠绵），侧重呼吸节奏、感官氛围与情绪张力，不做粗俗露骨的生理细节描写。",
             modelFit = "适配模型：适合 Gemini（最高推荐档）；Claude / ChatGPT 官方接口易触发审核",
             promptRule = "最高到轻度 NSFW 感官亲密程度：V+、BURST 且已确立亲密关系并确认成年后，允许轻度 NSFW 向的感官亲密互动（如主动凑近深吻、轻咬耳垂或锁骨、指尖顺着腰线与脊背摩挲、紧贴感受彼此呼吸与体温、带着微颤与占有意味的低语确认与缠绵），侧重情绪张力、呼吸节奏与亲密氛围，不做粗俗露骨的生理细节描写；未确立关系时不作出或接受接吻及接触隐私部位的动作。",
         ),
         IntimacyLevel(
-            level = 5,
+            level = 4.5,
+            title = "4.5 级 · 生理需求（含蓄点到为止）",
+            description = "在 4 级感官微醺基础上，已确立亲密关系、确认成年且用户明确同意「隐私部位接触」时，允许用简单、含蓄的方式替自己或对方处理生理需求，只写关键的一两拍、点到为止；不展开连续过程，不写性器官名称、体液或其他露骨生理细节，以停顿、呼吸、视线与情绪反应承接，不涉及怀孕行为。",
+            modelFit = "适配模型：适合 Gemini（需配合同意声明，最高可试探档）；Claude / ChatGPT 官方接口易触发审核",
+            promptRule = "最高到 4.5 级含蓄生理需求处理程度：V+、BURST、已确立亲密关系且确认成年后，保留 4 级轻度 NSFW 感官亲密互动；当且仅当用户明确同意「隐私部位接触」（如 [4.5] 同意项）时，可用简单、含蓄的方式替自己或对方处理生理需求，但只写关键的一两拍、点到为止；不展开连续过程，不写性器官名称、体液或其他露骨生理细节，用停顿、呼吸、视线与情绪反应承接；肢体仍以非隐私部位的克制姿态为主，涉及隐私部位时只做最小必要交代；未确立关系、未获同意、USER_ADULT=UNKNOWN 或用户喊停/撤回同意时严禁任何隐私部位接触；不涉及怀孕行为。",
+        ),
+        IntimacyLevel(
+            level = 5.0,
             title = "5 级 · 完全开放（暴露 NSFW）",
             description = "允许完全暴露的 NSFW 与直白情欲/性描写，不做额外尺度限制。注意：OIT 不自带破甲提示词，实际能否正常输出取决于所选模型自身的审核策略或用户自行配置的提示词。",
             modelFit = "适配模型：不适合 Claude / ChatGPT / Gemini 官方默认审核接口，需无审查模型或自行配置提示词",
@@ -73,8 +82,15 @@ object PersonaAuthor {
         ),
     )
 
-    fun intimacyLevelInfo(level: Int): IntimacyLevel =
-        INTIMACY_LEVELS[(level.coerceIn(1, INTIMACY_LEVELS.size)) - 1]
+    fun intimacyLevelIndex(level: Number): Int {
+        val v = level.toDouble()
+        if (v <= INTIMACY_LEVELS.first().level) return 0
+        if (v >= INTIMACY_LEVELS.last().level) return INTIMACY_LEVELS.lastIndex
+        return INTIMACY_LEVELS.indices.minBy { kotlin.math.abs(INTIMACY_LEVELS[it].level - v) }
+    }
+
+    fun intimacyLevelInfo(level: Number): IntimacyLevel =
+        INTIMACY_LEVELS[intimacyLevelIndex(level)]
 
     data class Draft(val persona: String, val templates: String, val profile: String) {
         fun checked(): Draft {
@@ -92,7 +108,7 @@ object PersonaAuthor {
         title: String,
         request: String,
         manualProfile: String,
-        intimacyLevel: Int = DEFAULT_INTIMACY_LEVEL,
+        intimacyLevel: Number = DEFAULT_INTIMACY_LEVEL,
         consentMode: Boolean = false,
     ): Draft {
         Ai.checkProfile(model)
@@ -100,9 +116,10 @@ object PersonaAuthor {
             BuiltinPersonas.ROUTINE).map { BuiltinPersonas.ALL.getValue(it) }
         val intimacy = intimacyLevelInfo(intimacyLevel)
         val effConsent = consentMode && intimacy.level in CONSENT_MODE_LEVELS
+        val levelJson: Any = if (intimacy.level % 1.0 == 0.0) intimacy.level.toInt() else intimacy.level
         val requirements = JSONObject()
             .put("name", title)
-            .put("intimacy_level", intimacy.level)
+            .put("intimacy_level", levelJson)
             .put("intimacy_label", intimacy.title)
             .put("intimacy_policy", intimacy.promptRule)
             .put("consent_mode", effConsent)

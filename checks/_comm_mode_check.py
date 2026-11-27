@@ -199,7 +199,7 @@ try:
             assert c.persona_name() == "Claudia.txt"
             assert not c.burst_consent_asked()
             assert page.btn_consent.winfo_manager() == "pack"
-            def _inspect_consent_dialog(expected_total, expected_l3, expected_l4):
+            def _inspect_consent_dialog(expected_total, expected_l3, expected_l4, expected_l45=0):
                 captured = []
                 def _inspect(dlg):
                     from tkinter import ttk
@@ -216,14 +216,23 @@ try:
                 assert len(captured) == 1 and len(captured[0]) == expected_total, f"同意声明数量异常: {captured}"
                 l3_bgs = {bg for badge, bg in captured[0] if badge == i18n.tr("3级")}
                 l4_bgs = {bg for badge, bg in captured[0] if badge == i18n.tr("4级")}
+                l45_bgs = {bg for badge, bg in captured[0] if badge == i18n.tr("4.5级")}
                 assert sum(1 for badge, _ in captured[0] if badge == i18n.tr("3级")) == expected_l3
                 assert sum(1 for badge, _ in captured[0] if badge == i18n.tr("4级")) == expected_l4
-                assert len(l3_bgs) == 1 and len(l4_bgs) == 1 and l3_bgs != l4_bgs, f"3/4 级同意项背景色必须不同: {l3_bgs} vs {l4_bgs}"
-            _inspect_consent_dialog(9, 7, 2)
+                assert sum(1 for badge, _ in captured[0] if badge == i18n.tr("4.5级")) == expected_l45
+                if expected_l3 and expected_l4:
+                    assert len(l3_bgs) == 1 and len(l4_bgs) == 1 and l3_bgs != l4_bgs, f"3/4 级同意项背景色必须不同: {l3_bgs} vs {l4_bgs}"
+                return l3_bgs, l4_bgs, l45_bgs
+            l3_bgs, l4_bgs, _ = _inspect_consent_dialog(9, 7, 2)
             c.set_cfg(persona="Charlotte.txt")
             page.refresh(force=True)
             assert page.btn_consent.winfo_manager() == "pack"
             _inspect_consent_dialog(7, 5, 2)
+            c.set_cfg(persona="Gemina.txt")
+            page.refresh(force=True)
+            assert page.btn_consent.winfo_manager() == "pack"
+            _, _, l45_bgs = _inspect_consent_dialog(1, 0, 0, 1)
+            assert len(l45_bgs) == 1 and l45_bgs != l3_bgs and l45_bgs != l4_bgs, f"4.5 级同意项背景色必须与 3/4 级不同: {l45_bgs}"
             c.set_cfg(persona="Assistant.txt")
             page.refresh(force=True)
             assert not c.burst_consent_rules_for()

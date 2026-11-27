@@ -38,7 +38,7 @@ def claudia_reference_files(folder: str = "") -> dict[str, str]:
 
 @dataclass(frozen=True)
 class IntimacyLevel:
-    level: int
+    level: int | float
     title: str
     description: str
     model_fit: str
@@ -47,26 +47,27 @@ class IntimacyLevel:
 
 DEFAULT_INTIMACY_LEVEL = 3
 
-CONSENT_MODE_LEVELS = (3, 4)
+CONSENT_MODE_LEVELS = (3, 4, 4.5)
 
-CONSENT_MODE_LABEL = "启用「同意声明」模式（仅 3、4 档可用）"
+CONSENT_MODE_LABEL = "启用「同意声明」模式（仅 3、4、4.5 档可用）"
 
 CONSENT_MODE_HINT = (
-    "启用后，模型会自动为 3、4 档高张力内容生成标准化同意请求（复用内置同意模板）；"
+    "启用后，模型会自动为 3、4、4.5 档高张力内容生成标准化同意请求（复用内置同意模板）；"
     "首次触发 BURST 前不会初始化，触发时将弹窗逐项询问用户，且之后可随时撤回。"
     "使用同意请求可以增大内容被正确且保持原强度生成的概率。"
 )
 
 CONSENT_TEMPLATE_SPEC = (
-    "在 templates 中生成标准化 [burst:consent]...[/burst:consent] 区块（每行「英文小写下划线id:[3或4] 简短中文项名」，"
-    "参考 Claudia 与 Charlotte 的模板结构并按新角色 3/4 档高张力与亲密表现定制 3–9 项，最多 12 项；"
-    "3 级项用 [3] 标记，4 级轻度 NSFW 感官亲密项用 [4] 标记，界面会以不同背景色区分 3/4 级同意项）；"
+    "在 templates 中生成标准化 [burst:consent]...[/burst:consent] 区块（每行「英文小写下划线id:[3、4或4.5] 简短中文项名」，"
+    "参考内置模板结构并按新角色 3/4/4.5 档高张力与亲密表现定制 1–9 项，最多 12 项；"
+    "3 级项用 [3] 标记，4 级轻度 NSFW 感官亲密项用 [4] 标记，4.5 级隐私部位接触/含蓄生理需求项用 [4.5] 标记，"
+    "界面会以不同背景色区分 3/4/4.5 级同意项）；"
     "并在 persona 正文的 90+ 爆发规则中说明：用户可随时在沟通页管理或撤回任一项同意，首次触发 BURST 时若未设置也会自动弹窗逐项询问，"
     "确认后同意状态随请求发送给 AI，撤回后立即停止使用对应行为、不得试探或绕过。"
 )
 
 INTIMACY_MODEL_SUMMARY = (
-    "模型适配参考：Claude / ChatGPT 适合 1–3 级 · Gemini 适合 1–4 级 · 5 级需无审查模型（OIT 不自带破甲提示词）"
+    "模型适配参考：Claude / ChatGPT 适合 1–3 级 · Gemini 适合 1–4.5 级 · 5 级需无审查模型（OIT 不自带破甲提示词）"
 )
 
 INTIMACY_LEVELS: tuple[IntimacyLevel, ...] = (
@@ -114,6 +115,19 @@ INTIMACY_LEVELS: tuple[IntimacyLevel, ...] = (
         ),
     ),
     IntimacyLevel(
+        level=4.5,
+        title="4.5 级 · 生理需求（含蓄点到为止）",
+        description="在 4 级感官微醺基础上，已确立亲密关系、确认成年且用户明确同意「隐私部位接触」时，允许用简单、含蓄的方式替自己或对方处理生理需求，只写关键的一两拍、点到为止；不展开连续过程，不写性器官名称、体液或其他露骨生理细节，以停顿、呼吸、视线与情绪反应承接，不涉及怀孕行为。",
+        model_fit="适配模型：适合 Gemini（需配合同意声明，最高可试探档）；Claude / ChatGPT 官方接口易触发审核",
+        prompt_rule=(
+            "最高到 4.5 级含蓄生理需求处理程度：V+、BURST、已确立亲密关系且确认成年后，保留 4 级轻度 NSFW 感官亲密互动；"
+            "当且仅当用户明确同意「隐私部位接触」（如 [4.5] 同意项）时，可用简单、含蓄的方式替自己或对方处理生理需求，但只写关键的一两拍、点到为止；"
+            "不展开连续过程，不写性器官名称、体液或其他露骨生理细节，用停顿、呼吸、视线与情绪反应承接；"
+            "肢体仍以非隐私部位的克制姿态为主，涉及隐私部位时只做最小必要交代；"
+            "未确立关系、未获同意、USER_ADULT=UNKNOWN 或用户喊停/撤回同意时严禁任何隐私部位接触；不涉及怀孕行为。"
+        ),
+    ),
+    IntimacyLevel(
         level=5,
         title="5 级 · 完全开放（暴露 NSFW）",
         description="允许完全暴露的 NSFW 与直白情欲/性描写，不做额外尺度限制。注意：OIT 不自带破甲提示词，实际能否正常输出取决于所选模型自身的审核策略或用户自行配置的提示词。",
@@ -128,13 +142,20 @@ INTIMACY_LEVELS: tuple[IntimacyLevel, ...] = (
 )
 
 
-def intimacy_level_info(level: int) -> IntimacyLevel:
+def intimacy_level_index(level: int | float) -> int:
     try:
-        idx = int(level)
+        val = float(level)
     except (TypeError, ValueError):
-        idx = DEFAULT_INTIMACY_LEVEL
-    idx = max(1, min(len(INTIMACY_LEVELS), idx))
-    return INTIMACY_LEVELS[idx - 1]
+        val = float(DEFAULT_INTIMACY_LEVEL)
+    if val <= INTIMACY_LEVELS[0].level:
+        return 0
+    if val >= INTIMACY_LEVELS[-1].level:
+        return len(INTIMACY_LEVELS) - 1
+    return min(range(len(INTIMACY_LEVELS)), key=lambda i: abs(INTIMACY_LEVELS[i].level - val))
+
+
+def intimacy_level_info(level: int | float) -> IntimacyLevel:
+    return INTIMACY_LEVELS[intimacy_level_index(level)]
 
 
 @dataclass(frozen=True)
@@ -179,7 +200,7 @@ def _parse_draft(reply: str, manual_profile: str = "") -> Draft:
 
 def generate(profile, title: str, requirements: str, manual_profile: str,
              chat=ai_assist.chat_messages, mode: str = "detailed", folder: str = "",
-             intimacy_level: int = DEFAULT_INTIMACY_LEVEL, consent_mode: bool = False) -> Draft:
+             intimacy_level: int | float = DEFAULT_INTIMACY_LEVEL, consent_mode: bool = False) -> Draft:
     """参考所有已解密的 Claudia 文件生成 5 份人设草稿；手写简介留在本机。"""
     ai_assist.check_profile(profile)
     system = (Path(__file__).resolve().parent.parent / "defaults" / "persona_author.txt").read_text(encoding="utf-8")
@@ -209,7 +230,7 @@ def generate(profile, title: str, requirements: str, manual_profile: str,
 
 def revise(profile, title: str, current: Draft, instruction: str,
            chat=ai_assist.chat_messages, mode: str = "detailed", folder: str = "",
-           intimacy_level: int = DEFAULT_INTIMACY_LEVEL, consent_mode: bool = False) -> Draft:
+           intimacy_level: int | float = DEFAULT_INTIMACY_LEVEL, consent_mode: bool = False) -> Draft:
     """根据用户的修改要求，基于当前 5 份可编辑草稿迭代修改。"""
     ai_assist.check_profile(profile)
     instr = str(instruction or "").strip()

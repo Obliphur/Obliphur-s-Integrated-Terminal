@@ -307,28 +307,35 @@ class CommPage(CommVoiceMixin, tk.Frame):
             lbl_tip.pack(fill="x", pady=(0, 8))
             l3_bg = "#1d2836" if config.THEME_DARK else "#eaf2fc"
             l4_bg = "#381e25" if config.THEME_DARK else "#fcecef"
+            l45_bg = "#301c3d" if config.THEME_DARK else "#f5ebfc"
             l3_badge_fg = "#93c5fd" if config.THEME_DARK else "#1d4ed8"
             l4_badge_fg = "#fda4af" if config.THEME_DARK else "#be123c"
+            l45_badge_fg = "#d8b4fe" if config.THEME_DARK else "#7e22ce"
             style = ttk.Style(dlg)
             style.configure("ConsentL3.TCheckbutton", background=l3_bg, foreground=COLORS["text"], font=config.font("body"))
             style.map("ConsentL3.TCheckbutton", background=[("active", l3_bg), ("selected", l3_bg)])
             style.configure("ConsentL4.TCheckbutton", background=l4_bg, foreground=COLORS["text"], font=config.font("body"))
             style.map("ConsentL4.TCheckbutton", background=[("active", l4_bg), ("selected", l4_bg)])
+            style.configure("ConsentL45.TCheckbutton", background=l45_bg, foreground=COLORS["text"], font=config.font("body"))
+            style.map("ConsentL45.TCheckbutton", background=[("active", l45_bg), ("selected", l45_bg)])
             vars_map = {}
             area = ScrollArea(dlg.body, height=config.scaled(310), bg=COLORS["bg_card"])
             area.pack(fill="both", expand=True)
             box = tk.Frame(area.inner, bg=COLORS["bg_card"], padx=10, pady=8)
             box.pack(fill="both", expand=True)
             for cid, (level, label) in items.items():
-                row_bg = l4_bg if level >= 4 else l3_bg
-                badge_fg = l4_badge_fg if level >= 4 else l3_badge_fg
-                chk_style = "ConsentL4.TCheckbutton" if level >= 4 else "ConsentL3.TCheckbutton"
+                if level >= 4.5:
+                    row_bg, badge_fg, chk_style, badge_txt = l45_bg, l45_badge_fg, "ConsentL45.TCheckbutton", tr("4.5级")
+                elif level >= 4:
+                    row_bg, badge_fg, chk_style, badge_txt = l4_bg, l4_badge_fg, "ConsentL4.TCheckbutton", tr("4级")
+                else:
+                    row_bg, badge_fg, chk_style, badge_txt = l3_bg, l3_badge_fg, "ConsentL3.TCheckbutton", tr("3级")
                 row = tk.Frame(box, bg=row_bg, padx=10, pady=6)
                 row.pack(fill="x", pady=3)
                 v = tk.BooleanVar(value=bool(current.get(cid, False)))
                 vars_map[cid] = v
                 ttk.Checkbutton(row, text=label, variable=v, style=chk_style).pack(side="left", anchor="w", fill="x", expand=True)
-                tk.Label(row, text=tr("4级") if level >= 4 else tr("3级"), bg=row_bg, fg=badge_fg,
+                tk.Label(row, text=badge_txt, bg=row_bg, fg=badge_fg,
                          font=config.font("small", bold=True)).pack(side="right", padx=(8, 0))
 
             def select_all():

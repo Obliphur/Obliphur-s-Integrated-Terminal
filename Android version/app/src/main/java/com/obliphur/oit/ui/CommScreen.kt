@@ -579,8 +579,10 @@ private fun BurstConsentDialog(
     val o = LocalOit.current
     val l3Bg = if (o.dark) Color(0xFF1D2836) else Color(0xFFEAF2FC)
     val l4Bg = if (o.dark) Color(0xFF381E25) else Color(0xFFFCECEF)
+    val l45Bg = if (o.dark) Color(0xFF301C3D) else Color(0xFFF5EBFC)
     val l3Badge = if (o.dark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
     val l4Badge = if (o.dark) Color(0xFFFDA4AF) else Color(0xFFBE123C)
+    val l45Badge = if (o.dark) Color(0xFFD8B4FE) else Color(0xFF7E22CE)
     val states = remember(items, current) {
         mutableStateOf(items.keys.associateWith { current[it] == true })
     }
@@ -602,12 +604,26 @@ private fun BurstConsentDialog(
                 )
                 items.forEach { (cid, rule) ->
                     val checked = states.value[cid] == true
-                    val isL4 = rule.level >= 4
+                    val rowBg = when {
+                        rule.level >= 4.5 -> l45Bg
+                        rule.level >= 4.0 -> l4Bg
+                        else -> l3Bg
+                    }
+                    val badgeColor = when {
+                        rule.level >= 4.5 -> l45Badge
+                        rule.level >= 4.0 -> l4Badge
+                        else -> l3Badge
+                    }
+                    val badgeText = when {
+                        rule.level >= 4.5 -> "4.5级"
+                        rule.level >= 4.0 -> "4级"
+                        else -> "3级"
+                    }
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (isL4) l4Bg else l3Bg)
+                            .background(rowBg)
                             .clickable { states.value = states.value + (cid to !checked) }
                             .padding(end = 10.dp, top = 2.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -615,8 +631,8 @@ private fun BurstConsentDialog(
                         Checkbox(checked = checked, onCheckedChange = { states.value = states.value + (cid to it) })
                         Text(rule.label, color = o.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
                         Text(
-                            tr(if (isL4) "4级" else "3级"),
-                            color = if (isL4) l4Badge else l3Badge,
+                            tr(badgeText),
+                            color = badgeColor,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(start = 6.dp),

@@ -415,7 +415,7 @@ def _selftest():
     wait(mc)
     assert [m["text"] for m in mc.visible()] == ["你好夜", "夜: 嗯"]
     assert all("你好小夏" not in (m.get("api") or "") for m in calls[-1][1]), "发给夜的不带小夏那边的记录"
-    assert calls[-1][0].endswith("你是夜")
+    assert calls[-1][0] == persona_system(folder, "夜.txt") and "你是夜" in calls[-1][0]
     mc.set_cfg(persona="小夏.txt")
     assert [m["text"] for m in mc.visible()] == ["你好小夏", "小夏: 在"], "换回来: 各聊各的"
     mc.clear()
@@ -458,7 +458,8 @@ def _selftest():
     # 记忆卡也随设备同步: 后改的为准
     mc.cfg["mem_auto"] = "- 下周三考试"
     mc.cfg["mem_live"] = "- 这周内完成报名"
-    mc.cfg["mem_ts"] = max(mc._ms(), int(mc.cfg.get("clear_ts") or 0)) + 1
+    mc.cfg["mem_ts"] = max(mc._ms(), int(mc.cfg.get("clear_ts") or 0), int(mc.cfg.get("mem_auto_ts") or 0), int(mc.cfg.get("mem_live_ts") or 0)) + 1
+    mc.cfg["mem_auto_ts"] = mc.cfg["mem_live_ts"] = mc.cfg["mem_ts"]
     other.apply_doc(mc.sync_doc())
     assert other._state_of(pid_of("小夏.txt"))["mem_auto"] == "- 下周三考试"
     assert other._state_of(pid_of("小夏.txt"))["mem_live"] == "- 这周内完成报名"
@@ -1982,11 +1983,13 @@ def _selftest():
     assert read_profile(psf, "甲.txt") == ""
 
     from comm import comm_author
-    assert len(comm_author.INTIMACY_LEVELS) == 5
-    for lv_idx, lv in enumerate(comm_author.INTIMACY_LEVELS, start=1):
-        assert lv.level == lv_idx
+    assert len(comm_author.INTIMACY_LEVELS) == 6
+    assert tuple(lv.level for lv in comm_author.INTIMACY_LEVELS) == (1, 2, 3, 4, 4.5, 5)
+    for lv in comm_author.INTIMACY_LEVELS:
         for forbidden in ("Claudia", "Charlotte", "Gemina"):
             assert forbidden not in lv.title and forbidden not in lv.description and forbidden not in lv.model_fit
+    assert comm_author.intimacy_level_info(4.5).level == 4.5
+    assert comm_author.CONSENT_MODE_LEVELS == (3, 4, 4.5)
     assert "破甲提示词" in comm_author.intimacy_level_info(5).description
     assert all(m in comm_author.INTIMACY_MODEL_SUMMARY for m in ("Claude", "ChatGPT", "Gemini"))
 

@@ -53,13 +53,13 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
     var title by remember { mutableStateOf("") }
     var request by remember { mutableStateOf("") }
     var profile by remember { mutableStateOf("") }
-    var intimacyLevel by remember { mutableIntStateOf(PersonaAuthor.DEFAULT_INTIMACY_LEVEL) }
+    var intimacyIndex by remember { mutableIntStateOf(PersonaAuthor.intimacyLevelIndex(PersonaAuthor.DEFAULT_INTIMACY_LEVEL)) }
     var consentMode by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf<PersonaAuthor.Draft?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val preview = draft
-    val intimacyInfo = PersonaAuthor.intimacyLevelInfo(intimacyLevel)
+    val intimacyInfo = PersonaAuthor.INTIMACY_LEVELS[intimacyIndex]
     val consentAvailable = intimacyInfo.level in PersonaAuthor.CONSENT_MODE_LEVELS
     AlertDialog(onDismissRequest = onDismiss, title = { Text(tr("创建人设")) },
         text = {
@@ -84,20 +84,20 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
                                 color = MaterialTheme.colorScheme.primary,
                             )
                             Slider(
-                                value = intimacyLevel.toFloat(),
+                                value = intimacyIndex.toFloat(),
                                 onValueChange = {
-                                    val next = it.roundToInt().coerceIn(1, PersonaAuthor.INTIMACY_LEVELS.size)
-                                    intimacyLevel = next
-                                    if (next !in PersonaAuthor.CONSENT_MODE_LEVELS) consentMode = false
+                                    val next = it.roundToInt().coerceIn(0, PersonaAuthor.INTIMACY_LEVELS.lastIndex)
+                                    intimacyIndex = next
+                                    if (PersonaAuthor.INTIMACY_LEVELS[next].level !in PersonaAuthor.CONSENT_MODE_LEVELS) consentMode = false
                                 },
-                                valueRange = 1f..PersonaAuthor.INTIMACY_LEVELS.size.toFloat(),
+                                valueRange = 0f..PersonaAuthor.INTIMACY_LEVELS.lastIndex.toFloat(),
                                 steps = PersonaAuthor.INTIMACY_LEVELS.size - 2,
                                 enabled = !busy,
                             )
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 PersonaAuthor.INTIMACY_LEVELS.forEach { item ->
                                     Text(
-                                        item.level.toString(),
+                                        item.shortLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -160,7 +160,7 @@ internal fun PersonaAuthorDialog(comm: Comm, onDismiss: () -> Unit, onSave: (Str
                     val name = title.trim()
                     val requirements = request.trim()
                     val manualProfile = profile
-                    val chosenIntimacy = intimacyLevel
+                    val chosenIntimacy = intimacyInfo.level
                     val chosenConsent = consentAvailable && consentMode
                     val problem = runCatching {
                         comm.checkNewPersonaName(name)

@@ -175,7 +175,7 @@ class ChatMixin:
             due = max(int(m.get("due") or 0), int(m.get("reply_after") or 0))
             if due > now:
                 break
-            m.pop("pending_reply", None)
+            m["reply_source"] = m.pop("pending_reply", None)
             m.pop("reply_ready", None)
             send_at = int(m.pop("send_at", 0) or 0)
             if not m.get("late"):
@@ -229,6 +229,7 @@ class ChatMixin:
             m.pop("due", None)
             m["shown"] = now                               # 等用户回复的时间从这时候算起 (规则 IX)
             pending = m.pop("pending_reply", None) is not None
+            m.pop("reply_source", None)
             m.pop("reply_ready", None)
             send_at = int(m.pop("send_at", 0) or 0)
             late = m.pop("late", False)
