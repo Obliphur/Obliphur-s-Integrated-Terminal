@@ -2183,6 +2183,7 @@ class OitMcpBridge:
                     "muted": bool(self.comm.is_muted(pid)) if hasattr(self.comm, "is_muted") else False,
                     "co_alarm": bool(self.comm.is_co_alarm()) if hasattr(self.comm, "is_co_alarm") else False,
                     "share": bool(getattr(self.comm, "share", {}).get("on")),
+                    "burst_consent_available": bool(consent_rules),
                     "burst_consent_asked": consent_asked,
                     "burst_consent_pending": consent_pending,
                 },

@@ -491,6 +491,12 @@ def main():
             st_awake = _http_json(port, bridge.token, f"/ui/state?cursor={cursor_before_sleep}")
             assert [m["text"] for m in st_awake["messages"][-2:]] == ["早安,睡醒了吗?", "昨晚休息得怎么样?"]
             assert all(m["at"].startswith("2026-11-25T06:30:") for m in st_awake["messages"][-2:])
+            assert st_awake["toolbar"]["burst_consent_available"] is True and len(st_awake["burst_consent_items"]) == 7
+            # 切到无同意声明的人设时，toolbar["burst_consent_available"] 必须为 False。
+            c.set_cfg(persona="Assistant.txt")
+            st_no_consent = _http_json(port, bridge.token, "/ui/state", None)
+            assert st_no_consent["toolbar"]["burst_consent_available"] is False and st_no_consent["burst_consent_items"] == []
+            c.set_cfg(persona="Claudia.txt")
 
             # (b) 专注中提交 + /ui/delivered 也保留 06:30
             sim_clock[0] = datetime(2026, 11, 26, 6, 30, 0)

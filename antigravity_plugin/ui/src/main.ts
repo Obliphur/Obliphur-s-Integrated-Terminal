@@ -29,6 +29,9 @@ interface UiState {
     muted?: boolean;
     co_alarm?: boolean;
     share?: boolean;
+    burst_consent_available?: boolean;
+    burst_consent_asked?: boolean;
+    burst_consent_pending?: boolean;
   };
   banners?: Array<{ kind: string; label: string }>;
   status_kind?: string;
@@ -192,6 +195,7 @@ function renderToolbar(tb?: UiState["toolbar"]) {
   const m = document.getElementById("btnMute");
   const a = document.getElementById("btnAlarm");
   const sh = document.getElementById("btnShare");
+  const cn = document.getElementById("btnConsent");
   if (s) s.classList.toggle("active", !!tb.scenario);
   if (m) {
     m.textContent = tb.muted ? "🔕" : "🔔";
@@ -205,6 +209,10 @@ function renderToolbar(tb?: UiState["toolbar"]) {
     sh.textContent = tb.share ? "👀" : "🙈";
     sh.classList.toggle("active", !!tb.share);
   }
+  if (cn) {
+    cn.style.display = tb.burst_consent_available ? "" : "none";
+    cn.classList.toggle("active", !!tb.burst_consent_pending);
+  }
 }
 
 function renderBanners(banners?: UiState["banners"]) {
@@ -216,15 +224,23 @@ function renderBanners(banners?: UiState["banners"]) {
     span.textContent = b.label;
     const actions = document.createElement("div");
     actions.className = "banner-actions";
-    const yes = document.createElement("button");
-    yes.className = "tbtn active";
-    yes.textContent = "接受";
-    yes.onclick = () => triggerAction(`respond_${b.kind}`, { accept: true });
-    const no = document.createElement("button");
-    no.className = "tbtn";
-    no.textContent = "拒绝";
-    no.onclick = () => triggerAction(`respond_${b.kind}`, { accept: false });
-    actions.append(yes, no);
+    if (b.kind === "burst_consent") {
+      const ok = document.createElement("button");
+      ok.className = "tbtn active";
+      ok.textContent = "确认";
+      ok.onclick = () => triggerAction("open_native_dialog", { kind: "burst_consent" });
+      actions.append(ok);
+    } else {
+      const yes = document.createElement("button");
+      yes.className = "tbtn active";
+      yes.textContent = "接受";
+      yes.onclick = () => triggerAction(`respond_${b.kind}`, { accept: true });
+      const no = document.createElement("button");
+      no.className = "tbtn";
+      no.textContent = "拒绝";
+      no.onclick = () => triggerAction(`respond_${b.kind}`, { accept: false });
+      actions.append(yes, no);
+    }
     div.append(span, actions);
     elBanners.appendChild(div);
   }

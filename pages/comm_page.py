@@ -18,7 +18,7 @@ import config
 import toast
 from config import COLORS
 from i18n import tr
-from .widgets import Modal, ScrollArea, cfg, focus_name, frozen
+from .widgets import Modal, ScrollArea, cfg, focus_name, frozen, wrap_label
 from .comm_voice import CommVoiceMixin
 
 
@@ -281,15 +281,16 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self._burst_consent_open = True
         try:
             asked = c.burst_consent_asked()
+            pending = bool(c.burst_consent_pending())
             current = c.burst_consent_state() if asked else {}
-            dlg = Modal(self.winfo_toplevel(), tr("爆发内容同意声明"),
+            dlg = Modal(self.winfo_toplevel(), tr("同意声明"),
                         min(560, self.winfo_screenwidth() - 40),
-                        min(460, self.winfo_screenheight() - 80))
+                        min(520, self.winfo_screenheight() - 80))
             intro = (
-                tr("{name} 即将首次进入高张力爆发（BURST）状态。请逐项勾选你同意允许的内容（未勾选的项目将被严格禁止；确认后仍可随时点击工具栏「🛡」修改或撤回）。",
+                tr("{name} 即将首次进入高张力爆发（BURST）状态。请逐项勾选你同意允许的内容（未勾选的项目将被严格禁止；可随时点击工具栏「🛡」修改或撤回）。",
                    name=c.share_ai_name())
-                if not asked else
-                tr("管理 {name} 在高张力爆发（BURST）期间的逐项同意状态。取消勾选会立即撤回该项同意，后续回复将立即停止使用对应行为。",
+                if pending else
+                tr("管理 {name} 的内容同意声明。勾选即表示同意允许，取消勾选会立即撤回该项同意，后续回复将立即停止使用对应行为。",
                    name=c.share_ai_name())
             )
             lbl_intro = tk.Label(dlg.body, text=intro, bg=COLORS["bg"], fg=COLORS["text"],
@@ -431,7 +432,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 self.scenario_btns.pack(side="left", padx=(8, 0))
         elif self.scenario_btns.winfo_manager() == "pack":
             self.scenario_btns.pack_forget()
-        if c.burst_consent_asked() and c.burst_consent_rules_for():
+        if c.burst_consent_rules_for():
             if self.btn_consent.winfo_manager() != "pack":
                 self.btn_consent.pack(side="left", padx=(4, 0), after=self.btn_coread)
         elif self.btn_consent.winfo_manager() == "pack":
@@ -1159,7 +1160,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
                 ("📚", "阅读", "选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送，待对方明确同意后才打开共读室。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。"),
-                ("🛡", "爆发同意声明", "当人设启用了「同意声明」模式时，首次触发 BURST 前不会初始化，触发时会自动弹出逐项勾选确认窗；确认后工具栏会显示 🛡，可随时点击修改或撤回任一项同意。"),
+                ("🛡", "同意声明", "当且仅当当前人设有同意声明时在工具栏显示。可随时点击逐项勾选或撤回同意（未勾选的项目将被严格禁止）；若首次触发 BURST 时仍未设置，系统也会自动弹窗提示确认。"),
                 ("💬", "说教", "你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。"),
                 ("📱 / 🎭", "聊天模式", "输入框上方的 📱 / 🎭 按钮用于情景模拟。开启情景模拟采用申请制（📱 会把申请作为附件随下一条消息发出，或点「接受」同意对方申请），开启后显示 🎭，双方均可随时结束。模式按聊天对象保存。"),
                 ("👀 / 🙈", "分享数据 (share data)", "🙈 会把请求作为附件加入待发送内容，随下一条消息询问对方；同意后才打开. 👀 表示已打开，去别的页面时对方会收到那一页上你们的数据；回到沟通自动关闭. 对方也可以发邀请，点「接受」才会打开."),

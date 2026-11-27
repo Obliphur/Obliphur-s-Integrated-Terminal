@@ -195,11 +195,31 @@ try:
             assert c.scenario_on() and not c.scenario_invite() and page.scenario_btns.winfo_manager() != "pack"
             c.set_scenario(False)
             page.refresh(force=True)
+            # 同意声明作为沟通工具栏功能：当且仅当当前人设有 [burst:consent] 时展示（无需等到首次 BURST）。
+            assert c.persona_name() == "Claudia.txt"
+            assert not c.burst_consent_asked()
+            assert page.btn_consent.winfo_manager() == "pack"
+            opened_consent = []
+            def inspect_consent(dlg):
+                from tkinter import ttk
+                opened_consent.append(len([w for w in descendants(dlg.body) if isinstance(w, ttk.Checkbutton)]))
+                dlg.cancel()
+            with patch.object(Modal, "wait", inspect_consent):
+                page.btn_consent.invoke()
+            assert opened_consent == [7], f"Claudia 同意声明应展示 7 项，实际: {opened_consent}"
+            c.set_cfg(persona="Assistant.txt")
+            page.refresh(force=True)
+            assert not c.burst_consent_rules_for()
+            assert page.btn_consent.winfo_manager() != "pack"
+            c.set_cfg(persona="Claudia.txt")
+            page.refresh(force=True)
+            assert page.btn_consent.winfo_manager() == "pack"
 
             def inspect_help(dlg):
                 dlg.update_idletasks()
                 text = "\n".join(str(w.cget("text")) for w in descendants(dlg) if "text" in w.keys())
                 assert i18n.tr("聊天模式") in text and "📱 / 🎭" in text
+                assert i18n.tr("同意声明") in text and "🛡" in text
                 assert i18n.tr("说教") in text
                 assert i18n.tr("阅读") in text and "coread" in text
                 assert i18n.tr("你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。") in text
