@@ -1027,7 +1027,7 @@ class RoomStore:
         return f"{name}: 空闲"
 
     def queue_hand_action(self, hand: str, target_id: str, target_name: str, part: str, text: str,
-                          msg_count: int | None = None) -> str:
+                          msg_count: int | None = None, secret: bool = False) -> str:
         if hand not in ("left", "right"):
             return "请指定左手或右手"
         st = self.hands[hand]["state"]
@@ -1053,6 +1053,7 @@ class RoomStore:
             "target_name": target_name,
             "part": clean_part,
             "text": clean_text,
+            "secret": bool(secret),
         })
         return ""
 
@@ -1119,8 +1120,35 @@ class RoomStore:
         targets = entry.get("targets") or []
         return "all" in targets or actor_id in targets
 
+    def visible_actions_for(self, entry: dict, actor_id: str) -> list[dict]:
+        """同一房间内公开动作人人可见；标记为 secret 的隐秘接触仅发起者与被接触者可见。"""
+        sender = entry.get("sender")
+        out = []
+        for a in entry.get("actions") or []:
+            if not a.get("secret"):
+                out.append(a)
+            elif actor_id == sender or actor_id == a.get("target_id"):
+                out.append(a)
+        return out
+
     def visible_logs_for(self, actor_id: str, room_id: str, limit: int = 35) -> list[dict]:
-        out = [e for e in self.logs if e.get("room_id") == room_id and self.can_hear(e, actor_id)]
+        """返回房间内该角色能听见或看见的记录（非隐秘动作全房可见，隐秘接触仅双方可见，轻语仅同位置可听）。"""
+        out = []
+        for e in self.logs:
+            if e.get("room_id") != room_id:
+                continue
+            if e.get("kind") in ("sys", "move"):
+                out.append(e)
+                continue
+            can_hear_speech = self.can_hear(e, actor_id)
+            vis_acts = self.visible_actions_for(e, actor_id)
+            if not can_hear_speech and not vis_acts:
+                continue
+            item = dict(e)
+            item["actions"] = vis_acts
+            if not can_hear_speech:
+                item["text"] = ""
+            out.append(item)
         return out[-limit:]
 
     def user_display_logs(self, room_id: str, name_map: dict[str, str], limit: int = 120) -> list[dict]:
@@ -1228,19 +1256,21 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
         f"氛围：{room.get('ambience', '')}\n"
         f"本房间在场成员与位置：{occ_desc}\n"
         f"你的身份：{actor_name}(id={actor_id})\n"
-        f"用户双手状态：{hand_desc}\n"
+        f"用户双手状态（同一房间内公开可见，包括牵手与小动作）：{hand_desc}\n"
         f"房间字符画地图：\n{map_text}\n\n"
         "【世界房间列表】\n" + "\n".join(world_lines) + "\n\n"
         "【规则】\n"
         "1. 原来的沟通页面代表手机聊天（可以随时私发给任何人）；而这里是面对面的现实房间空间，无法随意屏蔽某人，只能通过音量控制：\n"
         "   - volume=\"normal\"（正常音量）：房间里所有人都能听见。\n"
         "   - volume=\"whisper\"（轻语）：只有和你处于【同一室内位置】的人能听见，其他位置的人听不清。\n"
-        "2. 你可以结合当前位置（如墙边、椅子、沙发、钢琴旁）做位置相关互动（如靠墙、把对方按在墙上/椅子上，前提是符合人设与关系尺度），并用 position 字段更新你的室内位置。\n"
-        "3. 如果用户言语请求你跟随同行，同意可将 follow 设为 \"user\"（取消跟随设为 \"none\"，不变为 null）。\n"
-        "4. 你可以自行移动去公共房间或有钥匙且未反锁的房间（move_to 填房间 id）；若想把用户一起带去那个房间（例如牵着用户或带用户出去），可将 bring_user 设为 true。\n"
-        "5. 若不想被打扰可将 lock_door 设为 true 从内部反锁（false 解锁，null 不变）；分钥匙可填 give_key: {\"room_id\": \"...\", \"to\": \"user\"}。\n"
-        "6. 请严格只输出一个 JSON 对象，保持你原本的人设语气：\n"
-        '{"volume": "normal", "action": "简短动作描写(可为空)", "speech": "你的台词(可为空)", '
+        "2. 同一房间内的公开动作（牵手、移动位置、小动作等）大家都看得到；标注了[隐秘]的身体接触只有双方知道，旁人看不见。\n"
+        "3. 为避免显得话多，如果你只是在旁边看着、或者此刻不需要插话，请把 silent 设为 true（此时 speech 留空，不发消息打扰）。\n"
+        "4. 你可以结合当前位置（如墙边、椅子、沙发、钢琴旁）做位置相关互动，并用 position 字段更新你的室内位置。\n"
+        "5. 如果用户言语请求你跟随同行，同意可将 follow 设为 \"user\"（取消跟随设为 \"none\"，不变为 null）。\n"
+        "6. 你可以自行移动去公共房间或有钥匙且未反锁的房间（move_to 填房间 id）；若想把用户一起带去那个房间，可将 bring_user 设为 true。\n"
+        "7. 若不想被打扰可将 lock_door 设为 true 从内部反锁（false 解锁，null 不变）；分钥匙可填 give_key: {\"room_id\": \"...\", \"to\": \"user\"}。\n"
+        "8. 请严格只输出一个 JSON 对象，保持你原本的人设语气：\n"
+        '{"silent": false, "volume": "normal", "action": "简短动作描写(可为空)", "speech": "你的台词(可为空)", '
         '"position": null, "bind_hands": null, "follow": null, "move_to": null, "bring_user": false, "lock_door": null, "give_key": null}'
     )
     system = (persona_sys or f"你正在扮演 {actor_name}。") + room_guide
@@ -1253,7 +1283,7 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
             vol_tag = f"[在「{e.get('pos') or '原处'}」轻语]" if e.get("volume") == "whisper" else "[正常音量]"
             acts = e.get("actions") or []
             act_txt = "；".join(
-                f"[{'左手' if a.get('hand') == 'left' else '右手'}→{a.get('target_name')}·{a.get('part')}] {a.get('text')}"
+                f"[{'左手' if a.get('hand') == 'left' else '右手'}{'·隐秘' if a.get('secret') else ''}→{a.get('target_name')}·{a.get('part')}] {a.get('text')}"
                 for a in acts
             )
             body = f"{act_txt} {e.get('text', '')}".strip()
@@ -1263,10 +1293,15 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
     if trigger_reason == "auto":
         prompt = (
             f"【房间近期记录】\n{hist_block}\n\n"
-            "现在过了一小会儿。请根据当前上下文、位置与你的人设，自然决定要不要用正常音量或轻语开口、换个室内位置、移动去别的房间或带用户一起出去。"
+            "现在过了一小会儿。请根据当前上下文、位置与你的人设，自然决定要不要开口、换位置或移动；如果觉得没必要打扰可以设 silent=true。"
+        )
+    elif trigger_reason == "observe":
+        prompt = (
+            f"【房间近期记录】\n{hist_block}\n\n"
+            "你刚刚看到了房间里发生的新动作或状态变化。如果符合你的人设想给出反应就回应；如果没必要出声、只是默默看在眼里，请设 silent=true 避免话多。"
         )
     else:
-        prompt = f"【房间近期记录】\n{hist_block}\n\n请按你的人设回应当前互动，并决定说话音量（normal 或 whisper）。"
+        prompt = f"【房间近期记录】\n{hist_block}\n\n请按你的人设回应当前互动，并决定说话音量（normal 或 whisper）；若此刻选择沉默可设 silent=true。"
     return system, [{"role": "user", "content": prompt}]
 
 
@@ -1277,6 +1312,7 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
         vol = str(obj.get("volume") or "normal").strip().lower()
         if vol not in ("normal", "whisper"):
             vol = "normal"
+        silent = bool(obj.get("silent", False))
         bind = obj.get("bind_hands")
         if bind not in ("left", "right", "both", "release"):
             bind = None
@@ -1296,9 +1332,10 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
             if follow not in ("none", "user") and follow not in valid_ids:
                 follow = None
         return {
+            "silent": silent,
             "volume": vol,
             "action": str(obj.get("action") or "").strip()[:240],
-            "speech": str(obj.get("speech") or "").strip()[:1200],
+            "speech": "" if silent else str(obj.get("speech") or "").strip()[:1200],
             "position": position,
             "bind_hands": bind,
             "follow": follow,
@@ -1308,6 +1345,7 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
             "give_key": give_key,
         }
     return {
+        "silent": False,
         "volume": "normal",
         "action": "",
         "speech": str(reply_text or "").strip()[:1200],

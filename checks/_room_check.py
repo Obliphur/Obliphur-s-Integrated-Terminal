@@ -155,15 +155,28 @@ def main():
         assert all("椅子旁的小声密谋" not in e["text"] for e in user_view)
         assert any(e.get("redacted") for e in user_view)
 
-        # 6. AI 建房与自主行动回复解析
+        # 公开小动作同房全员可见；隐秘身体接触仅双方可见
+        assert store.queue_hand_action("left", "Claudia.txt", "Claudia", "肩膀", "公开拍拍肩", msg_count=200, secret=False) == ""
+        assert store.queue_hand_action("right", "Claudia.txt", "Claudia", "手掌 / 指尖", "桌下偷偷勾手指", msg_count=200, secret=True) == ""
+        acts_mix = list(store.pending_actions)
+        store.append_log(c_rid, "user", "我", ["user", "Claudia.txt"], "action", "", actions=acts_mix, volume="whisper", pos="墙边")
+        store.reset_turn_hands()
+        c_acts = [a["text"] for e in store.visible_logs_for("Claudia.txt", c_rid) for a in e.get("actions") or []]
+        g_acts = [a["text"] for e in store.visible_logs_for("Gemina.txt", c_rid) for a in e.get("actions") or []]
+        assert "公开拍拍肩" in c_acts and "桌下偷偷勾手指" in c_acts
+        assert "公开拍拍肩" in g_acts and "桌下偷偷勾手指" not in g_acts, "公开动作应全房可见，隐秘接触旁人不可见"
+
+        # 6. AI 建房与自主行动 / silent 回复解析
         gen = parse_generated_room('{"name":"旧书店","ascii_map":["┌──[书架]──┐","└──[门]──┘"]}', "书店")
         assert gen is not None and gen["name"] == "旧书店"
         parsed = parse_actor_reply(
-            '{"volume":"whisper","action":"起身","speech":"我去客厅等你","move_to":"lounge","lock_door":false,"give_key":{"room_id":"'
+            '{"silent":false,"volume":"whisper","action":"起身","speech":"我去客厅等你","move_to":"lounge","lock_door":false,"give_key":{"room_id":"'
             + c_rid + '","to":"user"}}',
             {"user", "Claudia.txt"}, set(store.rooms.keys()),
         )
-        assert parsed["volume"] == "whisper" and parsed["move_to"] == "lounge" and parsed["lock_door"] is False and parsed["give_key"]["to"] == "user"
+        assert parsed["silent"] is False and parsed["volume"] == "whisper" and parsed["move_to"] == "lounge"
+        silent_parsed = parse_actor_reply('{"silent":true,"speech":"不应说出口"}', {"user", "Claudia.txt"})
+        assert silent_parsed["silent"] is True and silent_parsed["speech"] == ""
 
         # 7. 专注/睡眠自动反锁自己的房间、空闲系统随机活动（不发言）与自动行动挑选
         assert store.enter_room("user", "lounge", "我") == ""
@@ -213,6 +226,7 @@ def main():
             )
             page.pack(fill="both", expand=True)
             root.update_idletasks()
+            assert not hasattr(page, "btn_lock"), "反锁房门已移入 [门] 菜单，不应占顶栏按钮"
             piano_hs = next(h for h in page._hotspots if h["action"] == "piano")
             book_hs = next(h for h in page._hotspots if h["action"] == "bookshelf")
             page._on_hotspot_click(piano_hs)
