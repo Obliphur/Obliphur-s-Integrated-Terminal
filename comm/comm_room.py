@@ -1171,6 +1171,31 @@ class RoomStore:
             out.append(item)
         return out[-limit:]
 
+    def recent_logs_for_actor(self, actor_id: str, limit: int = 12) -> list[dict]:
+        """跨房间获取某角色亲历或听见的近期小屋记录（严格遵守听觉与隐秘动作隔离）。"""
+        out = []
+        my_rid = self.occupants.get(actor_id)
+        for e in self.logs:
+            kind = e.get("kind")
+            if kind in ("sys", "move"):
+                if e.get("room_id") == my_rid or e.get("sender") == actor_id:
+                    out.append(e)
+                continue
+            can_hear_speech = self.can_hear(e, actor_id)
+            vis_acts = self.visible_actions_for(e, actor_id)
+            if not can_hear_speech and not vis_acts:
+                continue
+            # 若不在同房间且既非发言人也非定向听众/动作目标，跳过
+            if e.get("room_id") != my_rid and e.get("sender") != actor_id and actor_id not in (e.get("targets") or []):
+                if not any(a.get("target_id") == actor_id for a in vis_acts):
+                    continue
+            item = dict(e)
+            item["actions"] = vis_acts
+            if not can_hear_speech:
+                item["text"] = ""
+            out.append(item)
+        return out[-limit:]
+
     def user_display_logs(self, room_id: str, name_map: dict[str, str], limit: int = 120) -> list[dict]:
         out = []
         for e in [x for x in self.logs if x.get("room_id") == room_id][-limit:]:
@@ -1253,7 +1278,8 @@ def parse_generated_room(reply_text: str, fallback_theme: str = "自定义场景
 
 def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, actor_id: str, actor_name: str,
                             all_names: dict[str, str], visible_logs: list[dict],
-                            trigger_reason: str = "user") -> tuple[str, list[dict]]:
+                            trigger_reason: str = "user",
+                            memory_block: str = "", phone_history: str = "") -> tuple[str, list[dict]]:
     occ_ids = store.occupants_in(room["id"])
     occ_desc = "、".join(
         f"{all_names.get(aid, aid)}(id={aid}, 位置={store.position_of(aid)})"
@@ -1293,7 +1319,7 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
         '{"silent": false, "volume": "normal", "action": "简短动作描写(可为空)", "speech": "你的台词(可为空)", '
         '"position": null, "bind_hands": null, "follow": null, "move_to": null, "bring_user": false, "lock_door": null, "give_key": null}'
     )
-    system = (persona_sys or f"你正在扮演 {actor_name}。") + room_guide
+    system = (persona_sys or f"你正在扮演 {actor_name}。") + (memory_block or "") + room_guide
 
     history_lines = []
     for e in visible_logs:
@@ -1310,18 +1336,28 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
             history_lines.append(f"{e['sender_name']} {vol_tag}: {body}")
 
     hist_block = "\n".join(history_lines) if history_lines else "（房间里刚刚安静下来，还没有人说话。）"
+    phone_block = (
+        f"【最近手机聊天记录（沟通页上下文）】\n{phone_history.strip()}\n\n"
+        if str(phone_history or "").strip() else ""
+    )
     if trigger_reason == "auto":
         prompt = (
+            f"{phone_block}"
             f"【房间近期记录】\n{hist_block}\n\n"
             "现在过了一小会儿。请根据当前上下文、位置与你的人设，自然决定要不要开口、换位置或移动；如果觉得没必要打扰可以设 silent=true。"
         )
     elif trigger_reason == "observe":
         prompt = (
+            f"{phone_block}"
             f"【房间近期记录】\n{hist_block}\n\n"
             "你刚刚看到了房间里发生的新动作或状态变化。如果符合你的人设想给出反应就回应；如果没必要出声、只是默默看在眼里，请设 silent=true 避免话多。"
         )
     else:
-        prompt = f"【房间近期记录】\n{hist_block}\n\n请按你的人设回应当前互动，并决定说话音量（normal 或 whisper）；若此刻选择沉默可设 silent=true。"
+        prompt = (
+            f"{phone_block}"
+            f"【房间近期记录】\n{hist_block}\n\n"
+            "请按你的人设回应当前互动，并决定说话音量（normal 或 whisper）；若此刻选择沉默可设 silent=true。"
+        )
     return system, [{"role": "user", "content": prompt}]
 
 
@@ -1400,8 +1436,8 @@ def pick_auto_speaker(store: RoomStore, room_id: str, busy_ids: set[str],
 
 
 def phone_room_status_note(store: RoomStore, actor_id: str, actor_name: str,
-                           all_names: dict[str, str]) -> str:
-    """生成注入原手机沟通页的极简小屋状态提示，让角色在手机聊天中也能知晓并执行小屋行动。"""
+                           all_names: dict[str, str], recent_limit: int = 10) -> str:
+    """生成注入原手机沟通页的小屋状态与近期互动记录，实现小屋与手机沟通双向上下文互通。"""
     if not actor_id or actor_id not in store.occupants:
         return ""
     my_rid = store.occupants.get(actor_id, "")
@@ -1417,12 +1453,39 @@ def phone_room_status_note(store: RoomStore, actor_id: str, actor_name: str,
         if r.get("locked_inside"):
             tag += "·已反锁"
         rooms_brief.append(f"{r['name']}(id={r['id']},{tag},{'可进' if ok else '不可进'})")
+
+    recent_lines = []
+    for e in store.recent_logs_for_actor(actor_id, limit=recent_limit):
+        rname = (store.rooms.get(e.get("room_id")) or {}).get("name") or e.get("room_id") or "小屋"
+        ts_ms = int(e.get("ts") or 0)
+        t_tag = time.strftime("%m-%d %H:%M", time.localtime(ts_ms / 1000.0)) if ts_ms else ""
+        prefix = f"[{t_tag} {rname}]" if t_tag else f"[{rname}]"
+        if e.get("kind") in ("sys", "move"):
+            txt = str(e.get("text") or "").strip()[:140]
+            if txt:
+                recent_lines.append(f"- {prefix} * {txt}")
+        else:
+            acts = e.get("actions") or []
+            act_txt = "；".join(
+                f"[{ACTION_CHANNEL_LABELS.get(a.get('hand'), '手部')}{'·隐秘' if a.get('secret') else ''}→{a.get('target_name')}·{a.get('part')}] {a.get('text')}"
+                for a in acts
+            )
+            body = f"{act_txt} {e.get('text', '')}".strip()[:220]
+            if body:
+                vol_s = "（轻语）" if e.get("volume") == "whisper" else ""
+                recent_lines.append(f"- {prefix} {e.get('sender_name') or e.get('sender')}{vol_s}: {body}")
+
+    recent_block = (
+        "\n近期小屋互动记录（你听见或亲历的部分，与当前手机聊天属于同一时间线）：\n" + "\n".join(recent_lines)
+        if recent_lines else ""
+    )
     return (
         "[OIT 小屋状态（手机聊天联动）]\n"
         f"你当前在小屋的「{my_room['name']}」(id={my_rid}，位置：{store.position_of(actor_id)}，"
         f"门锁：{'已从内部反锁' if my_room.get('locked_inside') else '未反锁'})；"
         f"用户当前在「{u_room['name']}」(id={u_rid}，位置：{store.position_of('user')})。\n"
-        f"小屋房间：{'；'.join(rooms_brief)}。\n"
+        f"小屋房间：{'；'.join(rooms_brief)}。"
+        f"{recent_block}\n"
         "你此刻正通过手机与用户聊天；如果需要同时在小屋中移动房间、换室内位置、反锁/解锁房门、把你持有钥匙的房间钥匙分给用户或跟随用户，可调用 oit_room_action 工具。"
     )
 

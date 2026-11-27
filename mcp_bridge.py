@@ -1311,6 +1311,13 @@ class OitMcpBridge:
                     cur_delta["realism"] = r_note or ""
                     if r_note and (not use_delta or prev_delta.get("realism") != r_note):
                         lines.append(r_note)
+                if (hasattr(self.comm, "room_status_note")
+                        and getattr(self.comm, "room_store", None) is not None
+                        and self.comm.room_store.recent_logs_for_actor(self.comm.persona_name(), limit=1)):
+                    rm_note = self.comm.room_status_note()
+                    cur_delta["room"] = rm_note or ""
+                    if rm_note and (not use_delta or prev_delta.get("room") != rm_note):
+                        lines.append(rm_note)
 
             # 增量下发尚未送达的 share data 页面数据（role="sys"）
             from comm.comm_const import SHARE_TAG

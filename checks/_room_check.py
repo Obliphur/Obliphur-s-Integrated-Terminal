@@ -163,6 +163,20 @@ def main():
         store.append_log(c_rid, "user", "我", normal_targets, "say", "大家都能听见", volume="normal", pos="墙边")
         assert "大家都能听见" in [e["text"] for e in store.visible_logs_for("Gemina.txt", c_rid)]
 
+        # 小屋 ↔ 手机沟通双向上下文互通（遵守听觉隔离，不泄密）
+        from comm.comm_room import build_actor_turn_prompt, phone_room_status_note
+        c_phone_note = phone_room_status_note(store, "Claudia.txt", "Claudia", {"user": "我", "Claudia.txt": "Claudia", "Gemina.txt": "Gemina"})
+        g_phone_note = phone_room_status_note(store, "Gemina.txt", "Gemina", {"user": "我", "Claudia.txt": "Claudia", "Gemina.txt": "Gemina"})
+        assert "只在墙边轻语的秘密" in c_phone_note and "大家都能听见" in c_phone_note
+        assert "只在墙边轻语的秘密" not in g_phone_note and "大家都能听见" in g_phone_note
+        sys_p, turn_msgs = build_actor_turn_prompt(
+            "你是 Claudia。", store, store.rooms[c_rid], "Claudia.txt", "Claudia",
+            {"user": "我", "Claudia.txt": "Claudia"}, store.visible_logs_for("Claudia.txt", c_rid),
+            memory_block="\n\n长期记忆：用户喜欢冰镇香蕉牛奶",
+            phone_history="- [22:50] 用户: 刚刚在手机上聊过天",
+        )
+        assert "冰镇香蕉牛奶" in sys_p and "刚刚在手机上聊过天" in turn_msgs[0]["content"]
+
         # 两个 NPC 在另一个位置轻语，用户听不清
         store.move_position("Claudia.txt", "椅子", "Claudia")
         npc_whisper = store.listeners_for_volume(c_rid, "Claudia.txt", "whisper")

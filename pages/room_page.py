@@ -1527,9 +1527,15 @@ class RoomPage(tk.Frame):
         occ_ids = self.store.occupants_in(room_id)
         visible = self.store.visible_logs_for(actor_id, room_id)
         psys = persona_system(self.comm.personas, actor_id, False)
+        mem_block, phone_hist = (
+            self.comm.room_persona_context(actor_id)
+            if (self.comm and hasattr(self.comm, "room_persona_context"))
+            else ("", "")
+        )
         system, msgs = build_actor_turn_prompt(
             psys, self.store, room, actor_id, names.get(actor_id, actor_id),
             names, visible, trigger_reason=trigger_reason,
+            memory_block=mem_block, phone_history=phone_hist,
         )
 
         self._busy_actors.add(actor_id)

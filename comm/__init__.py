@@ -1958,8 +1958,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             except Exception:
                 pass
 
-    def room_status_note(self) -> str:
-        cur = self.persona_name()
+    def room_status_note(self, actor_id: str = "") -> str:
+        cur = actor_id or self.persona_name()
         if not cur or not hasattr(self, "room_store"):
             return ""
         try:
@@ -1968,6 +1968,34 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             return phone_room_status_note(self.room_store, cur, persona_title(cur), self._room_all_names())
         except Exception:
             return ""
+
+    def room_persona_context(self, actor_id: str, limit: int = 12) -> tuple[str, str]:
+        """为小屋内的角色提供其长期记忆卡与近期手机沟通记录（与普通沟通双向互通）。"""
+        if not actor_id:
+            return "", ""
+        try:
+            pid = pid_of(actor_id)
+            st = self._state_of(pid)
+            mem_block = self.memory_block_of(st, include_live=True, pid=pid)
+            msgs = st.get("messages") if isinstance(st, dict) else []
+            who = persona_title(actor_id)
+            lines = []
+            for m in (msgs or []):
+                if not isinstance(m, dict) or m.get("role") not in ("me", "ai"):
+                    continue
+                if m.get("refused"):
+                    continue
+                txt = str(m.get("text") or "").strip().replace("\n", " ")
+                if not txt:
+                    continue
+                ts_ms = int(m.get("ts") or 0)
+                t_tag = time.strftime("%m-%d %H:%M", time.localtime(ts_ms / 1000.0)) if ts_ms else ""
+                speaker = "用户" if m.get("role") == "me" else who
+                prefix = f"[{t_tag}] " if t_tag else ""
+                lines.append(f"- {prefix}{speaker}: {txt[:200]}")
+            return mem_block, "\n".join(lines[-limit:])
+        except Exception:
+            return "", ""
 
     def execute_phone_room_action(self, args: dict) -> dict:
         cur = self.persona_name()
