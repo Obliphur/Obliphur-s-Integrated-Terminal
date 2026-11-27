@@ -155,11 +155,11 @@ try:
             page._sync_status()
             assert not page.lbl_tension.winfo_manager() and page.lbl_tension.cget("text") == ""
             c._interaction_set({"scenario_mode": False})
-            # 很长的对方状态不能挤掉模式入口。
+            # 很长的对方状态不能挤掉房间入口。
             with patch.object(c, "other_status_display", return_value=("long status " * 80, "idle")):
                 page.refresh(force=True)
                 root.update()
-            for button in (page.btn_scenario,):
+            for button in (page.btn_room,):
                 assert button.winfo_ismapped()
                 assert not button.instate(["disabled"])
                 assert button.winfo_rootx() >= page.winfo_rootx()
@@ -167,34 +167,9 @@ try:
                 assert button.master == page.btn_mute.master
                 assert button.winfo_rooty() >= page.area.winfo_rooty() + page.area.winfo_height()
                 assert button.winfo_rooty() + button.winfo_height() <= page.entry.winfo_rooty()
-            assert page.btn_scenario.cget("text") == "📱"
-            with patch("pages.comm_page.toast.info") as hint:
-                page.btn_scenario.invoke()
-                assert not c.scenario_on()
-                hint.assert_not_called()
-
-            c.cfg["msg_gone"] = 200
-            page.refresh(force=True)
-            # 开启情景模拟采用申请制：未开启时点击挂载待发申请附件，再点取消；已开启时点击随时结束。
-            page.btn_scenario.invoke()
-            assert not c.scenario_on() and c.request_draft["scenario"]
-            assert i18n.tr("🎭 情景模拟") in c.request_draft_labels()
-            page.btn_scenario.invoke()
-            assert not c.request_draft["scenario"]
-            assert c.set_scenario(True) and c.scenario_on()
-            page.refresh(force=True)
-            assert page.btn_scenario.cget("text") == "🎭"
-            page.btn_scenario.invoke()
+            assert page.btn_room.cget("text") == "🏠"
+            assert not hasattr(page, "btn_scenario"), "旧情景模拟入口应已移除"
             assert not c.scenario_on()
-            assert page.btn_scenario.cget("text") == "📱"
-            # 对方发起情景模拟申请时显示接受/拒绝横幅，接受后开启。
-            c._scenario_invite_make()
-            page.refresh(force=True)
-            assert c.scenario_invite() and page.scenario_btns.winfo_manager() == "pack"
-            page._scenario_respond(True)
-            assert c.scenario_on() and not c.scenario_invite() and page.scenario_btns.winfo_manager() != "pack"
-            c.set_scenario(False)
-            page.refresh(force=True)
             # 同意声明作为沟通工具栏功能：当且仅当当前人设有 [burst:consent] 时展示（无需等到首次 BURST），且 3/4 级同意项背景色不同。
             assert c.persona_name() == "Claudia.txt"
             assert not c.burst_consent_asked()
@@ -244,7 +219,7 @@ try:
             def inspect_help(dlg):
                 dlg.update_idletasks()
                 text = "\n".join(str(w.cget("text")) for w in descendants(dlg) if "text" in w.keys())
-                assert i18n.tr("聊天模式") in text and "📱 / 🎭" in text
+                assert i18n.tr("情景房间") in text and "🏠" in text
                 assert i18n.tr("同意声明") in text and "🛡" in text
                 assert i18n.tr("说教") in text
                 assert i18n.tr("阅读") in text and "coread" in text

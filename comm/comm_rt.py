@@ -213,6 +213,20 @@ class RtMixin:
         """现在聊的这个对象互相发过多少条信息: 本地只存最近 KEEP 条, 更早被砍掉的记在 msg_gone 里 (清空聊天归零)."""
         return int(self.cfg.get("msg_gone") or 0) + sum(1 for m in self.messages if m.get("role") in ("me", "ai") and not m.get("hold"))
 
+    def msg_total_for(self, persona_name: str) -> int:
+        """查询任意人设与用户的累计聊天消息条数（分条发送按气泡条数统计，兼容历史里程碑）。"""
+        if not persona_name:
+            return 0
+        if persona_name == self.persona_name():
+            return max(self.msg_total(), max(self.cfg.get("mem_fixed") or [0]))
+        pid = pid_of(persona_name)
+        st = self._state_of(pid) if hasattr(self, "_state_of") else {}
+        msgs = st.get("messages") or []
+        total = max(0, int(st.get("msg_gone") or 0)) + sum(
+            1 for m in msgs if isinstance(m, dict) and m.get("role") in ("me", "ai") and not m.get("hold")
+        )
+        return max(total, max(st.get("mem_fixed") or [0]))
+
     def condition_state(self, strict: bool = False) -> list:
         """[(编号, 说明, 当前进度, 要求, 满足了吗)]: 文件声明的条件全部用用户真实数据判定，strict 读取主动告白组。"""
         parsed = condition_rules(read_persona_rules(self.personas, self.persona_name()), strict)

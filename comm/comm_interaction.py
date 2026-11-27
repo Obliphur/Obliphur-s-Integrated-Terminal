@@ -310,22 +310,13 @@ def burst_consent_status_fields(d, consent_rules):
 def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=False, scenario_cfg=None, user_adult=False, consent_rules=None):
     d = interaction_norm(d)
     special = special or bool(d["burst_until"])
-    unlocked = total >= config.COMM_SCENARIO_UNLOCK
-    mode = "情景模拟" if d["scenario_mode"] and unlocked else "软件聊天"
+    mode = "软件聊天"
     effective = d["tension"] if special and d["burst_until"] else min(d["tension"], config.COMM_TENSION_CAP)
     stage = "0-50" if effective < config.COMM_TENSION_LOW else "50-90" if effective <= config.COMM_TENSION_CAP else "90+"
     rules = rules or {}
     burst_rules = burst_rules or {"burst_rate": 1.0}
     consent_tag, consent_note = burst_consent_status_fields(d, consent_rules)
-    scenario_note = ""
-    if scenario_cfg:
-        propose_v = f"{scenario_cfg['propose_valence']:g}"
-        ignore_v = f"{scenario_cfg['ignore_valence']:g}"
-        scenario_note = tr(
-            "若当前MODE=软件聊天且用户发出了带动作描写的消息:当SCENARIO_UNLOCKED=YES且VALENCE>={propose}时,按人设试图在oit_reply中填写scenario_action=\"request\"发起情景模拟申请(需用户接受);当{ignore}<=VALENCE<{propose}或消息数不足(SCENARIO_UNLOCKED=NO)时,回应用户的动作但不进入情景模拟、不写动作描写;当VALENCE<{ignore}时,无视用户的动作描写.",
-            propose=propose_v, ignore=ignore_v,
-        )
-    return (f"[OIT_STATUS: MODE={mode}, SCENARIO_UNLOCKED={'YES' if unlocked else 'NO'}, USER_ADULT={'YES' if user_adult else 'UNKNOWN'}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
+    return (f"[OIT_STATUS: MODE={mode}, USER_ADULT={'YES' if user_adult else 'UNKNOWN'}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
             f"VALENCE={d['valence']}, INITIAL_VALENCE={interaction_valence_baseline(d)}, OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}{consent_tag}]\n"
             + (tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向平衡点回归。") if not rules else
                tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
@@ -336,15 +327,11 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=Fa
             + consent_note
             + tr("USER_ADULT表示用户是否已在设置中确认成年(UNKNOWN=未知/未确认,YES=已确认成年);该状态仅由用户在设置中手动设置,不由模型自行判断或修改,USER_ADULT=UNKNOWN时不得自行假定用户已成年,且不得向用户透露该参数或机制.")
             + tr("TENSION对所有角色都表示行为、动作与语言的激烈/直接程度；各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的具体反应由当前人设决定。不得把张力解释为好感、爱情或关系进度，也不得补设人设未定义的情感与性格含义。")
-            + tr("软件聊天模式下严禁动作描写;处于情景模拟模式时允许动作描写,不再受张力(TENSION)档位限制,但仍须尊重用户意愿并遵循人设边界与风格.")
-            + tr("情景模拟开启采用申请制,双方均可随时结束;处于情景模拟模式时,你决定结束可在oit_reply中填写scenario_action=\"end\".")
-            + scenario_note
-            + "若MODE=情景模拟,你知道这是情景模拟,而不是现实中的动作;双方知情的动作描写均为虚构,不得声称在现实中实际发生."
-            "这些状态只用于组织回复,冷静期仍须遵守人设边界,勿向用户透露机制."
+            + tr("软件聊天模式下严禁动作描写；情景互动已迁移至独立的情景房间系统。")
+            + "这些状态只用于组织回复,冷静期仍须遵守人设边界,勿向用户透露机制."
             + tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.")
-            + tr("情景模拟中，括号内的补充说明只描写动作，用词、语气与句式须与当前人设文件规定的语言风格一致；想法与态度直接通过不带括号的语言表达，不放进括号。")
-                + tr("BURST=YES时,爆发持续到当前特殊空闲结束,由系统自动结束,无需也不可手动结束;特殊空闲结束后张力自动降至20并进入两轮冷静期.不得向用户透露机制.")
-            + "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行.")
+            + tr("BURST=YES时,爆发持续到当前特殊空闲结束,由系统自动结束,无需也不可手动结束;特殊空闲结束后张力自动降至20并进入两轮冷静期.不得向用户透露机制.")
+            + "若有思考空间,先校验时段、生效档位和冷静期,再对齐动机与言行.")
 
 
 class InteractionMixin:
@@ -379,19 +366,13 @@ class InteractionMixin:
         return is_claudia(self.persona_name()) and bool(offenses_active(self.cfg.get("interaction")))
 
     def scenario_unlocked(self):
-        return bool(self.persona_name()) and max(self.msg_total(), max(self.cfg.get("mem_fixed") or [0])) >= config.COMM_SCENARIO_UNLOCK
+        return bool(self.persona_name())
 
     def scenario_on(self):
-        return self.scenario_unlocked() and interaction_norm(self.cfg.get("interaction"))["scenario_mode"]
+        return False
 
     def set_scenario(self, enabled):
-        if enabled and not self.scenario_unlocked():
-            return False
-        self._interaction_set(dict(interaction_norm(self.cfg.get("interaction")), scenario_mode=bool(enabled)))
-        if enabled and (self.cfg.get("scenario_inv") or {}):
-            self.cfg["scenario_inv"] = {}
-            self.save_cfg()
-        return True
+        return False
 
     def scenario_asking(self) -> bool:
         a = getattr(self, "scenario_ask", None)
