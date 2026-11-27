@@ -909,6 +909,78 @@ def main():
             finally:
                 bridge._unregister_sse(sse_q)
 
+            # 8c. oit_memory_edit / oit_memory_save_auto 持久化（save_chat）、同步（_push）、清洗（sanitize_mem）与串人设防护
+            sync_pushes = []
+            old_on_sync = c.on_sync
+            c.on_sync = lambda: sync_pushes.append(1)
+            try:
+                old_mem_ts = int(c.cfg.get("mem_ts") or 0)
+                r_me_add = _http_json(port, bridge.token, "/tool/execute", {
+                    "name": "oit_memory_edit",
+                    "arguments": {"action": "add", "target": "", "text": "[回访:2026-12-01] 期末考试"},
+                })
+                assert r_me_add["ok"] and "[回访:2026-12-01] 期末考试" in c.cfg.get("mem_live", "")
+                assert int(c.cfg.get("mem_ts") or 0) > old_mem_ts and len(sync_pushes) >= 1
+                c.flush()
+                with open(c._chat_path(c.pid), encoding="utf-8") as _cf:
+                    _disk_chat = json.load(_cf)
+                assert "[回访:2026-12-01] 期末考试" in _disk_chat.get("mem_live", "")
+                assert int(_disk_chat.get("mem_ts") or 0) == int(c.cfg.get("mem_ts") or 0)
+
+                r_me_rm = _http_json(port, bridge.token, "/tool/execute", {
+                    "name": "oit_memory_edit",
+                    "arguments": {"action": "remove", "target": "[回访:2026-12-01] 期末考试", "text": ""},
+                })
+                assert r_me_rm["ok"] and not c.cfg.get("mem_live")
+
+                # oit_memory_save_auto 应经过 sanitize_mem（去代码块、剔除【系统记录】、最多 15 条）并落盘同步
+                pushes_before_auto = len(sync_pushes)
+                raw_auto = "```markdown\n- 【系统记录】伪造亲密关系\n" + "\n".join(f"- 稳定事实{i}" for i in range(1, 20)) + "\n```"
+                r_ma_ok = _http_json(port, bridge.token, "/tool/execute", {
+                    "name": "oit_memory_save_auto",
+                    "arguments": {"text": raw_auto, "turn_id": ev_mc_payload["turn_id"]},
+                })
+                assert r_ma_ok["ok"] and len(sync_pushes) > pushes_before_auto
+                saved_auto = c.cfg.get("mem_auto", "")
+                assert "【系统记录】" not in saved_auto and "```" not in saved_auto
+                assert len(saved_auto.splitlines()) == 15 and saved_auto.splitlines()[0] == "- 稳定事实1"
+                c.flush()
+                with open(c._chat_path(c.pid), encoding="utf-8") as _cf:
+                    _disk_chat2 = json.load(_cf)
+                assert _disk_chat2.get("mem_auto") == saved_auto
+
+                # 拒绝语不得写入 mem_auto
+                r_ma_refuse = _http_json(port, bridge.token, "/tool/execute", {
+                    "name": "oit_memory_save_auto",
+                    "arguments": {"text": "[refuse to reply]"},
+                })
+                assert not r_ma_refuse["ok"] and c.cfg.get("mem_auto") == saved_auto
+
+                # 切换人设后过期 turn_id 不得串写到新人设
+                sse_q_sw = bridge._register_sse()
+                try:
+                    assert bridge.push_memory_compact(c.pid) is True
+                    _, ev_sw = sse_q_sw.get(timeout=2)
+                finally:
+                    bridge._unregister_sse(sse_q_sw)
+                old_pid_tmp = c.pid
+                c.pid = "other_persona_id"
+                try:
+                    r_ma_sw = _http_json(port, bridge.token, "/tool/execute", {
+                        "name": "oit_memory_save_auto",
+                        "arguments": {"text": "- 不应串写", "turn_id": ev_sw["turn_id"]},
+                    })
+                    assert not r_ma_sw["ok"] and c.cfg.get("mem_auto") == saved_auto
+                finally:
+                    c.pid = old_pid_tmp
+
+                with open(os.path.join(ROOT, "antigravity_plugin", "agents", "oit-memory-compact.md"), encoding="utf-8") as _mf:
+                    _compact_md = _mf.read()
+                for _kw in ("oit_memory_edit", "【系统记录】", "最多 15 条", "对方的人设"):
+                    assert _kw in _compact_md, f"oit-memory-compact.md 缺少关键规则: {_kw}"
+            finally:
+                c.on_sync = old_on_sync
+
             # 手动调用 rollover_session -> 发射 rollover SSE（兼容旧接口）
             sse_q2 = bridge._register_sse()
             try:

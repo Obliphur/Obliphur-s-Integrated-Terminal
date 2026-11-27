@@ -746,6 +746,7 @@ class OitMcpBridge:
             "trigger_body": str(trigger_body or "").strip(),
             "extra": dict(extra or {}),
             "created_ms": now_ms,
+            "clear_ts": int((getattr(self.comm, "cfg", None) or {}).get("clear_ts") or 0),
             "conversation_id": "",
         }
         with self._lock:
@@ -1346,9 +1347,11 @@ class OitMcpBridge:
                 tkind = turn.get("kind") or "user_message"
                 if tkind == "memory_compact":
                     lines.append(
-                        "[OIT记忆整理任务] 请调用隔离子代理 oit-memory-compact，结合上方现有记忆卡与近期完整对话记录，"
-                        "整理压缩为简洁准确的长期记忆，并通过 oit_memory_save_auto(text=..., turn_id="
-                        f"{turn_id!r}) 保存。整理过程对用户完全静默，不要调用 oit_reply，完成后输出 ✓。"
+                        "[OIT记忆整理任务] 请调用隔离子代理 oit-memory-compact，把「当前时间」「人设中的记忆保留规则」"
+                        "「现有长期记忆摘要（不含实时事件与系统记录）」与「近期完整对话记录」完整传给它，"
+                        "由它整理为简洁准确的长期记忆并通过 oit_memory_save_auto(text=..., turn_id="
+                        f"{turn_id!r}) 保存。不要把实时事件或【系统记录】抄入长期记忆摘要。"
+                        "整理过程对用户完全静默，不要调用 oit_reply，完成后输出 ✓。"
                     )
                 else:
                     if turn.get("held_messages"):
@@ -1749,6 +1752,7 @@ class OitMcpBridge:
                 return {"ok": True, "data": values}
 
             if name == "oit_memory_edit":
+                from comm.comm_persona import MEM_MAX
                 action = str(args.get("action") or "")
                 target = str(args.get("target") or "").strip()
                 text = str(args.get("text") or "").strip()
@@ -1763,22 +1767,56 @@ class OitMcpBridge:
                     entries.remove(target)
                 else:
                     return {"ok": False, "error": "记忆事件不匹配或已达到数量上限"}
-                self.comm.cfg["mem_live"] = "\n".join(f"- {e}" for e in entries)
-                self.comm.save_cfg()
+                new_live = "\n".join(f"- {e}" for e in entries)
+                if len(new_live) > MEM_MAX:
+                    return {"ok": False, "error": "实时记忆总字数已达到上限"}
+                self.comm.cfg["mem_live"] = new_live
+                now_mem_ts = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
+                self.comm.cfg["mem_ts"] = max(now_mem_ts, int(self.comm.cfg.get("mem_ts") or 0) + 1)
+                self.comm.save_chat()
                 self.comm._changed()
+                if hasattr(self.comm, "_push"):
+                    self.comm._push()
                 return {"ok": True, "entries": entries}
 
             if name == "oit_memory_save_auto":
-                text = str(args.get("text") or "").strip()
-                if not text:
+                from comm.comm_util import sanitize_mem
+                raw_text = str(args.get("text") or "").strip()
+                if not raw_text:
                     return {"ok": False, "error": "text required"}
-                self.comm.cfg["mem_auto"] = text[:4000]
-                self.comm.cfg["mem_ts"] = _now_ms()
-                latest_ts = max([int(m.get("ts") or 0) for m in self.comm.messages if m.get("role") in ("me", "ai")] or [0])
-                if latest_ts > int(self.comm.cfg.get("mem_upto") or 0):
-                    self.comm.cfg["mem_upto"] = latest_ts
-                self.comm.save_cfg()
-                self.comm._changed()
+                t_info = None
+                if turn_id:
+                    with self._lock:
+                        t_info = self._turns.get(turn_id)
+                cur_pid = str(getattr(self.comm, "pid", "") or "")
+                if t_info and t_info.get("persona_id") and t_info.get("persona_id") != cur_pid:
+                    with self._lock:
+                        self._turns.pop(turn_id, None)
+                    done_cid = cid or (t_info.get("conversation_id") if t_info else "")
+                    self._emit_sse("turn_done", {
+                        "event": "turn_done",
+                        "turn_id": turn_id,
+                        "conversation_id": done_cid,
+                        "persona_id": t_info.get("persona_id") or cur_pid,
+                        "ts": _now_ms(),
+                    })
+                    return {"ok": False, "error": "聊天对象已切换，已忽略过期记忆整理"}
+                clean = sanitize_mem(raw_text)
+                if not clean:
+                    return {"ok": False, "error": "整理结果为空或格式无效"}
+                cur_clear_ts = int(self.comm.cfg.get("clear_ts") or 0)
+                cleared_during = t_info is not None and cur_clear_ts > int(t_info.get("clear_ts") or 0)
+                if not cleared_during:
+                    self.comm.cfg["mem_auto"] = clean
+                    now_mem_ts = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
+                    self.comm.cfg["mem_ts"] = max(now_mem_ts, int(self.comm.cfg.get("mem_ts") or 0) + 1)
+                    latest_ts = max([int(m.get("ts") or 0) for m in self.comm.messages if m.get("role") in ("me", "ai")] or [0])
+                    if latest_ts > int(self.comm.cfg.get("mem_upto") or 0):
+                        self.comm.cfg["mem_upto"] = latest_ts
+                    self.comm.save_chat()
+                    self.comm._changed()
+                    if hasattr(self.comm, "_push"):
+                        self.comm._push()
                 if turn_id:
                     with self._lock:
                         t_info = self._turns.pop(turn_id, None)
@@ -1787,10 +1825,10 @@ class OitMcpBridge:
                         "event": "turn_done",
                         "turn_id": turn_id,
                         "conversation_id": done_cid,
-                        "persona_id": getattr(self.comm, "pid", ""),
+                        "persona_id": cur_pid,
                         "ts": _now_ms(),
                     })
-                return {"ok": True}
+                return {"ok": True, "discarded": cleared_during}
 
             if name == "oit_music_catalog":
                 related, valence = self.comm._music_access()
