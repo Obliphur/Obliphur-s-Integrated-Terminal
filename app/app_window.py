@@ -783,6 +783,8 @@ class WindowMixin(SidebarMixin):
             self.pages["contract"].show()
         elif key == "net":
             self.refresh_net(force=True)
+            if hasattr(self.pages["net"], "show"):
+                self.pages["net"].show()
         elif key == "comm":
             self.pages["comm"].show()
         elif key == "room":
