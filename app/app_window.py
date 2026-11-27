@@ -22,6 +22,7 @@ from pages import (AchievementsPage, CalendarPage, CommPage, ContractPage, HourL
 from pages.share_dock import AiDataView, ShareDock
 from pages.widgets import LoadingCover, cfg, frozen
 from pages.knowledge_page import KnowledgePage
+from pages.room_page import RoomPage
 from .app_sidebar import SidebarMixin
 
 
@@ -312,17 +313,20 @@ class WindowMixin(SidebarMixin):
     def _prepare_page(self, page):
         """在加载页后面把页面先排一次版 (创建好所有子窗口), 再收起来.
         这样第一次切到这页时不用再从头创建, 切换更快."""
+        if getattr(page, "_oit_prepared", False):
+            return
         page.grid(row=0, column=0, sticky="nsew")
         try:
             page.update_idletasks()
         except Exception:
             pass
         page.grid_remove()
+        page._oit_prepared = True
 
     def _ensure_page(self, key: str):
         """按需创建登记过的页面；已创建页面直接复用。"""
         page = self.pages[key]
-        if key != "prescript" and page.winfo_manager() != "grid":
+        if key != "prescript" and not getattr(page, "_oit_prepared", False) and page.winfo_manager() != "grid":
             self._prepare_page(page)
         return page
 
@@ -330,6 +334,7 @@ class WindowMixin(SidebarMixin):
         bg, card = COLORS["bg"], COLORS["bg_card"]
         self._marks_shown = None            # 按钮是新建的: 标记要重新画
         self._mark_labels = {}
+        self._nav_font_cur = None
 
         self.topbar = tk.Frame(parent, bg=COLORS.get("topbar", COLORS["accent"]), height=4)
         self.topbar.pack(fill="x")
@@ -462,10 +467,21 @@ class WindowMixin(SidebarMixin):
             page = CommPage(
                 self.content, self.comm, username=lambda: self.dm.username,
                 on_open_settings=self._open_comm_settings, on_joint=self._joint_pick_start,
-                on_coread=self._open_coread, on_coread_end=self._end_coread_session)
+                on_coread=self._open_coread, on_coread_end=self._end_coread_session,
+                on_room=lambda: self.show_page("room"))
             page.open_knowledge_card = lambda card_id: self._ensure_page("knowledge").open_card(card_id)
             return page
         self.pages.add_factory("comm", make_comm)
+        self.pages.add_factory("room", lambda: RoomPage(
+            self.content, self.comm, self.dm.data_dir,
+            username=lambda: self.dm.username,
+            on_back=lambda: self.show_page("comm"),
+            on_open_page=self.show_page,
+            on_open_settings=self._open_comm_settings,
+            on_music=lambda: (self.show_page("comm"), self.pages["comm"]._review_performance()),
+            on_coread=lambda: (self.show_page("comm"), self.pages["comm"]._reading()),
+            on_joint=self._joint_pick_start,
+        ))
         yield
         def make_net():
             page = tk.Frame(self.content, bg=bg)
@@ -514,6 +530,8 @@ class WindowMixin(SidebarMixin):
     def _rebuild_ui(self, cover=None):
         if "comm" in self.pages:
             self.pages["comm"].hide()
+        if "room" in self.pages:
+            self.pages["room"].hide()
         for job in (self.midnight_job, self.hourly_job, self.update_job,
                     self.net_job, getattr(self, "apply_job", None)):
             if job:
@@ -657,8 +675,8 @@ class WindowMixin(SidebarMixin):
             self.prescripts.page_changed()
         except Exception:
             pass
-        # 成就页是从设置里打开的, 侧边栏仍把"设置"标成当前页 (和手机版的抽屉一样)
-        look = "settings" if key == "ach" else key
+        # 成就页是从设置里打开的, 情景房间是从沟通里打开的, 侧边栏保持高亮父级入口
+        look = "settings" if key == "ach" else ("comm" if key == "room" else key)
         for k, b in self.nav_btns.items():
             if k == look:
                 cfg(b,
@@ -672,13 +690,15 @@ class WindowMixin(SidebarMixin):
                     bg=COLORS["bg_card"], fg=self._nav_color(k, COLORS["text"], COLORS["bg_card"]),
                     activebackground=COLORS["border"], activeforeground=COLORS["text"]
                 )
-        # 合约页连侧边栏字体也用自己的默认字体, 不跟界面主题的像素字体.
+        # 合约页连侧边栏字体也用自己的默认字体, 不跟界面主题的像素字体; 仅在字体变化时批量更新.
         nav_font = config.contract_font("nav") if key == "contract" else config.font("nav")
-        for b in self.nav_btns.values():
-            try:
-                b.configure(font=nav_font)
-            except Exception:
-                pass
+        if getattr(self, "_nav_font_cur", None) != nav_font:
+            self._nav_font_cur = nav_font
+            for b in self.nav_btns.values():
+                try:
+                    b.configure(font=nav_font)
+                except Exception:
+                    pass
         self._paint_sidebar()
         # 只把目标页挂到界面上, 其余页收起 (不参与布局 / 重画)
         target = self._ensure_page(key)
@@ -693,6 +713,8 @@ class WindowMixin(SidebarMixin):
                     f.hide()
             elif f.winfo_manager() == "grid":
                 f.grid_remove()
+                if k == "room":
+                    f.hide()
         if key == "prescript":
             page = self.pages["prescript"]
             page.place(x=0, y=0, relwidth=1, relheight=1)
@@ -708,6 +730,8 @@ class WindowMixin(SidebarMixin):
             self.refresh_net(force=True)
         elif key == "comm":
             self.pages["comm"].show()
+        elif key == "room":
+            self.pages["room"].show()
         elif key == "log":
             self.pages["log"].show()
         elif key == "knowledge":

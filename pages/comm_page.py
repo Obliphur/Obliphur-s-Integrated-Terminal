@@ -36,7 +36,7 @@ LOAD_MORE = 40           # 每次往上翻到顶, 多加载多少条
 class CommPage(CommVoiceMixin, tk.Frame):
 
     def __init__(self, master, comm, username=None, on_open_settings=None, on_joint=None, on_coread=None,
-                 on_coread_end=None):
+                 on_coread_end=None, on_room=None):
         super().__init__(master, bg=COLORS["bg"])
         self.comm = comm
         self.username = username or (lambda: "")
@@ -44,6 +44,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.on_joint = on_joint            # 🤝 联合行动: 界面移到合约页选词条 (app._joint_pick_start)
         self.on_coread = on_coread
         self.on_coread_end = on_coread_end
+        self.on_room = on_room
         self._reading_lock = None
         self._ver = -1
         self._blocked = ""
@@ -103,6 +104,9 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.btn_scenario = ttk.Button(tools, text="📱", width=3,
                                        command=self._toggle_scenario)
         self.btn_scenario.pack(side="left", padx=(4, 0))
+        self.btn_room = ttk.Button(tools, text="🏠", width=3,
+                                   command=lambda: self.on_room() if callable(self.on_room) else None)
+        self.btn_room.pack(side="left", padx=(4, 0))
         self.btn_mute = ttk.Button(tools, text="🔔", width=3, command=self._toggle_mute)        # 🔔 可以主动发起 / 🔕 禁止这个人主动发起
         self.btn_mute.pack(side="left", padx=(4, 0))
         ttk.Button(tools, text="🤝", width=3, command=self._joint).pack(side="left", padx=(4, 0))   # 联合行动
@@ -188,7 +192,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
 
     def show(self):
         self.comm.set_viewing(True)
-        self.refresh(force=True)
+        self.refresh(force=False)
         self.entry.focus_set()
         self._to_end()
         self._voice_start()
@@ -238,7 +242,23 @@ class CommPage(CommVoiceMixin, tk.Frame):
     def _on_resize(self, _event):
         if self._resize_job:
             self.after_cancel(self._resize_job)
-        self._resize_job = self.after(200, self.refresh)
+        self._resize_job = self.after(120, self._apply_resize)
+
+    def _apply_resize(self):
+        self._resize_job = None
+        self._ensure_pads()
+        wrap = self._wrap()
+        if getattr(self, "_last_wrap", None) == wrap:
+            return
+        self._last_wrap = wrap
+        if self._rows:
+            for row in self._rows:
+                lbl = getattr(row, "_oit_text_lbl", None)
+                if lbl is not None:
+                    try:
+                        lbl.configure(wraplength=wrap)
+                    except tk.TclError:
+                        pass
 
     def _pick_who(self):
         label = self.var_who.get()
@@ -484,7 +504,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         on = bool(c.cfg.get("show_avatar"))
         marks = tuple((w, c.avatar_path(w), os.path.getmtime(c.avatar_path(w)) if c.avatar_path(w) else 0)
                       for w in ("me", "ai")) if on else ()
-        return (self._wrap(), on, marks, c.pid, self.username() if on else "", c.voice.data["enabled"])
+        return (on, marks, c.pid, self.username() if on else "", c.voice.data["enabled"])
 
     def _photo(self, path: str, size: int):
         try:
@@ -705,10 +725,13 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 img_lab.pack(anchor="e" if mine else "w", padx=6, pady=(6, 4 if m["text"] != "[图片]" else 6))
                 img_lab.bind("<Button-1>", lambda _e, p=img_path: self._show_image(p))
         if not thumb_loaded or m["text"] != "[图片]":
+            wrap = self._wrap()
+            self._last_wrap = wrap
             text_label = tk.Label(bubble, text=m["text"], bg=fill, fg=fg, font=config.font("body"), justify="left",
-                                  anchor="w", wraplength=self._wrap(), padx=12, pady=8,
+                                  anchor="w", wraplength=wrap, padx=12, pady=8,
                                   highlightthickness=0)
             text_label.pack(anchor="e" if mine else "w")
+            row._oit_text_lbl = text_label
             if not thumb_loaded and img_path and os.path.isfile(img_path):
                 text_label.config(cursor="hand2")
                 text_label.bind("<Button-1>", lambda _e, p=img_path: self._show_image(p))
@@ -735,12 +758,9 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self._bind_wheel(row)
         return row
 
-    def _bind_wheel(self, w):
-        if not getattr(w, "_oit_wheel", False):
-            w.bind("<MouseWheel>", self.area._wheel, add="+")
-            w._oit_wheel = True
-        for ch in w.winfo_children():
-            self._bind_wheel(ch)
+    def _bind_wheel(self, _w):
+        """滚轮事件已由 ScrollArea 的顶层分发器统一路由, 不再给每条消息的子控件逐个绑定."""
+        return
 
     def _open_knowledge_card(self, card_id):
         callback = getattr(self, "open_knowledge_card", None)
@@ -749,27 +769,35 @@ class CommPage(CommVoiceMixin, tk.Frame):
 
     def _near_end(self) -> bool:
         """视野离最新一条不远 (3 屏之内): 新消息来了才自动滑下去; 正在往上翻很早的记录就不打断."""
-        canvas = self.area.canvas
-        box = canvas.bbox("all")
-        if not box or not self._rendered:
+        canvas, inner = self.area.canvas, self.area.inner
+        total = max(1, inner.winfo_height())
+        if total <= 1 or not self._rendered:
             return True
-        total = max(1, box[3] - box[1])
         bottom = canvas.yview()[1] * total
         return bottom >= total - self._pad_height() - 3 * max(1, canvas.winfo_height())
 
     def _to_end(self):
-        """最后一条贴着视野底部 (下面还有空白可以继续往下滑). 新行的高度要等排完版才知道, 所以先排版再算, 稍后再对一次."""
+        """最后一条贴着视野底部 (下面还有空白可以继续往下滑). 合并重复调用, 避免连续重排."""
+        if getattr(self, "_to_end_job", None):
+            try:
+                self.after_cancel(self._to_end_job)
+            except Exception:
+                pass
+            self._to_end_job = None
+
         def go():
+            self._to_end_job = None
             canvas, inner = self.area.canvas, self.area.inner
-            inner.update_idletasks()
-            box = canvas.bbox("all")
-            if not box:
-                return
-            canvas.configure(scrollregion=box)
-            total = max(1, box[3] - box[1])
-            canvas.yview_moveto(max(0.0, (total - self._pad_height() - canvas.winfo_height()) / total))
-        self.after_idle(go)
-        self.after(80, go)
+            try:
+                inner.update_idletasks()
+                w = max(1, inner.winfo_reqwidth(), canvas.winfo_width())
+                total = max(1, inner.winfo_reqheight(), inner.winfo_height())
+                canvas.configure(scrollregion=(0, 0, w, total))
+                canvas.yview_moveto(max(0.0, (total - self._pad_height() - canvas.winfo_height()) / total))
+            except tk.TclError:
+                pass
+
+        self._to_end_job = self.after_idle(go)
 
     # ---- 操作 ----
 

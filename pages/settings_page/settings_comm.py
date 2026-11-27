@@ -157,6 +157,34 @@ class CommSettingsMixin:
                                    command=lambda: self._comm_flag("sched_follow")), "开启").pack(
             fill="x", padx=12, pady=(0, 8))
 
+        fr, _head = self._card(body, "🏠  情景房间 · 角色对话")
+        tk.Label(fr, text=tr("开启后，房间内的非玩家角色每隔一定时间将以设定概率自动发起对话，说话对象由上下文决定。"),
+                 bg=card, fg=COLORS["text_dim"], font=small, anchor="w", justify="left", wraplength=560).pack(
+            fill="x", padx=12, pady=(0, 4))
+        v = tk.BooleanVar(value=bool(c.cfg.get("room_npc_chat", False)))
+        self.comm_vars["room_npc_chat"] = v
+        self._track(tk.Checkbutton(fr, text=tr("允许非玩家角色自动发起对话"), variable=v, bg=card, fg=COLORS["text"],
+                                   selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
+                                   font=config.font("body"), anchor="w",
+                                   command=lambda: self._comm_flag("room_npc_chat")), "允许非玩家角色自动发起对话").pack(
+            fill="x", padx=12, pady=(0, 4))
+        npc_row = tk.Frame(fr, bg=card)
+        npc_row.pack(fill="x", padx=12, pady=(0, 10))
+        tk.Label(npc_row, text=tr("触发间隔 (秒)"), bg=card, fg=COLORS["text"], font=small).pack(side="left")
+        self.var_room_interval = tk.StringVar(value=str(int(c.cfg.get("room_npc_interval") or 30)))
+        sb_int = ttk.Spinbox(npc_row, from_=10, to=300, increment=5, textvariable=self.var_room_interval, width=6,
+                             command=self._comm_room_npc_save)
+        sb_int.pack(side="left", padx=(6, 16))
+        sb_int.bind("<FocusOut>", lambda _e: self._comm_room_npc_save())
+        sb_int.bind("<Return>", lambda _e: self._comm_room_npc_save())
+        tk.Label(npc_row, text=tr("每次触发概率 (%)"), bg=card, fg=COLORS["text"], font=small).pack(side="left")
+        self.var_room_prob = tk.StringVar(value=str(int(c.cfg.get("room_npc_prob") or 30)))
+        sb_prob = ttk.Spinbox(npc_row, from_=5, to=100, increment=5, textvariable=self.var_room_prob, width=6,
+                              command=self._comm_room_npc_save)
+        sb_prob.pack(side="left", padx=(6, 0))
+        sb_prob.bind("<FocusOut>", lambda _e: self._comm_room_npc_save())
+        sb_prob.bind("<Return>", lambda _e: self._comm_room_npc_save())
+
         fr, _head = self._card(body, "🖼  头像")
         v = tk.BooleanVar(value=bool(c.cfg.get("show_avatar")))
         self.comm_vars["show_avatar"] = v
@@ -264,6 +292,19 @@ class CommSettingsMixin:
         if key == "show_avatar":
             self._comm_avatar_visible()
 
+    def _comm_room_npc_save(self):
+        try:
+            interval = max(10, min(300, int(self.var_room_interval.get())))
+        except (ValueError, TypeError):
+            interval = 30
+        try:
+            prob = max(5, min(100, int(self.var_room_prob.get())))
+        except (ValueError, TypeError):
+            prob = 30
+        self.var_room_interval.set(str(interval))
+        self.var_room_prob.set(str(prob))
+        self.comm.set_cfg(room_npc_interval=interval, room_npc_prob=prob)
+
     def _comm_pick_avatar(self, who):
         from ..avatar_dialog import pick_avatar
         if not self.comm.persona_name():                              # 我的头像和对方的头像都跟着人设走
@@ -336,6 +377,14 @@ class CommSettingsMixin:
             self.comm_vars["bg_pro"].set(c.bg_on())
         if self.comm_vars["sched_follow"].get() != c.sf_on():
             self.comm_vars["sched_follow"].set(c.sf_on())
+        if "room_npc_chat" in self.comm_vars:
+            want_npc = bool(c.cfg.get("room_npc_chat", False))
+            if self.comm_vars["room_npc_chat"].get() != want_npc:
+                self.comm_vars["room_npc_chat"].set(want_npc)
+        if hasattr(self, "var_room_interval"):
+            self.var_room_interval.set(str(int(c.cfg.get("room_npc_interval") or 30)))
+        if hasattr(self, "var_room_prob"):
+            self.var_room_prob.set(str(int(c.cfg.get("room_npc_prob") or 30)))
         if self.comm_vars["answer_images"].get() != c.answer_images_on():
             self.comm_vars["answer_images"].set(c.answer_images_on())
         if "user_adult" in self.comm_vars and self.comm_vars["user_adult"].get() != c.user_adult():
