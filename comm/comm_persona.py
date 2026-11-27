@@ -345,12 +345,15 @@ def is_template_companion(folder: str, base_name: str, companion_name: str) -> b
 
 
 def read_persona_prompt(folder: str, name: str) -> str:
-    """发给模型的人设正文：主人设 + 非模板配套文件（背景 / 范例等），排除 _templates/_routine 并剥离单文件人设中的机读块。"""
+    """发给模型的人设正文：主人设 + 非模板配套文件 + 从模板提取的纯日程表（剥离张力/效价等纯机读块）。"""
     if is_profile_name(name):
         return ""
-    from comm.comm_memory import strip_machine_template_blocks
+    from comm.comm_memory import extract_schedule_template, strip_machine_template_blocks
     comps = [n for n in companions_of(folder, name) if not is_template_companion(folder, name, n)]
     parts = [read_persona(folder, name)] + [read_persona(folder, n) for n in comps]
+    sched = extract_schedule_template(read_routine(folder, name))
+    if sched:
+        parts.append(sched)
     merged = "\n\n".join(x for x in parts if x)
     return strip_machine_template_blocks(merged)
 

@@ -40,6 +40,31 @@ _MACHINE_BLOCK_RE = re.compile(
     + "|".join(re.escape(b) for b in MACHINE_TEMPLATE_BLOCKS) + r")\][^\n]*\n?"
 )
 _MULTI_BLANK_RE = re.compile(r"\n{3,}")
+_SCHED_LINE_RE = re.compile(
+    r"^[ \t]*(?:[-*•][ \t]*)?(?:"
+    r"(?:专注时段|初始起点|focus_activity|initial_start|start)[ \t]*[:：]"
+    r"|\d+[ \t]*(?:min|mins|分钟|h|小时)[ \t]*[:：]"
+    r"|[\[［][ \t]*(?:循环|loop|cycle|repeat)\b"
+    r"|\d{1,2}[:：]\d{2}[ \t]*[-–—~～至到][ \t]*\d{1,2}[:：]\d{2}[ \t]*[:：]"
+    r")",
+    re.I,
+)
+
+
+def extract_schedule_template(text: str) -> str:
+    """从 _templates/_routine 中仅提取日程模板行，不含张力/效价/概率/数据生成等机读规则。"""
+    cleaned = strip_machine_template_blocks(text)
+    if not cleaned:
+        return ""
+    lines = [ln.strip() for ln in cleaned.splitlines() if _SCHED_LINE_RE.match(ln)]
+    if not lines:
+        return ""
+    return (
+        "【你的每日日程模板】\n"
+        + "\n".join(lines)
+        + "\n（说明：以上「循环」时段均为你的专注/休息循环时间，全部可以用于和用户发起或接受合约/联合行动；"
+        "若【系统记录】中有日程起点平移，以平移后的起点依次顺推。不要照抄模板原文，用户问起时结合实际作息自然回答。）"
+    )
 
 _LIVE_ID_RE = re.compile(r"^\[#([A-Za-z][A-Za-z0-9_-]{0,11})\]\s*(.+)$")
 _TARGET_ID_RE = re.compile(r"^\[?#?([A-Za-z][A-Za-z0-9_-]{0,11})\]?$")

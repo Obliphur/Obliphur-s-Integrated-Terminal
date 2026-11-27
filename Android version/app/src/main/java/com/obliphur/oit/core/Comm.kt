@@ -3796,8 +3796,25 @@ class Comm(
     fun readPersonaPrompt(name: String): String {
         if (PersonaAuthor.isProfile(name)) return ""
         val comps = companionsOf(name).filterNot { isTemplateCompanion(name, it) }
-        val merged = (listOf(readPersona(name)) + comps.map { readPersona(it) }).filter { it.isNotEmpty() }.joinToString("\n\n")
+        val parts = mutableListOf(readPersona(name))
+        parts.addAll(comps.map { readPersona(it) })
+        val sched = extractScheduleTemplate(readRoutine(name))
+        if (sched.isNotEmpty()) parts.add(sched)
+        val merged = parts.filter { it.isNotEmpty() }.joinToString("\n\n")
         return stripMachineTemplateBlocks(merged)
+    }
+
+    private fun extractScheduleTemplate(text: String): String {
+        val cleaned = stripMachineTemplateBlocks(text)
+        if (cleaned.isEmpty()) return ""
+        val re = Regex(
+            """^[ \t]*(?:[-*•][ \t]*)?(?:(?:专注时段|初始起点|focus_activity|initial_start|start)[ \t]*[:：]|\d+[ \t]*(?:min|mins|分钟|h|小时)[ \t]*[:：]|[\[［][ \t]*(?:循环|loop|cycle|repeat)\b|\d{1,2}[:：]\d{2}[ \t]*[-–—~～至到][ \t]*\d{1,2}[:：]\d{2}[ \t]*[:：])""",
+            RegexOption.IGNORE_CASE
+        )
+        val lines = cleaned.lineSequence().filter { re.containsMatchIn(it) }.map { it.trim() }.toList()
+        if (lines.isEmpty()) return ""
+        return "【你的每日日程模板】\n" + lines.joinToString("\n") +
+            "\n（说明：以上「循环」时段均为你的专注/休息循环时间，全部可以用于和用户发起或接受合约/联合行动；若【系统记录】中有日程起点平移，以平移后的起点依次顺推。不要照抄模板原文，用户问起时结合实际作息自然回答。）"
     }
 
     private val rulesCache = HashMap<String, Pair<String, String>>()
