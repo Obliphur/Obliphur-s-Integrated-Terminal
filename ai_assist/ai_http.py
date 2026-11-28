@@ -565,7 +565,7 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                 first_tool_block = None
                 event_name, data_lines = "", []
                 def anth_event():
-                    nonlocal usage, stop_reason, complete
+                    nonlocal usage, stop_reason, complete, first_tool_block
                     if not data_lines:
                         return
                     try:
