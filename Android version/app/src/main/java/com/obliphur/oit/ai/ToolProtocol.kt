@@ -156,8 +156,45 @@ object ToolProtocol {
                 if (text.isBlank()) throw AiError("format", "模型没有返回内容")
                 return pack(cleanLeakedReply(text))
             }
-            require(calls.size == 1) { "每次只能调用一个OIT工具" }
-            val (name, args) = calls.single()
+            // Some OpenAI-compatible providers ignore parallel_tool_calls=false.
+            // Keep the first call in the wire message; its result gives the model
+            // another turn to issue the remaining calls in order.
+            if (calls.size > 1) {
+                when (protocol) {
+                    "anthropic" -> {
+                        var selected = false
+                        val kept = JSONArray()
+                        val blocks = wire.getJSONArray("content")
+                        for (i in 0 until blocks.length()) {
+                            val block = blocks.getJSONObject(i)
+                            if (block.optString("type") == "tool_use") {
+                                if (selected) continue
+                                selected = true
+                            }
+                            kept.put(block)
+                        }
+                        wire.put("content", kept)
+                    }
+                    "gemini" -> {
+                        var selected = false
+                        val kept = JSONArray()
+                        val parts = wire.optJSONArray("parts") ?: JSONArray()
+                        for (i in 0 until parts.length()) {
+                            val part = parts.getJSONObject(i)
+                            if (part.has("functionCall") && !part.optBoolean("thought")) {
+                                if (selected) continue
+                                selected = true
+                            }
+                            kept.put(part)
+                        }
+                        wire.put("parts", kept)
+                    }
+                    else -> wire.put("tool_calls", wire.optJSONArray("tool_calls")!!.let { raw ->
+                        JSONArray().put(raw.getJSONObject(0))
+                    })
+                }
+            }
+            val (name, args) = calls.first()
             val spec = (0 until specs.length()).map { specs.getJSONObject(it) }.firstOrNull { it.getString("name") == name } ?: error("未知工具")
             if (name == "oit_reading_offer") {
                 if (!args.has("free_statement")) args.put("free_statement", "")

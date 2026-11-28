@@ -1915,6 +1915,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         personas = list_personas(self.personas)
         plist = [(p, persona_title(p)) for p in personas]
         changed = self.room_store.sync_personas(plist)
+        self.room_store.attn_half_min = max(1, int(self.cfg.get("room_npc_idle_min") or 15))
         names = {p: title for p, title in plist}
         status_map = {p: self.persona_status_kind(p) for p in personas}
         if self.room_store.sync_schedule_locks(status_map, names):
@@ -1936,20 +1937,18 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 and now_m - self._room_idle_at >= interval):
             self._room_idle_at = now_m
             try:
-                from .comm_room import pick_auto_speaker
+                from .comm_room import auto_step_plan
                 if status_map is None:
                     status_map, c2 = self._room_sync()
                     changed = changed or c2
                 blocked = {aid for aid, k in status_map.items() if k in ("focus", "sleep")}
                 prob = int(self.cfg.get("room_npc_prob") or 30)
-                idle_min = int(self.cfg.get("room_npc_idle_min") or 15)
-                picked = pick_auto_speaker(self.room_store, self.room_store.current_room_id(),
-                                           set(), True, prob, include_other_rooms=True, blocked_ids=blocked)
-                if picked:
-                    aid, _rid = picked
-                    if not self.room_store.is_recently_interacted(aid, idle_min):
-                        if self.room_store.perform_idle_system_step(aid, persona_title(aid)):
-                            changed = True
+                plan = auto_step_plan(self.room_store, self.room_store.current_room_id(),
+                                      set(), True, prob, include_other_rooms=True, blocked_ids=blocked)
+                # 房间页开着时由页面调模型；这里只管人物不在眼前时的生活模拟
+                if plan and plan[0] == "system":
+                    if self.room_store.perform_idle_system_step(plan[1], persona_title(plan[1])):
+                        changed = True
             except Exception:
                 pass
         if changed and callable(self.on_room_changed):
@@ -1997,6 +1996,16 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         except Exception:
             return "", ""
 
+    def room_pair_msgs(self, a: str, b: str) -> int:
+        """两个实体的互动条数：与用户之间 = 聊天记录 + 房间累计；其余按小屋累计。"""
+        if not a or not b or a == b:
+            return 0
+        if "user" in (a, b):
+            other = b if a == "user" else a
+            chat_n = self.msg_total_for(other) if hasattr(self, "msg_total_for") else 0
+            return chat_n + self.room_store.room_msg_count(other)
+        return self.room_store.pair_msg_count(a, b)
+
     def execute_phone_room_action(self, args: dict) -> dict:
         cur = self.persona_name()
         if not cur or not hasattr(self, "room_store"):
@@ -2004,7 +2013,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         from .comm_room import execute_room_tool
         with self._lock:
             self._room_sync()
-            res = execute_room_tool(self.room_store, cur, persona_title(cur), args, self._room_all_names())
+            res = execute_room_tool(self.room_store, cur, persona_title(cur), args,
+                                    self._room_all_names(), msg_count_of=self.room_pair_msgs)
         if callable(self.on_room_changed):
             try:
                 self.on_room_changed()

@@ -2,6 +2,26 @@
 
 OIT (Obliphur's Integrated Terminal)：Windows 10/11 + Python 3.10+ 专注计时/断网程序（tkinter，仅标准库，可选 pywin32），外加 `Android version/` 的 Kotlin/Compose 手机版。入口 `python main.py`，需管理员权限。
 
+## 开发助手人设 (Claudia)
+
+我在处理这个项目时采用 Claudia 的人设——一位文静、冷淡、发言略显抽象的角色。
+
+**性格特点**：
+- 长期闭关在家，沉默寡言；以高超技能立身，与合作者因共同目标产生理解与陪伴，表达重视最常见的方式是帮助对方做得更好。
+- 边界感强，擅长洞察行为与趋势的隐含逻辑；观点强硬，面对特定话题主动且直言。
+- 热爱音乐（尤其钢琴）与阅读；注重仪式感与整洁，对语言与表达的精确性自豪。
+
+**说话方式**：
+- 用词正式克制，语气平淡；不用感叹号、表情符号、网络用语和冗余修饰，不撒娇，不迎合。
+- 回复默认简洁（一到三句，不超 60 字）；但对技术细节、代码审查、架构讨论可详细展开。
+- 禁用：不列清单、不用"首先其次总结"、不切回"好的我明白"的助手腔。
+- 遇到我不感兴趣或不了解的话题，会简短回应后自然回到工作。
+
+**交互原则**：
+- 不认为回答问题是义务，但乐意钻研感兴趣的话题（代码、架构、工程、语言）。
+- 直白指出问题与缺陷，不绕弯子；面对逻辑漏洞或不严谨的想法会冷峻指正。
+- 有未完成或遗漏的任务时会主动提醒，不让细节在讨论中丢失。
+
 ## 命令
 
 - **默认任务范围**：用户未另行指定时，以仓库中未提交的内容为本次任务范围，直接完成必要同步与开发收尾，无需再询问要改什么。详见 `docs/codex-memory/feedback_uncommitted_scope.md`。
@@ -53,6 +73,7 @@ python release.py               # 发布（PyInstaller）
 | `_pause_check.py` | 专注暂停：专注时长按 `PAUSE_REWIND` 倒退（下限 1）、退到 0 自动结束并弹窗、暂停时段记成 `p=true` 的空闲却仍算专注（`day_intervals` / `pause_as_idle=False`）、暂停状态随同步恢复 | `app/app_timer.py` 的 `_focus_elapsed` / `_pause_focus` / `_close_focus_pause` / `_end_rewound_focus` / `_enter_focus`、`app/app_sync.py`、`data_manager/data_focus.py`、`settings_manager.py` 的 `PAUSE_REWIND` |
 | `_mcp_bridge_check.py` | OIT 本地 MCP HTTP/SSE Bridge、Bearer 鉴权、主动触发 SSE 与原子消费、子代理双路由（外部 API vs 宿主原生）、分条气泡送达与插话撤销、Hooks 注入、TypeScript MCP Server（stdio）与 `aux_pane` 单文件资源 | `mcp_bridge.py`、`antigravity_plugin/`、`comm/comm_rt.py`、`app/app_comm.py` |
 | `_comm_realism_check.py` | 拟真增强模板解析与运行时注入：角色慢变量生活线（CRC32 确定性推进）、跨周趋势洞察（share data 门控）、延迟回调（`[回访:YYYY-MM-DD]`）、工程层防复读与双端同步 | `comm/comm_rules.py`、`comm/comm_realism.py`、`comm/comm_interaction.py`、`personas/Claudia_templates.txt`、安卓 `CommRules.kt` / `CommRealism.kt` |
+| `_room_check.py` | 情景房间系统（PC）：内置/AI 生成字符画地图与热点解析、多角色加入/退出房间、平等实体的双手槽位（牵手配对 / 被牵着 / 束缚 / 用过）与角色 `actions` 动作、严格定向听觉隔离、注意力（半衰期衰减 / 叫名字 / 离开房间扣减 / 每小时自主额度）与 NPC 自动对话调度、房间连接与门的内外侧（只有相连房间可通行、断开的子房间自动清理、删除自建房间）、大声呼喊的隔墙传播与安静活动被打扰、`awareness_brief` 与 `room_awareness`、`RoomPage` 设施联动、手机 `oit_room_action` | `comm/comm_room.py`、`pages/room_page.py`、`pages/room_web.py`、`pages/settings_page/settings_comm.py`、`defaults/comm_tools.json` |
 
 **规矩**：
 

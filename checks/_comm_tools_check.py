@@ -31,11 +31,34 @@ def response(protocol, name, args):
         "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
 
 
+def multi_response(protocol):
+    first = response(protocol, "oit_query", {"modules": ["timer"]})
+    second = response(protocol, "oit_reply", {"text": "已读取"})
+    if protocol == "anthropic":
+        first["content"].extend(second["content"][1:])
+    elif protocol == "gemini":
+        first["candidates"][0]["content"]["parts"].extend(second["candidates"][0]["content"]["parts"])
+    else:
+        first["choices"][0]["message"]["tool_calls"].extend(second["choices"][0]["message"]["tool_calls"])
+    return first
+
+
 def call(name, args, protocol="openai"):
     return tools.parse_response(response(protocol, name, args), protocol, lambda: "")
 
 
 def transport_checks():
+    for protocol in ("openai", "anthropic", "gemini"):
+        normalized = tools.unpack(tools.parse_response(multi_response(protocol), protocol, lambda: ""))
+        assert normalized["name"] == "oit_query"
+        wire = normalized["wire"]
+        if protocol == "anthropic":
+            assert sum(b.get("type") == "tool_use" for b in wire["content"]) == 1
+        elif protocol == "gemini":
+            assert sum("functionCall" in p and not p.get("thought") for p in wire["parts"]) == 1
+        else:
+            assert len(wire["tool_calls"]) == 1
+
     for protocol in ("openai", "anthropic", "gemini"):
         normalized = tools.unpack(call("oit_reading_offer", {"request_statement": "我们现在一起读吧。"}, protocol))["arguments"]
         assert normalized == {"free_statement": "", "request_statement": "我们现在一起读吧。"}

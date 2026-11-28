@@ -16,6 +16,36 @@ ROOM_FILE = "comm_rooms.json"
 MAX_ROOM_LOGS = 500
 CUSTOM_PART_MIN_MSGS = 200
 HOLD_HAND_MIN_MSGS = 100
+HAND_USED_TTL_MS = 60_000          # 「刚刚用过」的手保持显示的时间，过后自动恢复自由
+HAND_STATES = ("free", "holding", "held", "bound", "used")
+# 手部动作碰到对方哪只手：空字符串表示与施动的手同侧（对方的左手/右手则明确指定）
+HAND_TARGET_SIDES = {
+    "对方的左手": "left",
+    "对方的右手": "right",
+    "手掌 / 指尖": "",
+    "手臂 / 手腕": "",
+}
+
+# ---- 注意力（1.0.815）----
+# 每个实体的注意力是 0~1 的连续量，按半衰期衰减：达到阈值才算「还在对话里」，由模型接管回合；
+# 低于阈值走系统生活模拟（perform_idle_system_step），不调 API。用户叫名字 / 触碰永远能把人叫醒。
+ATTENTION_WAKE = 0.35               # 阈值：达到即由模型接管
+ATTENTION_HALF_MIN = 15             # 半衰期（分钟），由设置 room_npc_idle_min 覆盖
+ATTENTION_SPEECH = 1.0              # 同房间听到用户说话 / 被轻声叫到
+ATTENTION_SUMMON = 1.0              # 被叫到名字（可以隔着房间）
+ATTENTION_TOUCH = 0.9               # 被触碰 / 被牵手 / 被束缚
+ATTENTION_PHONE = 0.8               # 手机沟通里收到用户消息
+ATTENTION_ENTER = 0.5               # 走进用户所在的房间
+ATTENTION_LEAVE = 0.6               # 离开用户所在的房间时扣掉（用户走开对留下的人也成立）
+ATTENTION_AUTO_PER_HOUR = 8         # 每实体每小时自主开口的上限；用户叫 / 触碰不受限
+ATTENTION_HEARD_MAX = 5             # 当时没答上的呼唤最多记几条
+
+# ---- 房间连接、门与音量（1.0.815）----
+# 房间之间靠 doors 相连（双向），门只有所在房间的里侧能锁；只有相邻的房间能走过去。
+VOLUMES = ("normal", "whisper", "shout")
+VOLUME_LABELS = {"normal": "正常音量", "whisper": "轻语", "shout": "大声呼喊"}
+QUIET_LABELS = ("弹琴", "看书", "休息")        # 需要安静的活动：被大声喊到会不高兴
+MOOD_MINUTES = 8                            # 被打扰的不快持续多久
 
 IDLE_ACTIVITIES = (
     ("弹琴", 20, 30, "{who} 坐到钢琴前，静静弹起了琴（预计 {m} 分钟）。"),
@@ -235,6 +265,7 @@ def make_persona_room(persona_name: str, display_name: str) -> dict:
         "locked_inside": False,
         "locked_by": "",
         "locked_reason": "",
+        "doors": {"lounge": {"label": "卧室门"}},
         "ascii_map": [
             "┌──────────────[窗台]──────────────┐",
             "│                                  │",
@@ -271,6 +302,7 @@ BUILTIN_ROOMS = {
         "locked_inside": False,
         "locked_by": "",
         "locked_reason": "",
+        "doors": {"lounge": {"label": "房门"}},
         "ascii_map": [
             "┌──────────────[窗户]──────────────┐",
             "│                                  │",
@@ -304,6 +336,7 @@ BUILTIN_ROOMS = {
         "locked_inside": False,
         "locked_by": "",
         "locked_reason": "",
+        "doors": {"my_home": {"label": "房门"}},
         "ascii_map": [
             "┌─────────────[落地窗]─────────────┐",
             "│                                  │",
@@ -420,9 +453,32 @@ def normalize_room(raw: dict) -> dict:
         "locked_inside": bool(raw.get("locked_inside", False)),
         "locked_by": str(raw.get("locked_by") or "").strip(),
         "locked_reason": str(raw.get("locked_reason") or "").strip(),
+        "doors": _normalize_doors(raw.get("doors")),
         "ascii_map": clean_lines,
         "facilities": list(fac_by_token.values()),
     }
+
+
+def _normalize_doors(raw) -> dict[str, dict]:
+    """房间通向别的房间的门：{邻居 id: {label, locked, by, reason}}；两边各存一份，锁定会同步镜像。"""
+    out: dict[str, dict] = {}
+    if not isinstance(raw, dict):
+        return out
+    for rid, val in raw.items():
+        clean = str(rid or "").strip()
+        if not clean:
+            continue
+        if isinstance(val, bool):
+            val = {"locked": val}
+        if not isinstance(val, dict):
+            continue
+        out[clean] = {
+            "label": str(val.get("label") or "房门").strip()[:20],
+            "locked": bool(val.get("locked", False)),
+            "by": str(val.get("by") or "").strip(),
+            "reason": str(val.get("reason") or "").strip(),
+        }
+    return out
 
 
 def render_room_map(room: dict, occupants: list[tuple[str, str]]) -> tuple[str, list[dict]]:
@@ -478,6 +534,10 @@ def render_room_map(room: dict, occupants: list[tuple[str, str]]) -> tuple[str, 
     return "\n".join(lines), hotspots
 
 
+def _ms_now(now_ms: int = None) -> int:
+    return int(time.time() * 1000) if now_ms is None else int(now_ms)
+
+
 class RoomStore:
     """管理分人设房间、钥匙分发、内部反锁、牵手/跟随带人、室内位置、双手槽位与定向听觉日志。"""
 
@@ -487,15 +547,21 @@ class RoomStore:
         self.occupants: dict[str, str] = {}
         self.positions: dict[str, str] = {}         # actor_id -> 当前室内位置（如 "墙边" / "椅子" / "房间中央"）
         self.following: dict[str, str] = {}         # actor_id -> leader_id（言语同意跟随）
-        self.holding_hands: dict[str, str] = {"left": "", "right": ""}  # side -> actor_id（直接牵手）
         self.room_counts: dict[str, int] = {}
         self.last_user_interact: dict[str, int] = {}
         self.activities: dict[str, dict] = {}
-        self.hands: dict[str, dict] = {
-            "left": {"state": "free", "note": ""},
-            "right": {"state": "free", "note": ""},
-        }
-        self.pending_actions: list[dict] = []
+        # 注意力：值 + 最后一次写入的时刻（读取时按半衰期衰减）；heard 记当时没答上的呼唤
+        self.attn_half_min: int = ATTENTION_HALF_MIN
+        self.attention: dict[str, float] = {}
+        self.attention_ts: dict[str, int] = {}
+        self.heard: dict[str, list[dict]] = {}
+        self.auto_turns: dict[str, list[int]] = {}
+        # 双手、牵手与待发动作都属于「实体」：用户与所有人设共用同一套结构
+        self.hands: dict[str, dict] = {}            # actor_id -> {"left"/"right": {state, note, link, ts}}
+        self.holding: dict[str, dict] = {}          # actor_id -> {"left"/"right": target_id}（这只手握住了谁）
+        self.pending: dict[str, list[dict]] = {}    # actor_id -> 待发动作（下一句话一起发出的手部/目光动作）
+        self.moods: dict[str, dict] = {}            # actor_id -> {label, until, reason}（被打扰等短暂情绪）
+        self.name_map: dict[str, str] = {}          # 运行时由界面写入，给系统日志用
         self.logs: list[dict] = []
         self.load()
 
@@ -521,6 +587,46 @@ class RoomStore:
             if rid not in self.rooms:
                 self.occupants.pop(aid, None)
 
+    def _bootstrap_links(self):
+        """旧存档没有门的概念：先给每间房接一扇通向公共客厅的门，再补齐双向并砍掉走不到客厅的房间。"""
+        for rid, room in self.rooms.items():
+            if rid == "lounge" or room.get("doors"):
+                continue
+            room["doors"] = {"lounge": {"label": "房门",
+                                        "locked": bool(room.get("locked_inside")),
+                                        "by": room.get("locked_by") or "",
+                                        "reason": room.get("locked_reason") or ""}}
+        if "my_home" in self.rooms:
+            self.link_rooms("my_home", "lounge", save=False)
+        for rid, room in list(self.rooms.items()):
+            doors = dict(room.get("doors") or {})
+            for nid in list(doors):
+                other = self.rooms.get(nid)
+                if other is None:
+                    doors.pop(nid, None)
+                    continue
+                if rid not in (other.get("doors") or {}):
+                    other.setdefault("doors", {})[rid] = {"label": doors[nid].get("label") or "房门"}
+            room["doors"] = doors
+            self._sync_lock_summary(room)
+        self.prune_orphans()
+
+    def _sync_lock_summary(self, room: dict, save: bool = False):
+        """locked_inside 是「这间房至少有一扇门从里侧锁上了」的汇总，供旧的判定与界面继续用。"""
+        doors = room.get("doors") or {}
+        locked = [d for d in doors.values() if d.get("locked")]
+        if locked:
+            room["locked_inside"] = True
+            first = locked[0]
+            room["locked_by"] = str(first.get("by") or "")
+            room["locked_reason"] = str(first.get("reason") or "")
+        else:
+            room["locked_inside"] = False
+            room["locked_by"] = ""
+            room["locked_reason"] = ""
+        if save:
+            self.save()
+
     def sync_personas(self, personas: list[tuple[str, str]]) -> bool:
         """为每个人设（含新建人设）确保专属房间存在，并默认让未就位的人设待在自己的房间里。"""
         changed = False
@@ -530,6 +636,7 @@ class RoomStore:
             rid = persona_room_id(pid)
             if rid not in self.rooms:
                 self.rooms[rid] = normalize_room(make_persona_room(pid, title))
+                self.link_rooms(rid, "lounge", save=False)         # 卧室始终连着公共客厅
                 changed = True
             else:
                 r = self.rooms[rid]
@@ -549,6 +656,8 @@ class RoomStore:
                 if not r.get("is_public") and pid not in r["keys"]:
                     r["keys"].insert(0, pid)
                     changed = True
+                if self.link_rooms(rid, "lounge", save=False):     # 卧室始终连着公共客厅（两边都要有门）
+                    changed = True
             if pid not in self.occupants or self.occupants[pid] not in self.rooms:
                 self.occupants[pid] = rid
                 changed = True
@@ -561,10 +670,17 @@ class RoomStore:
         self.occupants = {}
         self.positions = {}
         self.following = {}
-        self.holding_hands = {"left": "", "right": ""}
+        self.hands = {}
+        self.holding = {}
+        self.pending = {}
         self.room_counts = {}
         self.last_user_interact = {}
         self.activities = {}
+        self.attention = {}
+        self.attention_ts = {}
+        self.heard = {}
+        self.auto_turns = {}
+        self.moods = {}
         self.logs = []
         if os.path.isfile(self.path):
             try:
@@ -589,10 +705,16 @@ class RoomStore:
                     fol = data.get("following") or {}
                     if isinstance(fol, dict):
                         self.following = {str(k): str(v) for k, v in fol.items() if isinstance(k, str) and v}
-                    hh = data.get("holding_hands") or {}
+                    hh = data.get("holding") if "holding" in data else data.get("holding_hands") or {}
                     if isinstance(hh, dict):
-                        for s in ("left", "right"):
-                            self.holding_hands[s] = str(hh.get(s) or "")
+                        if any(k in ("left", "right") for k in hh):
+                            hh = {"user": hh}                     # 旧存档：只有用户的手
+                        self.holding = {
+                            str(aid): {s: str(v) for s, v in (sides or {}).items()
+                                       if s in ("left", "right") and v}
+                            for aid, sides in hh.items()
+                            if isinstance(aid, str) and isinstance(sides, dict)
+                        }
                     rc = data.get("room_counts") or {}
                     if isinstance(rc, dict):
                         for aid, val in rc.items():
@@ -618,23 +740,106 @@ class RoomStore:
                                     "until": max(0, int(val.get("until") or 0)),
                                     "room_id": str(val.get("room_id") or ""),
                                 }
+                    att = data.get("attention") or {}
+                    if isinstance(att, dict):
+                        for aid, val in att.items():
+                            if not isinstance(aid, str):
+                                continue
+                            try:
+                                v = float(val or 0.0)
+                            except (TypeError, ValueError):
+                                continue
+                            if v > 0:
+                                self.attention[aid] = max(0.0, min(1.0, v))
+                    ats = data.get("attention_ts") or {}
+                    if isinstance(ats, dict):
+                        for aid, val in ats.items():
+                            if isinstance(aid, str):
+                                try:
+                                    self.attention_ts[aid] = max(0, int(val or 0))
+                                except (TypeError, ValueError):
+                                    pass
+                    heard = data.get("heard") or {}
+                    if isinstance(heard, dict):
+                        for aid, items in heard.items():
+                            if not (isinstance(aid, str) and isinstance(items, list)):
+                                continue
+                            clean = []
+                            for it in items:
+                                if not isinstance(it, dict):
+                                    continue
+                                txt = str(it.get("text") or "").strip()[:200]
+                                if not txt:
+                                    continue
+                                clean.append({
+                                    "text": txt,
+                                    "room": str(it.get("room") or "")[:30],
+                                    "who": str(it.get("who") or "")[:30],
+                                    "ts": max(0, int(it.get("ts") or 0)),
+                                })
+                            if clean:
+                                self.heard[aid] = clean[-ATTENTION_HEARD_MAX:]
+                    turns = data.get("auto_turns") or {}
+                    if isinstance(turns, dict):
+                        for aid, items in turns.items():
+                            if not (isinstance(aid, str) and isinstance(items, list)):
+                                continue
+                            kept = []
+                            for it in items:
+                                try:
+                                    kept.append(int(it or 0))
+                                except (TypeError, ValueError):
+                                    continue
+                            if kept:
+                                self.auto_turns[aid] = kept[-32:]
+                    moods = data.get("moods") or {}
+                    if isinstance(moods, dict):
+                        for aid, val in moods.items():
+                            if not (isinstance(aid, str) and isinstance(val, dict)):
+                                continue
+                            until = 0
+                            try:
+                                until = max(0, int(val.get("until") or 0))
+                            except (TypeError, ValueError):
+                                continue
+                            if until:
+                                self.moods[aid] = {"label": str(val.get("label") or "")[:20],
+                                                   "until": until,
+                                                   "reason": str(val.get("reason") or "")[:30]}
                     hands = data.get("hands") or {}
                     if isinstance(hands, dict):
-                        for side in ("left", "right"):
-                            h = hands.get(side)
-                            if isinstance(h, dict):
+                        if any(k in ("left", "right") for k in hands):
+                            hands = {"user": hands}                   # 旧存档：只有用户的手
+                        for aid, sides in hands.items():
+                            if not (isinstance(aid, str) and isinstance(sides, dict)):
+                                continue
+                            clean = {}
+                            for side in ("left", "right"):
+                                h = sides.get(side)
+                                if not isinstance(h, dict):
+                                    continue
                                 st = h.get("state")
-                                if st not in ("free", "used", "bound", "holding"):
+                                if st not in HAND_STATES:
                                     st = "free"
-                                self.hands[side] = {"state": st, "note": str(h.get("note") or "")[:60]}
+                                ts = h.get("ts")
+                                clean[side] = {
+                                    "state": st,
+                                    "note": str(h.get("note") or "")[:60],
+                                    "link": str(h.get("link") or ""),
+                                    "ts": int(ts) if isinstance(ts, (int, float)) else 0,
+                                }
+                            if clean:
+                                self.hands[aid] = clean
                     logs = data.get("logs") or []
                     if isinstance(logs, list):
                         self.logs = [x for x in logs[-MAX_ROOM_LOGS:] if isinstance(x, dict)]
             except (OSError, json.JSONDecodeError, ValueError):
                 pass
         self._ensure_builtins()
-        self.pending_actions = []
-        self.reset_turn_hands(save=False)
+        self._bootstrap_links()
+        self.pending = {}
+        for aid in ("user", *self.hands):
+            self.reset_turn_hands(aid, save=False)
 
     def save(self):
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
@@ -643,10 +848,15 @@ class RoomStore:
             "occupants": self.occupants,
             "positions": self.positions,
             "following": self.following,
-            "holding_hands": self.holding_hands,
+            "holding": self.holding,
             "room_counts": self.room_counts,
             "last_user_interact": self.last_user_interact,
             "activities": self.activities,
+            "attention": self.attention,
+            "attention_ts": self.attention_ts,
+            "heard": self.heard,
+            "auto_turns": self.auto_turns,
+            "moods": self.moods,
             "hands": self.hands,
             "logs": self.logs[-MAX_ROOM_LOGS:],
         }
@@ -674,48 +884,79 @@ class RoomStore:
         return True
 
     def listeners_for_volume(self, room_id: str, sender_id: str, volume: str = "normal") -> list[str]:
-        """按音量与室内位置计算听众：normal=全屋可听(["all"])；whisper=仅同一位置的在场成员可听。"""
-        if str(volume or "normal").lower() != "whisper":
+        """按音量与室内位置计算听众：normal=全屋可听(["all"])；whisper=仅同一位置；
+        shout=全屋加隔壁房间（隔壁靠 append_log 的 spill 传出，这里仍是 ["all"]）。"""
+        vol = str(volume or "normal").lower()
+        if vol not in VOLUMES:
+            vol = "normal"
+        if vol != "whisper":
             return ["all"]
         pos = self.position_of(sender_id)
         same_pos = [aid for aid in self.occupants_in(room_id) if self.position_of(aid) == pos]
         return same_pos or [sender_id]
 
-    # ---- 牵手与跟随（带角色出去 / 被带出去） ----
+    # ---- 牵手与跟随（任何实体都能牵手、带人 / 被带出去） ----
 
-    def hold_hand(self, side: str, actor_id: str, actor_name: str = "", msg_count: int | None = None) -> str:
+    def hold_hand(self, actor_id: str, side: str, target_id: str = "user",
+                  actor_name: str = "", target_name: str = "", msg_count: int | None = None) -> str:
+        """actor 用自己的某只手牵住 target 的同侧手；两只手都会记下配对状态。"""
         if side not in ("left", "right"):
             return "请指定左手或右手"
+        if not target_id or target_id == actor_id:
+            return "需要指定牵手对象"
         if msg_count is not None and int(msg_count) < HOLD_HAND_MIN_MSGS:
             return tr("还不够熟络，暂时无法牵手带走。")
-        if self.hands[side]["state"] == "bound":
+        mine = self.hands_of(actor_id)[side]
+        if mine["state"] == "bound":
             return "这只手正被束缚着，无法牵手"
-        if self.occupants.get("user") != self.occupants.get(actor_id):
+        if mine["state"] == "held":
+            return tr("这只手正被拉在别人手里，先抽回来才能去牵别人。")
+        if self.occupants.get(actor_id) != self.occupants.get(target_id):
             return "对方不在你当前所在的房间"
-        if self.position_of("user") != self.position_of(actor_id):
+        if self.position_of(actor_id) != self.position_of(target_id):
             return "你和对方不在同一个位置，需先走到对方身边才能牵手"
-        self.holding_hands[side] = actor_id
-        self.hands[side] = {"state": "holding", "note": f"握住 {actor_name or actor_id}"[:24]}
-        rid = self.current_room_id()
+        theirs = self.hands_of(target_id)[side]
+        if theirs["state"] == "bound":
+            return tr("对方这只手正被束缚着，无法牵手。")
+        if theirs["state"] in ("holding", "held"):
+            return tr("对方这只手已经牵着别人了。")
+        self.holding.setdefault(actor_id, {})[side] = target_id
+        self._set_hand(actor_id, side, "holding", f"握住 {target_name or target_id}", link=target_id)
+        self.holding.setdefault(target_id, {})[side] = ""
+        self._set_hand(target_id, side, "held", f"被 {actor_name or actor_id} 握住", link=actor_id)
+        self.raise_attention(target_id, ATTENTION_TOUCH)
+        self.raise_attention(actor_id, ATTENTION_TOUCH)
+        rid = self.occupants.get(actor_id) or self.current_room_id()
         self.append_log(rid, "sys", "系统", ["all"], "sys",
-                        tr("你用{hand}握住了 {who} 的手。",
-                           hand="左手" if side == "left" else "右手", who=actor_name or actor_id))
+                        tr("{who} 用{hand}握住了 {target} 的手。",
+                           who=actor_name or ("你" if actor_id == "user" else actor_id),
+                           hand="左手" if side == "left" else "右手",
+                           target=target_name or ("你" if target_id == "user" else target_id)))
         self.save()
         return ""
 
-    def release_hand(self, side: str, name_map: dict[str, str] = None):
+    def release_hand(self, actor_id: str, side: str, name_map: dict[str, str] = None,
+                     actor_name: str = "", save: bool = True):
+        """松开牵手：牵着的人松手，或被牵着的人把手抽回来，两边的手状态一起恢复。"""
         if side not in ("left", "right"):
             return
-        aid = self.holding_hands.get(side) or ""
-        self.holding_hands[side] = ""
-        if self.hands[side]["state"] == "holding":
-            self.hands[side] = {"state": "free", "note": ""}
-        if aid:
-            who = (name_map or {}).get(aid, aid)
-            rid = self.current_room_id()
-            self.append_log(rid, "sys", "系统", ["all"], "sys",
-                            tr("你松开了牵着 {who} 的手。", who=who))
-        self.save()
+        h = self._hand(actor_id, side)
+        st = h["state"]
+        if st not in ("holding", "held"):
+            return
+        other = h.get("link") or ""
+        self._detach_hand(actor_id, side)
+        if other:
+            names = name_map or {}
+            other_name = names.get(other, "你" if other == "user" else other)
+            who = actor_name or names.get(actor_id, "你" if actor_id == "user" else actor_id)
+            rid = self.occupants.get(actor_id) or self.current_room_id()
+            text = (tr("{who} 松开了牵着 {other} 的手。", who=who, other=other_name) if st == "holding"
+                    else tr("{who} 把手从 {other} 手里抽了回来。", who=who, other=other_name))
+            if rid in self.rooms:
+                self.append_log(rid, "sys", "系统", ["all"], "sys", text)
+        if save:
+            self.save()
 
     def set_following(self, actor_id: str, leader_id: str | None, actor_name: str = "", leader_name: str = ""):
         if leader_id:
@@ -737,21 +978,115 @@ class RoomStore:
         """返回与 leader 同房且会一起被带走的同伴（牵手或跟随）。"""
         occ = set(self.occupants_in(room_id))
         out = []
-        if leader_id == "user":
-            for s in ("left", "right"):
-                aid = self.holding_hands.get(s)
-                if aid and aid in occ and aid not in out:
-                    out.append(aid)
-        else:
-            # 如果用户牵着 leader 的手，leader 移动时也能把用户带走
-            if leader_id in self.holding_hands.values() and "user" in occ:
-                out.append("user")
+        for side in ("left", "right"):
+            aid = (self.holding.get(leader_id) or {}).get(side) or ""
+            if aid and aid in occ and aid not in out:
+                out.append(aid)
         for aid, lid in self.following.items():
             if lid == leader_id and aid in occ and aid != leader_id and aid not in out:
                 out.append(aid)
         return out
 
-    # ---- 房间、钥匙与内部反锁 ----
+    # ---- 房间、门、连接与内部反锁 ----
+
+    def neighbors(self, room_id: str) -> list[str]:
+        """与该房间互相连通的房间（门在两边都存在才算数）。"""
+        room = self.rooms.get(room_id)
+        if not room:
+            return []
+        out = []
+        for nid in (room.get("doors") or {}):
+            other = self.rooms.get(nid)
+            if other and room_id in (other.get("doors") or {}):
+                out.append(nid)
+        return out
+
+    def door_between(self, room_id: str, other_id: str) -> dict:
+        return dict(((self.rooms.get(room_id) or {}).get("doors") or {}).get(other_id) or {})
+
+    def link_rooms(self, a: str, b: str, label: str = "房门", save: bool = True) -> bool:
+        """把两个房间连起来：两边的 doors 各存一份，锁定状态按两边一致。"""
+        if a == b or a not in self.rooms or b not in self.rooms:
+            return False
+        changed = False
+        for src, dst in ((a, b), (b, a)):
+            doors = self.rooms[src].setdefault("doors", {})
+            if dst not in doors:
+                doors[dst] = {"label": label, "locked": False, "by": "", "reason": ""}
+                changed = True
+        if changed and save:
+            self.save()
+        return changed
+
+    def unlink_rooms(self, a: str, b: str, save: bool = True) -> bool:
+        changed = False
+        for src, dst in ((a, b), (b, a)):
+            doors = (self.rooms.get(src) or {}).get("doors") or {}
+            if dst in doors:
+                doors.pop(dst, None)
+                self._sync_lock_summary(self.rooms[src])
+                changed = True
+        if changed and save:
+            self.save()
+        return changed
+
+    def path_between(self, a: str, b: str) -> list[str]:
+        """两房间之间最短的通行路线（含两端）；走不到就返回空列表。"""
+        if a == b:
+            return [a]
+        if a not in self.rooms or b not in self.rooms:
+            return []
+        prev = {a: ""}
+        queue = [a]
+        while queue:
+            cur = queue.pop(0)
+            for nid in self.neighbors(cur):
+                if nid in prev:
+                    continue
+                prev[nid] = cur
+                if nid == b:
+                    path = [b]
+                    while prev[path[-1]]:
+                        path.append(prev[path[-1]])
+                    return list(reversed(path))
+                queue.append(nid)
+        return []
+
+    def prune_orphans(self, root: str = "lounge") -> list[str]:
+        """删掉走不到公共客厅的房间：断开的子房间、生成失败留下的空房；里面的人先回到客厅。"""
+        if root not in self.rooms:
+            return []
+        seen = {root}
+        queue = [root]
+        while queue:
+            cur = queue.pop(0)
+            for nid in self.neighbors(cur):
+                if nid not in seen:
+                    seen.add(nid)
+                    queue.append(nid)
+        dropped = []
+        for rid in list(self.rooms):
+            if rid in seen:
+                continue
+            room = self.rooms.get(rid) or {}
+            if room.get("builtin") and rid in ("my_home", "lounge"):
+                self.link_rooms(rid, root, save=False)
+                continue
+            dropped.append(rid)
+        for rid in dropped:
+            self.rooms.pop(rid, None)
+            for other in self.rooms.values():
+                (other.get("doors") or {}).pop(rid, None)
+                self._sync_lock_summary(other)
+            for aid, cur in list(self.occupants.items()):
+                if cur == rid:
+                    self.occupants[aid] = root
+                    self.positions[aid] = "门边"
+        if dropped:
+            for other in self.rooms.values():
+                self._sync_lock_summary(other)
+            self.save()
+        return dropped
 
     def current_room_id(self) -> str:
         rid = self.occupants.get("user", "my_home")
@@ -763,7 +1098,8 @@ class RoomStore:
     def room_list(self) -> list[dict]:
         return list(self.rooms.values())
 
-    def add_room(self, raw: dict, creator_id: str = "user", is_public: bool = False) -> dict:
+    def add_room(self, raw: dict, creator_id: str = "user", is_public: bool = False,
+                 attach_to: str = "") -> dict:
         data = dict(raw)
         data["owner"] = "" if is_public else creator_id
         data["is_public"] = bool(is_public)
@@ -771,23 +1107,50 @@ class RoomStore:
         data["locked_inside"] = False
         data["locked_by"] = ""
         data["locked_reason"] = ""
+        data["doors"] = {}
         room = normalize_room(data)
         self.rooms[room["id"]] = room
+        # 新房间从创建者所在的房间接一扇门；没指定就接公共客厅，保证走得到
+        anchor = attach_to or self.occupants.get(creator_id) or "lounge"
+        if anchor not in self.rooms or anchor == room["id"]:
+            anchor = "lounge" if "lounge" in self.rooms else ""
+        if anchor and anchor != room["id"]:
+            self.link_rooms(anchor, room["id"], save=False)
         self.save()
         return room
 
-    def delete_room(self, room_id: str) -> bool:
+    def delete_room(self, room_id: str, actor_id: str = "user") -> bool:
+        """删除房间：断掉所有门、把里面的人送回公共客厅；内置房间与公共客厅不能删。"""
         room = self.rooms.get(room_id)
-        if not room or room.get("builtin"):
+        if not room or room.get("builtin") or room_id == "lounge":
             return False
-        del self.rooms[room_id]
+        if actor_id and actor_id != "user" and room.get("owner") not in ("", actor_id):
+            return False
+        self.rooms.pop(room_id, None)
+        for other in self.rooms.values():
+            (other.get("doors") or {}).pop(room_id, None)
+            self._sync_lock_summary(other)
+        fallback = "lounge" if "lounge" in self.rooms else (next(iter(self.rooms), ""))
         for aid, rid in list(self.occupants.items()):
             if rid == room_id:
-                self.occupants[aid] = "my_home" if aid == "user" else persona_room_id(aid)
+                self.occupants[aid] = fallback or persona_room_id(aid)
                 if self.occupants[aid] not in self.rooms:
-                    self.occupants[aid] = "lounge"
+                    self.occupants[aid] = fallback
+                self.positions[aid] = "门边"
+        self.logs = [e for e in self.logs if e.get("room_id") != room_id]
         self.save()
         return True
+
+    def rooms_brief(self, room_id: str) -> str:
+        """给模型看的一句话：这间房通向哪里、门锁着没有。"""
+        room = self.rooms.get(room_id) or {}
+        parts = []
+        for nid in self.neighbors(room_id):
+            other = self.rooms.get(nid) or {}
+            door = self.door_between(room_id, nid)
+            lock = "（里侧反锁）" if door.get("locked") else ""
+            parts.append(f"{other.get('name', nid)}{lock}")
+        return "、".join(parts) or "没有门"
 
     def occupants_in(self, room_id: str) -> list[str]:
         return [aid for aid, rid in self.occupants.items() if rid == room_id]
@@ -804,15 +1167,38 @@ class RoomStore:
         room = self.rooms.get(room_id)
         if not room:
             return False, "房间不存在"
-        if self.occupants.get(actor_id) == room_id:
+        prev = self.occupants.get(actor_id)
+        if prev == room_id:
             return True, ""
-        if room.get("locked_inside"):
+        if prev and prev in self.rooms:
+            if room_id not in self.neighbors(prev):
+                return False, tr("「{a}」和「{b}」之间没有门，只能先经过相连的房间。",
+                                 a=self.rooms[prev]["name"], b=room["name"])
+            if self.door_between(prev, room_id).get("locked"):
+                return False, tr("「{room}」的门从里面反锁了，即使有钥匙也打不开。", room=room["name"])
+        elif room.get("locked_inside"):
             return False, tr("「{room}」的门从里面反锁了，即使有钥匙也打不开。", room=room["name"])
         if room.get("is_public"):
             return True, ""
         if self.has_key(actor_id, room_id):
             return True, ""
         return False, tr("你没有「{room}」的钥匙，无法直接进入。", room=room["name"])
+
+    def walk_to(self, actor_id: str, room_id: str, actor_name: str = "",
+                bring_ids: list[str] = None, name_map: dict[str, str] = None) -> str:
+        """沿相连的房间走过去（不会穿门而过）：中途被锁住就停在原地并返回原因。"""
+        prev = self.occupants.get(actor_id)
+        if not prev or prev == room_id or prev not in self.rooms:
+            return self.enter_room(actor_id, room_id, actor_name=actor_name,
+                                   bring_ids=bring_ids, name_map=name_map)
+        path = self.path_between(prev, room_id)
+        if not path:
+            return tr("走不到「{room}」：中间没有相连的门。", room=(self.rooms.get(room_id) or {}).get("name", room_id))
+        for hop in path[1:]:
+            err = self.enter_room(actor_id, hop, actor_name=actor_name, name_map=name_map)
+            if err:
+                return err
+        return ""
 
     def grant_key(self, room_id: str, grantor_id: str, target_id: str,
                   grantor_name: str = "", target_name: str = "") -> str:
@@ -847,20 +1233,43 @@ class RoomStore:
             self.save()
         return ""
 
+    def _set_door_lock(self, room_id: str, other_id: str, locked: bool, by: str = "", reason: str = ""):
+        """一扇门两边的里侧/外侧同时上锁或解锁：门是共用的，状态必须一致。"""
+        for src, dst in ((room_id, other_id), (other_id, room_id)):
+            room = self.rooms.get(src)
+            if not room:
+                continue
+            door = (room.get("doors") or {}).get(dst)
+            if door is None:
+                continue
+            door["locked"] = bool(locked)
+            door["by"] = str(by or "") if locked else ""
+            door["reason"] = str(reason or "") if locked else ""
+            self._sync_lock_summary(room)
+
     def set_room_lock(self, room_id: str, actor_id: str, locked: bool, actor_name: str = "",
-                      reason: str = "manual") -> str:
+                      reason: str = "manual", door_to: str = "") -> str:
         room = self.rooms.get(room_id)
         if not room:
             return "房间不存在"
         if self.occupants.get(actor_id) != room_id:
-            return "只有在房间内部才能反锁或打开门锁"
-        if bool(room.get("locked_inside")) == bool(locked):
+            return tr("只有站在房间的里侧才能反锁或打开门锁。")
+        doors = list(room.get("doors") or {})
+        if door_to:
+            if door_to not in doors:
+                return "这间房没有通向那里的门"
+            doors = [door_to]
+        if not doors:
+            return "这间房没有门"
+        already = all(bool(((room.get("doors") or {}).get(nid) or {}).get("locked")) for nid in doors)
+        if already == bool(locked):
             if locked and reason:
-                room["locked_reason"] = reason
+                for nid in doors:
+                    ((room.get("doors") or {}).get(nid) or {})["reason"] = reason
+                self._sync_lock_summary(room)
             return ""
-        room["locked_inside"] = bool(locked)
-        room["locked_by"] = actor_id if locked else ""
-        room["locked_reason"] = reason if locked else ""
+        for nid in doors:
+            self._set_door_lock(room_id, nid, locked, actor_id, reason if locked else "")
         who = actor_name or ("你" if actor_id == "user" else actor_id)
         if locked:
             if reason == "focus":
@@ -884,6 +1293,9 @@ class RoomStore:
         if prev == room_id:
             return ""
         if not force:
+            door = self.door_between(prev, room_id) if prev else {}
+            if door.get("locked") and str(door.get("by") or "") == actor_id:
+                self._set_door_lock(prev, room_id, False)      # 自己的锁，自己从里侧打开
             ok, reason = self.can_enter(actor_id, room_id)
             if not ok:
                 return reason
@@ -904,11 +1316,31 @@ class RoomStore:
             self.occupants[cid] = room_id
             self.positions[cid] = "门边"
 
+        # 注意力：走进用户所在的房间会注意到人，离开用户所在的房间注意力就散了
+        now_att = _ms_now()
+        user_rid = self.current_room_id()
+        for mid in [actor_id, *companions]:
+            if mid == "user":
+                continue
+            if user_rid == room_id:
+                self.raise_attention(mid, ATTENTION_ENTER, now_att)
+            elif prev and prev == user_rid:
+                self.drop_attention(mid, ATTENTION_LEAVE, now_att)
+        if actor_id == "user":
+            for other in self.occupants_in(prev or ""):
+                if other != "user":
+                    self.drop_attention(other, ATTENTION_LEAVE, now_att)
+            for other in self.occupants_in(room_id):
+                if other != "user" and other not in companions:
+                    self.raise_attention(other, ATTENTION_ENTER, now_att)
+
         nm = name_map or {}
         who = actor_name or nm.get(actor_id) or ("你" if actor_id == "user" else actor_id)
         comp_names = "、".join(nm.get(c, "你" if c == "user" else c) for c in companions)
 
         if prev and prev in self.rooms:
+            if not self.occupants_in(prev) and (self.rooms[prev].get("doors") or {}).get(room_id, {}).get("locked"):
+                self._set_door_lock(prev, room_id, False)
             if not self.occupants_in(prev) and self.rooms[prev].get("locked_inside"):
                 self.rooms[prev]["locked_inside"] = False
                 self.rooms[prev]["locked_by"] = ""
@@ -932,6 +1364,7 @@ class RoomStore:
         prev = self.occupants.pop(actor_id, None)
         if not prev:
             return False
+        self.drop_attention(actor_id, ATTENTION_LEAVE)
         who = actor_name or actor_id
         if prev in self.rooms:
             if not self.occupants_in(prev) and self.rooms[prev].get("locked_inside"):
@@ -959,11 +1392,7 @@ class RoomStore:
             if kind in ("focus", "sleep"):
                 # 专注/睡眠时解除跟随与牵手，独自回房反锁
                 self.following.pop(aid, None)
-                for s in ("left", "right"):
-                    if self.holding_hands.get(s) == aid:
-                        self.holding_hands[s] = ""
-                        if self.hands[s]["state"] == "holding":
-                            self.hands[s] = {"state": "free", "note": ""}
+                self._release_all_hands(aid)
                 if self.occupants.get(aid) != own_rid:
                     self.enter_room(aid, own_rid, actor_name=name, force=True, name_map=name_map)
                     changed = True
@@ -976,12 +1405,87 @@ class RoomStore:
                     changed = True
         return changed
 
-    def is_recently_interacted(self, actor_id: str, idle_minutes: int, now_ms: int = None) -> bool:
-        now = int(time.time() * 1000) if now_ms is None else int(now_ms)
-        last = int(self.last_user_interact.get(actor_id) or 0)
-        if not last:
+    # ---- 注意力：对话与生活模拟之间的连续过渡 ----
+
+    def attention_of(self, actor_id: str, now_ms: int = None) -> float:
+        """当前注意力：存档值按 attn_half_min 的半衰期衰减到此刻。"""
+        if not actor_id:
+            return 0.0
+        val = float(self.attention.get(actor_id) or 0.0)
+        if val <= 0:
+            return 0.0
+        ts = int(self.attention_ts.get(actor_id) or 0)
+        now = _ms_now(now_ms)
+        if ts and now > ts:
+            half = max(1, int(self.attn_half_min or ATTENTION_HALF_MIN)) * 60_000
+            val *= 0.5 ** ((now - ts) / half)
+        return max(0.0, min(1.0, val))
+
+    def _set_attention(self, actor_id: str, val: float, now: int):
+        self.attention[actor_id] = round(max(0.0, min(1.0, float(val))), 4)
+        self.attention_ts[actor_id] = int(now)
+
+    def raise_attention(self, actor_id: str, amount: float = ATTENTION_SPEECH, now_ms: int = None) -> float:
+        """抬起注意力（1.0 表示立刻满）；已经更高时保持原值。"""
+        if not actor_id or actor_id == "user":
+            return 0.0
+        now = _ms_now(now_ms)
+        val = min(1.0, max(self.attention_of(actor_id, now), float(amount)))
+        self._set_attention(actor_id, val, now)
+        return val
+
+    def drop_attention(self, actor_id: str, amount: float = ATTENTION_LEAVE, now_ms: int = None) -> float:
+        """扣注意力：离开房间、被留在原地这类事情让人把注意力收回到自己的事上。"""
+        if not actor_id or actor_id == "user":
+            return 0.0
+        now = _ms_now(now_ms)
+        val = max(0.0, self.attention_of(actor_id, now) - float(amount))
+        self._set_attention(actor_id, val, now)
+        self.activities.pop(actor_id, None)          # 注意力散了，正在做的事也就放下了
+        return val
+
+    def awake(self, actor_id: str, now_ms: int = None) -> bool:
+        """注意力还在阈值之上：这一轮由模型接管。"""
+        return self.attention_of(actor_id, now_ms) >= ATTENTION_WAKE
+
+    def auto_budget_left(self, actor_id: str, now_ms: int = None, per_hour: int = None) -> int:
+        """这一小时还能自主开口几次（只用来自主发言；回应用户不受限）。"""
+        now = _ms_now(now_ms)
+        cap = ATTENTION_AUTO_PER_HOUR if per_hour is None else max(0, int(per_hour))
+        kept = [t for t in (self.auto_turns.get(actor_id) or []) if -60_000 < now - int(t) < 3_600_000]
+        self.auto_turns[actor_id] = kept
+        return max(0, cap - len(kept))
+
+    def spend_auto_budget(self, actor_id: str, now_ms: int = None):
+        now = _ms_now(now_ms)
+        kept = [t for t in (self.auto_turns.get(actor_id) or []) if -60_000 < now - int(t) < 3_600_000]
+        kept.append(now)
+        self.auto_turns[actor_id] = kept[-32:]
+
+    def add_heard(self, actor_id: str, text: str, room_name: str = "", who: str = "你",
+                  now_ms: int = None) -> bool:
+        """当时答不上的呼唤先记下来（在专注 / 睡眠、或不在场），下次轮到他的回合一并补上。"""
+        clean = str(text or "").strip()[:200]
+        if not actor_id or actor_id == "user" or not clean:
             return False
-        return (now - last) < max(1, int(idle_minutes or 15)) * 60 * 1000
+        items = list(self.heard.get(actor_id) or [])
+        items.append({"text": clean, "room": str(room_name or "")[:30],
+                      "who": str(who or "你")[:30], "ts": _ms_now(now_ms)})
+        self.heard[actor_id] = items[-ATTENTION_HEARD_MAX:]
+        self.raise_attention(actor_id, ATTENTION_SUMMON, now_ms)
+        return True
+
+    def take_heard(self, actor_id: str) -> list[dict]:
+        """取走记下的呼唤（下一次模型回合用掉）。"""
+        return self.heard.pop(actor_id, []) or []
+
+    def note_phone_contact(self, actor_id: str, now_ms: int = None) -> float:
+        """手机沟通里收到用户的消息：也算互动，不再只有房间里说话才算。"""
+        if not actor_id or actor_id == "user":
+            return 0.0
+        now = _ms_now(now_ms)
+        self.last_user_interact[actor_id] = now
+        return self.raise_attention(actor_id, ATTENTION_PHONE, now)
 
     def activity_label(self, actor_id: str, now_ms: int = None, schedule_kind: str = "") -> str:
         if schedule_kind == "focus":
@@ -990,13 +1494,53 @@ class RoomStore:
             return "睡眠中"
         if self.following.get(actor_id) == "user":
             return "跟随中"
-        if actor_id in self.holding_hands.values():
-            return "牵手中"
+        for s in ("left", "right"):
+            if self._hand(actor_id, s)["state"] in ("holding", "held"):
+                return "牵手中"
         now = int(time.time() * 1000) if now_ms is None else int(now_ms)
         act = self.activities.get(actor_id)
-        if act and int(act.get("until") or 0) > now and act.get("label"):
-            return f"{act['label']}中"
-        return ""
+        mood = self.mood_of(actor_id, now)
+        base = f"{act['label']}中" if (act and int(act.get("until") or 0) > now and act.get("label")) else ""
+        if mood:
+            return f"{base}·{mood.get('label') or '不快'}" if base else str(mood.get("label") or "不快")
+        return base
+
+    def awareness_brief(self, actor_id: str, limit: int = 4) -> str:
+        """给模型的听觉与空间说明：谁在你这间房、门通向哪里、隔壁是谁、各音量意味着什么。"""
+        rid = self.occupants.get(actor_id)
+        if not rid or rid not in self.rooms:
+            return ""
+        room = self.rooms.get(rid) or {}
+        here = [f"{self.name_of(a)}(位置={self.position_of(a)})"
+                for a in self.occupants_in(rid) if a != actor_id]
+        nb_lines = []
+        for nid in self.neighbors(rid):
+            other = self.rooms.get(nid) or {}
+            door = self.door_between(rid, nid)
+            who = [f"{self.name_of(a)}({self.activity_label(a) or '在场'})"
+                   for a in self.occupants_in(nid) if a != actor_id]
+            tag = "门里侧反锁·过不去" if door.get("locked") else "门没锁·可以过去"
+            nb_lines.append(f"- {other.get('name', nid)}（{tag}）：{'、'.join(who) or '没有人'}")
+        recent = []
+        for e in self.logs[-12:]:
+            if e.get("kind") not in ("say", "action") or not e.get("text"):
+                continue
+            if e.get("room_id") != rid and not self.spills_to(e, rid):
+                continue
+            vol = VOLUME_LABELS.get(e.get("volume") or "normal", "正常音量")
+            where = "隔壁传来" if e.get("room_id") != rid else ""
+            recent.append(f"- {e.get('sender_name')}（{vol}{'·' + where if where else ''}）：{str(e.get('text'))[:60]}")
+        lines = [
+            "【听觉与空间】",
+            f"- 你所在的房间：{room.get('name', rid)}；门通向：{self.rooms_brief(rid)}",
+            f"- 同房间的人：{'、'.join(here[:limit]) or '只有你自己'}",
+            "- 隔壁房间：" + ("\n  ".join(nb_lines) if nb_lines else "没有相邻的房间"),
+            "- 音量的含义：正常音量(normal)=同房间的人都听得清；轻语(whisper)=只有与你同一位置的人才听得见；"
+            "大声呼喊(shout)=隔壁房间也能听见，但会吵到正在看书 / 弹琴 / 休息的人。",
+        ]
+        if recent:
+            lines.append("- 最近的发言（含音量）：\n  " + "\n  ".join(recent[-4:]))
+        return "\n".join(lines)
 
     def perform_idle_system_step(self, actor_id: str, actor_name: str,
                                  now_ms: int = None, rng=None) -> str:
@@ -1010,10 +1554,12 @@ class RoomStore:
         cur_rid = self.occupants.get(actor_id)
         if not cur_rid or cur_rid not in self.rooms:
             return ""
+        if self.pending_of(actor_id) or any(self.holding_of(actor_id, s) for s in ("left", "right")):
+            return ""                       # 手上有事（待发动作 / 正牵着人）就不随意走开
 
         enterable = [
-            rid for rid in self.rooms
-            if rid != cur_rid and self.can_enter(actor_id, rid)[0]
+            rid for rid in self.neighbors(cur_rid)
+            if self.can_enter(actor_id, rid)[0]
         ]
         if enterable and r.random() < 0.35:
             target_rid = r.choice(enterable)
@@ -1042,7 +1588,7 @@ class RoomStore:
     def _bump_room_counts(self, room_id: str, sender: str, targets: list[str], kind: str):
         if kind not in ("say", "action"):
             return
-        now = int(time.time() * 1000)
+        now = _ms_now()
         occ = self.occupants_in(room_id)
         if sender == "user":
             heard = [aid for aid in occ if aid != "user" and ("all" in targets or aid in targets)]
@@ -1050,57 +1596,154 @@ class RoomStore:
                 self.room_counts[aid] = self.room_counts.get(aid, 0) + 1
                 self.last_user_interact[aid] = now
                 self.activities.pop(aid, None)
+                self.raise_attention(aid, ATTENTION_SPEECH, now)
         elif "all" in targets or "user" in targets:
             self.room_counts[sender] = self.room_counts.get(sender, 0) + 1
             self.last_user_interact[sender] = now
+            self.raise_attention(sender, ATTENTION_SPEECH, now)
 
-    # ---- 双手槽位、独立目光与部位互动 ----
+    def pair_msg_count(self, a: str, b: str) -> int:
+        """两个实体之间的互动条数：与用户之间取房间累计，其余按同房可听见的发言/动作累计。"""
+        if not a or not b or a == b:
+            return 0
+        if "user" in (a, b):
+            return self.room_msg_count(b if a == "user" else a)
+        n = 0
+        for e in self.logs:
+            if e.get("kind") not in ("say", "action"):
+                continue
+            sender, targets = e.get("sender"), e.get("targets") or []
+            if sender == a and ("all" in targets or b in targets):
+                n += 1
+            elif sender == b and ("all" in targets or a in targets):
+                n += 1
+        return n
 
-    def available_hands(self) -> list[str]:
-        """自由或握住状态的手都可脱离当前动作作出新动作，仅被束缚时不可用。"""
-        return [side for side in ("left", "right") if self.hands[side]["state"] != "bound"]
+    # ---- 双手槽位、独立目光与部位互动（用户与所有人设都是平等的实体） ----
 
-    def hand_label(self, side: str) -> str:
+    def _hand(self, actor_id: str, side: str) -> dict:
+        """取某实体某只手的槽位（惰性创建，顺手清掉失效的临时状态）。"""
+        sides = self.hands.setdefault(actor_id, {})
+        h = sides.get(side)
+        if not isinstance(h, dict):
+            h = {"state": "free", "note": "", "link": "", "ts": 0}
+            sides[side] = h
+        return self._normalize_hand(actor_id, side, h)
+
+    def _set_hand(self, actor_id: str, side: str, state: str, note: str = "",
+                  link: str = "", ts: int | None = None):
+        self.hands.setdefault(actor_id, {})[side] = {
+            "state": state if state in HAND_STATES else "free",
+            "note": str(note or "")[:60],
+            "link": str(link or ""),
+            "ts": int(time.time() * 1000) if ts is None else int(ts),
+        }
+
+    def _normalize_hand(self, actor_id: str, side: str, h: dict) -> dict:
+        """临时状态过期、或牵手配对的另一头已经断开时，手自动恢复自由。"""
+        st = h.get("state")
+        if st == "used" and int(time.time() * 1000) - int(h.get("ts") or 0) > HAND_USED_TTL_MS:
+            h.update({"state": "free", "note": "", "link": "", "ts": 0})
+        elif st == "held":
+            holder = h.get("link") or ""
+            other = self.hands.get(holder, {}).get(side) if holder else None
+            if not holder or not isinstance(other, dict) or other.get("link") != actor_id:
+                h.update({"state": "free", "note": "", "link": "", "ts": 0})
+        elif st == "holding":
+            target = (self.holding.get(actor_id) or {}).get(side) or ""
+            other = self.hands.get(target, {}).get(side) if target else None
+            if not target or not isinstance(other, dict) or other.get("link") != actor_id:
+                self.holding.get(actor_id, {}).pop(side, None)
+                h.update({"state": "free", "note": "", "link": "", "ts": 0})
+        return h
+
+    def _detach_hand(self, actor_id: str, side: str):
+        """把这只手从牵手配对里拆出来，另一侧的手同步恢复自由。"""
+        if side not in ("left", "right"):
+            return
+        h = self._hand(actor_id, side)
+        other = h.get("link") or (self.holding.get(actor_id) or {}).get(side) or ""
+        self.holding.get(actor_id, {}).pop(side, None)
+        h.update({"state": "free", "note": "", "link": "", "ts": 0})
+        if not other or other == actor_id:
+            return
+        other_h = self._hand(other, side)
+        if other_h.get("link") == actor_id:
+            self.holding.get(other, {}).pop(side, None)
+            other_h.update({"state": "free", "note": "", "link": "", "ts": 0})
+
+    def _release_all_hands(self, actor_id: str):
+        for side in ("left", "right"):
+            self._detach_hand(actor_id, side)
+
+    def hands_of(self, actor_id: str) -> dict[str, dict]:
+        return {side: self._hand(actor_id, side) for side in ("left", "right")}
+
+    def hand_state(self, actor_id: str, side: str) -> str:
+        return self._hand(actor_id, side)["state"]
+
+    def hand_label(self, actor_id: str, side: str) -> str:
         name = "左手" if side == "left" else "右手"
-        st = self.hands[side]["state"]
-        note = self.hands[side].get("note") or ""
+        h = self._hand(actor_id, side)
+        st, note = h["state"], h.get("note") or ""
         if st == "bound":
             return f"{name}: 被束缚" + (f"({note})" if note else "")
+        if st == "held":
+            return f"{name}: {note or '被握住'}"
         if st == "holding":
             return f"{name}: {note or '握住'}"
+        if st == "used":
+            return f"{name}: {note or '刚刚用过'}"
         return f"{name}: 自由"
 
-    def queue_hand_action(self, hand: str, target_id: str, target_name: str, part: str, text: str,
-                          msg_count: int | None = None, secret: bool = False) -> str:
+    def hands_brief(self, actor_id: str) -> str:
+        return "、".join(self.hand_label(actor_id, s).replace(": ", "")
+                         for s in ("left", "right"))
+
+    def available_hands(self, actor_id: str) -> list[str]:
+        """自由 / 握住 / 刚用过的手都能脱离原动作再作新动作；被束缚或被别人牵着的不行。"""
+        return [side for side in ("left", "right")
+                if self._hand(actor_id, side)["state"] not in ("bound", "held")]
+
+    def holding_of(self, actor_id: str, side: str) -> str:
+        if self._hand(actor_id, side)["state"] != "holding":
+            return ""
+        return (self.holding.get(actor_id) or {}).get(side) or ""
+
+    def pending_of(self, actor_id: str) -> list[dict]:
+        return list(self.pending.get(actor_id) or [])
+
+    def queue_hand_action(self, actor_id: str, hand: str, target_id: str, target_name: str, part: str,
+                          text: str, msg_count: int | None = None, secret: bool = False) -> str:
         clean_part = str(part or "").strip()[:30]
         is_gaze = (clean_part in ("gaze", "目光注视") or hand == "gaze")
         channel = "gaze" if is_gaze else hand
         if channel not in ("left", "right", "gaze"):
             return "请指定左手或右手"
+        if target_id and target_id == actor_id:
+            return tr("不能对自己使用动作。")
         if channel in ("left", "right"):
-            if self.hands[channel]["state"] == "bound":
+            st = self.hand_state(actor_id, channel)
+            if st == "bound":
                 return "这只手正被束缚着，暂时无法行动"
+            if st == "held":
+                return tr("这只手正被拉着，先抽回来才能做别的动作。")
             if clean_part != "设施" and target_id in self.occupants:
-                if self.occupants.get("user") != self.occupants.get(target_id):
+                if self.occupants.get(actor_id) != self.occupants.get(target_id):
                     return "对方不在你当前所在的房间"
-                if self.position_of("user") != self.position_of(target_id):
+                if self.position_of(actor_id) != self.position_of(target_id):
                     return "你和对方不在同一个位置，需先走到对方身边才能使用动作"
         if msg_count is not None and clean_part != "设施":
-            ok, req = part_allowed(clean_part, msg_count)
+            ok, _req = part_allowed(clean_part, msg_count)
             if not ok:
                 return tr("「{part}」暂未解锁，再多聊一些吧。", part=clean_part)
         clean_text = str(text or "").strip()[:300]
 
         # 自由或握住状态的手安排新动作时自动脱离原握持；左手、右手、目光各自独立且可同时共存
-        if channel == "gaze":
-            self.pending_actions = [a for a in self.pending_actions if a.get("hand") != "gaze"]
-        else:
-            if self.hands[channel]["state"] == "holding":
-                self.holding_hands[channel] = ""
-                self.hands[channel] = {"state": "free", "note": ""}
-            self.pending_actions = [a for a in self.pending_actions if a.get("hand") != channel]
-
-        self.pending_actions.append({
+        if channel in ("left", "right"):
+            self._detach_hand(actor_id, channel)
+        acts = [a for a in (self.pending.get(actor_id) or []) if a.get("hand") != channel]
+        acts.append({
             "hand": channel,
             "target_id": target_id,
             "target_name": target_name,
@@ -1108,28 +1751,56 @@ class RoomStore:
             "text": clean_text,
             "secret": bool(secret),
         })
+        self.pending[actor_id] = acts
         return ""
 
-    def remove_pending_action(self, index: int):
-        if 0 <= index < len(self.pending_actions):
-            self.pending_actions.pop(index)
+    def remove_pending_action(self, actor_id: str, index: int):
+        acts = self.pending.get(actor_id) or []
+        if 0 <= index < len(acts):
+            acts.pop(index)
+        self.pending[actor_id] = acts
 
-    def set_hand_bound(self, side: str, bound: bool, note: str = ""):
+    def take_pending(self, actor_id: str, actor_name: str = "") -> list[dict]:
+        """取走该实体这一轮的待发动作，并把它用到的手标记成「刚刚用过」（对方相应部位同步）。"""
+        acts = self.pending.pop(actor_id, []) or []
+        now = int(time.time() * 1000)
+        who = actor_name or ("你" if actor_id == "user" else actor_id)
+        for a in acts:
+            channel = a.get("hand")
+            part = str(a.get("part") or "")
+            if channel not in ("left", "right"):
+                continue
+            note = "设施互动" if part == "设施" else f"→{a.get('target_name') or ''}·{part}"
+            self._set_hand(actor_id, channel, "used", note, ts=now)
+            target = str(a.get("target_id") or "")
+            side = HAND_TARGET_SIDES.get(part)
+            if not target or target == actor_id or side is None or part == "牵手带走":
+                continue
+            target_side = side or channel
+            if self._hand(target, target_side)["state"] in ("free", "used"):
+                self._set_hand(target, target_side, "used", f"{who}·{part}", ts=now)
+                self.raise_attention(target, ATTENTION_TOUCH, now)
+        return acts
+
+    def set_hand_bound(self, actor_id: str, side: str, bound: bool, note: str = ""):
         sides = ("left", "right") if side == "both" else ((side,) if side in ("left", "right") else ())
+        if sides:
+            self.raise_attention(actor_id, ATTENTION_TOUCH)
         for s in sides:
             if bound:
-                self.holding_hands[s] = ""
-                self.hands[s] = {"state": "bound", "note": str(note or "")[:40]}
-                self.pending_actions = [a for a in self.pending_actions if a.get("hand") not in (s, "both")]
-            elif self.hands[s]["state"] == "bound":
-                self.hands[s] = {"state": "free", "note": ""}
+                self._detach_hand(actor_id, s)
+                self.pending[actor_id] = [a for a in (self.pending.get(actor_id) or [])
+                                          if a.get("hand") not in (s, "both")]
+                self._set_hand(actor_id, s, "bound", note)
+            elif self._hand(actor_id, s)["state"] == "bound":
+                self._set_hand(actor_id, s, "free", "")
         self.save()
 
-    def reset_turn_hands(self, save: bool = True, advance_turn: bool = False):
-        self.pending_actions = []
+    def reset_turn_hands(self, actor_id: str, save: bool = True):
+        self.pending[actor_id] = []
         for side in ("left", "right"):
-            if self.hands[side]["state"] not in ("free", "holding", "bound"):
-                self.hands[side] = {"state": "free", "note": ""}
+            if self._hand(actor_id, side)["state"] == "used":
+                self._set_hand(actor_id, side, "free", "")
         if save:
             self.save()
 
@@ -1141,7 +1812,9 @@ class RoomStore:
         clean_targets = [str(t) for t in (targets or ["all"]) if str(t)]
         if not clean_targets:
             clean_targets = ["all"]
-        vol = "whisper" if str(volume or "").lower() == "whisper" else "normal"
+        vol = str(volume or "").lower()
+        if vol not in VOLUMES:
+            vol = "normal"
         entry = {
             "id": uuid.uuid4().hex[:10],
             "ts": int(time.time() * 1000),
@@ -1155,6 +1828,9 @@ class RoomStore:
             "text": str(text or "").strip(),
             "actions": list(actions or []),
         }
+        if vol == "shout" and kind in ("say", "action"):
+            entry["spill"] = self.neighbors(room_id)      # 隔壁房间也听得见
+            self._annoy_quiet_ones(room_id, sender, sender_name)
         self.logs.append(entry)
         self._bump_room_counts(room_id, sender, clean_targets, kind)
         if len(self.logs) > MAX_ROOM_LOGS:
@@ -1162,13 +1838,57 @@ class RoomStore:
         self.save()
         return entry
 
+    def _annoy_quiet_ones(self, room_id: str, sender: str, sender_name: str):
+        """大声喊到正在看书 / 弹琴 / 休息的人：记一段不快，并留一句话。"""
+        now = _ms_now()
+        for aid in self.occupants_in(room_id):
+            if aid == sender or aid == "user":
+                continue
+            act = self.activities.get(aid) or {}
+            if int(act.get("until") or 0) <= now or act.get("label") not in QUIET_LABELS:
+                continue
+            self.moods[aid] = {"label": "被吵到", "until": now + MOOD_MINUTES * 60_000, "reason": sender_name}
+            self.append_log(room_id, "sys", "系统", ["all"], "sys",
+                            tr("{who} 被这一声吼得皱起眉，手上的{act}停了一下。",
+                               who=self.name_of(aid), act=act.get("label") or tr("事")))
+
+    def name_of(self, actor_id: str) -> str:
+        if actor_id == "user":
+            return self.name_map.get("user") or "你"
+        return self.name_map.get(actor_id) or actor_id
+
+    def mood_of(self, actor_id: str, now_ms: int = None) -> dict:
+        mood = self.moods.get(actor_id)
+        if not mood:
+            return {}
+        if int(mood.get("until") or 0) <= _ms_now(now_ms):
+            self.moods.pop(actor_id, None)
+            return {}
+        return dict(mood)
+
     def can_hear(self, entry: dict, actor_id: str) -> bool:
         if entry.get("kind") in ("sys", "move"):
             return True
         if entry.get("sender") == actor_id:
             return True
+        if self.spills_to(entry, self.occupants.get(actor_id) or ""):
+            return True
         targets = entry.get("targets") or []
         return "all" in targets or actor_id in targets
+
+    def spills_to(self, entry: dict, room_id: str) -> bool:
+        """大声呼喊从隔壁房间传过来的记录：只有被传到的房间看得见，且能看出是从哪传来的。"""
+        if not room_id or entry.get("volume") != "shout":
+            return False
+        return room_id in (entry.get("spill") or [])
+
+    def entry_for_room(self, entry: dict, room_id: str) -> dict:
+        """同一个记录在不同房间里看：在声源房间之外时标上 from_room，前端与提示词据此说明是隔墙传来的。"""
+        item = dict(entry)
+        item.pop("spill", None)
+        if entry.get("room_id") != room_id:
+            item["from_room"] = (self.rooms.get(entry.get("room_id")) or {}).get("name", "")
+        return item
 
     def visible_actions_for(self, entry: dict, actor_id: str) -> list[dict]:
         """同一房间内公开动作人人可见；标记为 secret 的隐秘接触仅发起者与被接触者可见。"""
@@ -1182,19 +1902,20 @@ class RoomStore:
         return out
 
     def visible_logs_for(self, actor_id: str, room_id: str, limit: int = 35) -> list[dict]:
-        """返回房间内该角色能听见或看见的记录（非隐秘动作全房可见，隐秘接触仅双方可见，轻语仅同位置可听）。"""
+        """返回房间内该角色能听见或看见的记录（非隐秘动作全房可见，隐秘接触仅双方可见，轻语仅同位置可听；大声呼喊隔壁也能听到）。"""
         out = []
         for e in self.logs:
-            if e.get("room_id") != room_id:
+            in_room = e.get("room_id") == room_id
+            if not in_room and not self.spills_to(e, room_id):
                 continue
             if e.get("kind") in ("sys", "move"):
-                out.append(e)
+                out.append(e if in_room else self.entry_for_room(e, room_id))
                 continue
-            can_hear_speech = self.can_hear(e, actor_id)
-            vis_acts = self.visible_actions_for(e, actor_id)
+            can_hear_speech = self.can_hear(e, actor_id) if in_room else self.spills_to(e, room_id)
+            vis_acts = self.visible_actions_for(e, actor_id) if in_room else []
             if not can_hear_speech and not vis_acts:
                 continue
-            item = dict(e)
+            item = self.entry_for_room(e, room_id) if not in_room else dict(e)
             item["actions"] = vis_acts
             if not can_hear_speech:
                 item["text"] = ""
@@ -1228,9 +1949,11 @@ class RoomStore:
 
     def user_display_logs(self, room_id: str, name_map: dict[str, str], limit: int = 120) -> list[dict]:
         out = []
-        for e in [x for x in self.logs if x.get("room_id") == room_id][-limit:]:
-            if self.can_hear(e, "user"):
-                item = dict(e)
+        picked = [x for x in self.logs if x.get("room_id") == room_id or self.spills_to(x, room_id)]
+        for e in picked[-limit:]:
+            spilled = e.get("room_id") != room_id
+            if self.can_hear(e, "user") or spilled:
+                item = self.entry_for_room(e, room_id) if spilled else dict(e)
                 item["redacted"] = False
                 out.append(item)
             else:
@@ -1309,13 +2032,17 @@ def parse_generated_room(reply_text: str, fallback_theme: str = "自定义场景
 def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, actor_id: str, actor_name: str,
                             all_names: dict[str, str], visible_logs: list[dict],
                             trigger_reason: str = "user",
-                            memory_block: str = "", phone_history: str = "") -> tuple[str, list[dict]]:
+                            memory_block: str = "", phone_history: str = "",
+                            extra_note: str = "", awareness: str = "") -> tuple[str, list[dict]]:
     occ_ids = store.occupants_in(room["id"])
     occ_desc = "、".join(
         f"{all_names.get(aid, aid)}(id={aid}, 位置={store.position_of(aid)})"
         for aid in occ_ids
     )
-    hand_desc = f"用户左手={store.hand_label('left')}, 用户右手={store.hand_label('right')}"
+    hand_desc = "；".join(
+        f"{all_names.get(aid, aid)}：{store.hands_brief(aid)}" for aid in occ_ids
+    )
+    part_desc = "、".join(f"{lbl}({req}条)" if req else lbl for _pid, lbl, req in BODY_PARTS)
     map_text = "\n".join(room.get("ascii_map") or [])
 
     world_lines = []
@@ -1332,32 +2059,44 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
         f"氛围：{room.get('ambience', '')}\n"
         f"本房间在场成员与位置：{occ_desc}\n"
         f"你的身份：{actor_name}(id={actor_id})\n"
-        f"用户双手状态（同一房间内公开可见，包括牵手与小动作）：{hand_desc}\n"
+        f"所有在场成员（包括你与用户）的双手状态（同一房间内公开可见）：{hand_desc}\n"
         f"房间字符画地图：\n{map_text}\n\n"
         "【世界房间列表】\n" + "\n".join(world_lines) + "\n\n"
         "【规则】\n"
         "1. 原来的沟通页面代表手机聊天（可以随时私发给任何人）；而这里是面对面的现实房间空间，无法随意屏蔽某人，只能通过音量控制：\n"
         "   - volume=\"normal\"（正常音量）：房间里所有人都能听见。\n"
         "   - volume=\"whisper\"（轻语）：只有和你处于【同一室内位置】的人能听见，其他位置的人听不清。\n"
+        "   - volume=\"shout\"（大声呼喊）：整个房间都听得见，隔壁的房间也听得见；正在看书 / 弹琴 / 休息的人会被吵到，不会高兴。\n"
         "2. 同一房间内的公开动作（牵手、移动位置、小动作等）大家都看得到；标注了[隐秘]的身体接触只有双方知道，旁人看不见。\n"
         "3. 为避免显得话多，如果你只是在旁边看着、或者此刻不需要插话，请把 silent 设为 true（此时 speech 留空，不发消息打扰）。\n"
         "4. 你可以结合当前位置（如墙边、椅子、沙发、钢琴旁）做位置相关互动，并用 position 字段更新你的室内位置。\n"
         "5. 如果用户言语请求你跟随同行，同意可将 follow 设为 \"user\"（取消跟随设为 \"none\"，不变为 null）。\n"
-        "6. 你可以自行移动去公共房间或有钥匙且未反锁的房间（move_to 填房间 id）；若想把用户一起带去那个房间，可将 bring_user 设为 true。\n"
-        "7. 当用户明确提出牵手、拉着一起走/带走，或你按当前关系与情境自然决定牵住用户时，用 hold_hand 填 left 或 right；按用户要求松开时填 release；没有牵手意图时必须为 null。只能选择用户当前可用且未被束缚的手，且需同室同位置、互动累计达到牵手门槛。这个字段就是牵手带走的唯一触发方式，不要要求用户点击按钮。\n"
-        "8. 若不想被打扰可将 lock_door 设为 true 从内部反锁（false 解锁，null 不变）；分钥匙可填 give_key: {\"room_id\": \"...\", \"to\": \"user\"}。\n"
-        "9. 请严格只输出一个 JSON 对象，保持你原本的人设语气：\n"
+        "6. 房间之间靠门相连，只有相连的房间才能走过去（move_to 填房间 id；隔了几间房的会依次穿过中间的房间）。"
+        "门只有站在房间的里侧才能反锁；若想把用户一起带去那个房间，可将 bring_user 设为 true。\n"
+        f"7. 你和房间里每个人都是平等的实体，可以用 actions 数组对任何一个同房间同位置的成员（包括用户）做手部或目光动作，与用户能做的动作完全一样。每项格式：{{\"hand\": \"left|right|gaze\", \"target\": \"成员 id\", \"part\": \"部位\", \"text\": \"动作描写\", \"secret\": false}}。可用部位：{part_desc}；part 写“设施”表示触碰设施而不针对人。left/right 的手必须能自由活动（被束缚或被别人牵着的手不行）；部位门槛按你与该成员累计互动条数计算，未达门槛的动作会被系统拒绝。最多三项，每个手/目光各占一个槽位。\n"
+        "8. 当用户明确提出牵手、拉着一起走/带走，或你按当前关系与情境自然决定牵住某人时，用 hold_hand 填 left 或 right（默认牵用户，可加 hold_target 指定同房间同位置的其他成员），按用户要求松开时填 release；没有牵手意图时必须为 null。只能选择双方当前可用且未被束缚的手，且需同室同位置、互动累计达到牵手门槛。这个字段就是牵手带走的唯一触发方式，不要要求用户点击按钮。\n"
+        "9. 若不想被打扰可将 lock_door 设为 true 从内部反锁（false 解锁，null 不变）；分钥匙可填 give_key: {\"room_id\": \"...\", \"to\": \"user\"}；把某人的双手束缚/放开可填 bind_hands（left / right / both / release，默认对象是用户，可加 bind_target 指定）。\n"
+        "10. 请严格只输出一个 JSON 对象，保持你原本的人设语气：\n"
         '{"silent": false, "volume": "normal", "action": "简短动作描写(可为空)", "speech": "你的台词(可为空)", '
-        '"position": null, "bind_hands": null, "hold_hand": null, "follow": null, "move_to": null, "bring_user": false, "lock_door": null, "give_key": null}'
+        '"actions": [], "position": null, "bind_hands": null, "bind_target": null, "hold_hand": null, "hold_target": null, "follow": null, "move_to": null, "bring_user": false, "lock_door": null, "give_key": null}'
     )
     system = (persona_sys or f"你正在扮演 {actor_name}。") + (memory_block or "") + room_guide
+    if str(awareness or "").strip():
+        system += "\n\n" + awareness.strip()
 
     history_lines = []
     for e in visible_logs:
         if e.get("kind") in ("sys", "move"):
             history_lines.append(f"* {e['text']}")
         else:
-            vol_tag = f"[在「{e.get('pos') or '原处'}」轻语]" if e.get("volume") == "whisper" else "[正常音量]"
+            if e.get("volume") == "whisper":
+                vol_tag = f"[在「{e.get('pos') or '原处'}」轻语]"
+            elif e.get("volume") == "shout":
+                vol_tag = "[大声呼喊]"
+            else:
+                vol_tag = "[正常音量]"
+            if e.get("from_room"):
+                vol_tag = f"[从「{e.get('from_room')}」隔墙传来{vol_tag}]"
             acts = e.get("actions") or []
             act_txt = "；".join(
                 f"[{ACTION_CHANNEL_LABELS.get(a.get('hand'), '手部')}{'·隐秘' if a.get('secret') else ''}→{a.get('target_name')}·{a.get('part')}] {a.get('text')}"
@@ -1371,25 +2110,65 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
         f"【最近手机聊天记录（沟通页上下文）】\n{phone_history.strip()}\n\n"
         if str(phone_history or "").strip() else ""
     )
-    if trigger_reason == "auto":
+    note_block = f"{extra_note.strip()}\n\n" if str(extra_note or "").strip() else ""
+    if trigger_reason == "summon":
         prompt = (
+            f"{note_block}"
+            f"{phone_block}"
+            f"【房间近期记录】\n{hist_block}\n\n"
+            "有人刚才叫了你的名字。你现在不在对方所在的房间，也不是你随口说话的时候。"
+            "请按人设与手上的事决定：愿意过去就用 move_to 填对方所在的房间 id 走过去（走过去后正常说话即可）；"
+            "若门锁着、或你此刻不打算过去，就设 silent=true；也可以只在原地换个位置。不要假装听见了房间里的对话。"
+        )
+    elif trigger_reason == "auto":
+        prompt = (
+            f"{note_block}"
             f"{phone_block}"
             f"【房间近期记录】\n{hist_block}\n\n"
             "现在过了一小会儿。请根据当前上下文、位置与你的人设，自然决定要不要开口、换位置或移动；如果觉得没必要打扰可以设 silent=true。"
         )
     elif trigger_reason == "observe":
         prompt = (
+            f"{note_block}"
             f"{phone_block}"
             f"【房间近期记录】\n{hist_block}\n\n"
             "你刚刚看到了房间里发生的新动作或状态变化。如果符合你的人设想给出反应就回应；如果没必要出声、只是默默看在眼里，请设 silent=true 避免话多。"
         )
     else:
         prompt = (
+            f"{note_block}"
             f"{phone_block}"
             f"【房间近期记录】\n{hist_block}\n\n"
-            "请按你的人设回应当前互动，并决定说话音量（normal 或 whisper）；若此刻选择沉默可设 silent=true。"
+            "请按你的人设回应当前互动，并决定说话音量（normal / whisper / shout，大声呼喊会吵到隔壁）；若此刻选择沉默可设 silent=true。"
         )
     return system, [{"role": "user", "content": prompt}]
+
+
+def _parse_actor_actions(raw, valid_ids: set[str], default_target: str = "user") -> list[dict]:
+    """解析角色回合里的 actions（手部 / 目光动作），格式与用户在界面里排的动作完全一致。"""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:3]:
+        if not isinstance(item, dict):
+            continue
+        hand = str(item.get("hand") or "").strip().lower()
+        part = str(item.get("part") or "").strip()[:30]
+        if hand == "gaze" or part in ("gaze", "目光注视"):
+            hand, part = "gaze", "目光注视"
+        elif hand not in ("left", "right") or not part:
+            continue
+        target = str(item.get("target") or item.get("target_id") or default_target).strip()
+        if valid_ids and target not in valid_ids:
+            continue
+        out.append({
+            "hand": hand,
+            "target_id": target,
+            "part": part,
+            "text": str(item.get("text") or "").strip()[:200],
+            "secret": bool(item.get("secret", False)),
+        })
+    return out
 
 
 def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str] = None,
@@ -1397,7 +2176,7 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
     obj = _extract_json(reply_text)
     if obj:
         vol = str(obj.get("volume") or "normal").strip().lower()
-        if vol not in ("normal", "whisper"):
+        if vol not in VOLUMES:
             vol = "normal"
         silent = bool(obj.get("silent", False))
         bind = obj.get("bind_hands")
@@ -1406,6 +2185,12 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
         hold_hand = obj.get("hold_hand")
         if hold_hand not in ("left", "right", "release"):
             hold_hand = None
+        hold_target = str(obj.get("hold_target") or "").strip()
+        if hold_target and valid_ids and hold_target not in valid_ids:
+            hold_target = ""
+        bind_target = str(obj.get("bind_target") or "").strip()
+        if bind_target and valid_ids and bind_target not in valid_ids:
+            bind_target = ""
         move_to = str(obj.get("move_to") or "").strip() or None
         if move_to and valid_rooms is not None and move_to not in valid_rooms:
             move_to = None
@@ -1426,9 +2211,12 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
             "volume": vol,
             "action": str(obj.get("action") or "").strip()[:240],
             "speech": "" if silent else str(obj.get("speech") or "").strip()[:1200],
+            "actions": _parse_actor_actions(obj.get("actions"), valid_ids, default_target),
             "position": position,
             "bind_hands": bind,
+            "bind_target": bind_target or None,
             "hold_hand": hold_hand,
+            "hold_target": hold_target or None,
             "follow": follow,
             "move_to": move_to,
             "bring_user": bool(obj.get("bring_user", False)),
@@ -1440,9 +2228,12 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
         "volume": "normal",
         "action": "",
         "speech": str(reply_text or "").strip()[:1200],
+        "actions": [],
         "position": None,
         "bind_hands": None,
+        "bind_target": None,
         "hold_hand": None,
+        "hold_target": None,
         "follow": None,
         "move_to": None,
         "bring_user": False,
@@ -1451,10 +2242,16 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
     }
 
 
-def pick_auto_speaker(store: RoomStore, room_id: str, busy_ids: set[str],
-                      enabled: bool, prob_pct: int, rng=None,
-                      include_other_rooms: bool = False,
-                      blocked_ids: set[str] = None) -> tuple[str, str] | None:
+def auto_step_plan(store: RoomStore, room_id: str, busy_ids: set[str],
+                   enabled: bool, prob_pct: int, rng=None,
+                   include_other_rooms: bool = False,
+                   blocked_ids: set[str] = None,
+                   now_ms: int = None,
+                   per_hour: int = None) -> tuple[str, str, str] | None:
+    """一次自动触发该走哪条路：("model", 实体, 房间) 让模型接管，或 ("system", 实体, 房间) 系统打理生活。
+
+    注意力在阈值之上且这一小时还有自主额度的人才让模型说话；否则由系统随机活动，不调 API。
+    """
     if not enabled:
         return None
     r = rng or random
@@ -1468,7 +2265,45 @@ def pick_auto_speaker(store: RoomStore, room_id: str, busy_ids: set[str],
         candidates = [(aid, room_id) for aid in store.occupants_in(room_id) if aid != "user" and aid not in skip]
     if not candidates:
         return None
-    return r.choice(candidates)
+    awake = [c for c in candidates
+             if store.awake(c[0], now_ms) and store.auto_budget_left(c[0], now_ms, per_hour) > 0]
+    if awake:
+        aid, rid = r.choice(awake)
+        return "model", aid, rid
+    aid, rid = r.choice(candidates)
+    return "system", aid, rid
+
+
+def summon_targets(store: RoomStore, text: str, name_map: dict[str, str]) -> list[str]:
+    """在用户的话里找出被叫到名字的实体（按出现先后排序）：标题、标题里的别名、文件名主干都算。"""
+    raw = str(text or "")
+    if not raw:
+        return []
+    low = raw.casefold()
+    found = []
+    for aid in store.occupants:
+        if aid == "user":
+            continue
+        cands = []
+        title = str(name_map.get(aid) or "").strip()
+        if title:
+            cands.extend([title, title.split()[0]])
+            cands.extend(part.strip(" \t（）()【】[]") for part in re.split(r"[（(·/／]| - ", title))
+        stem = os.path.splitext(aid)[0]
+        if stem:
+            cands.append(stem)
+        pos = 0
+        for cand in cands:
+            clean = str(cand or "").strip()
+            if len(clean) < 2:
+                continue
+            idx = low.find(clean.casefold())
+            if idx >= 0 and (not pos or idx + 1 < pos):
+                pos = idx + 1
+        if pos:
+            found.append((pos, aid))
+    found.sort()
+    return [aid for _pos, aid in found]
 
 
 def phone_room_status_note(store: RoomStore, actor_id: str, actor_name: str,
@@ -1488,6 +2323,8 @@ def phone_room_status_note(store: RoomStore, actor_id: str, actor_name: str,
         tag = "公共" if r.get("is_public") else ("有钥匙" if store.has_key(actor_id, r["id"]) else "无钥匙")
         if r.get("locked_inside"):
             tag += "·已反锁"
+        if r["id"] not in store.neighbors(my_rid) and r["id"] != my_rid:
+            tag += "·不相连"
         rooms_brief.append(f"{r['name']}(id={r['id']},{tag},{'可进' if ok else '不可进'})")
 
     recent_lines = []
@@ -1508,36 +2345,53 @@ def phone_room_status_note(store: RoomStore, actor_id: str, actor_name: str,
             )
             body = f"{act_txt} {e.get('text', '')}".strip()[:220]
             if body:
-                vol_s = "（轻语）" if e.get("volume") == "whisper" else ""
+                if e.get("volume") == "whisper":
+                    vol_s = "（轻语）"
+                elif e.get("volume") == "shout":
+                    vol_s = "（大声呼喊）"
+                else:
+                    vol_s = ""
                 recent_lines.append(f"- {prefix} {e.get('sender_name') or e.get('sender')}{vol_s}: {body}")
 
     recent_block = (
         "\n近期小屋互动记录（你听见或亲历的部分，与当前手机聊天属于同一时间线）：\n" + "\n".join(recent_lines)
         if recent_lines else ""
     )
+    # 手部状态只在有人被牵着/束缚（即不是两只手都自由）时才写，避免提示词凭空变长
+    hands_bits = []
+    for aid in (actor_id, "user"):
+        if all(store.hand_state(aid, s) in ("free", "used") for s in ("left", "right")):
+            continue
+        who = "你" if aid == actor_id else "用户"
+        hands_bits.append(f"{who}双手：{store.hands_brief(aid)}")
+    hands_block = ("　".join(hands_bits) + "\n") if hands_bits else ""
     return (
         "[OIT 小屋状态（手机聊天联动）]\n"
         f"你当前在小屋的「{my_room['name']}」(id={my_rid}，位置：{store.position_of(actor_id)}，"
         f"门锁：{'已从内部反锁' if my_room.get('locked_inside') else '未反锁'})；"
         f"用户当前在「{u_room['name']}」(id={u_rid}，位置：{store.position_of('user')})。\n"
+        f"{hands_block}"
         f"小屋房间：{'；'.join(rooms_brief)}。"
         f"{recent_block}\n"
-        "你此刻正通过手机与用户聊天；如果需要同时在小屋中移动房间、换室内位置、反锁/解锁房门、把你持有钥匙的房间钥匙分给用户或跟随用户，可调用 oit_room_action 工具。"
+        "你此刻正通过手机与用户聊天；如果需要同时在小屋中移动房间、换室内位置、反锁/解锁房门、把你持有钥匙的房间钥匙分给用户、跟随用户、"
+        "牵手或放开（hold_hand）、束缚用户的双手（bind_hands），或对同房间同位置的成员做和用户一样的手部 / 目光动作（actions），可调用 oit_room_action 工具。"
     )
 
 
 def execute_room_tool(store: RoomStore, actor_id: str, actor_name: str,
-                      args: dict, all_names: dict[str, str]) -> dict:
-    """在手机沟通页执行 oit_room_action 工具，安全校验门锁与钥匙规则。"""
+                      args: dict, all_names: dict[str, str],
+                      msg_count_of=None) -> dict:
+    """在手机沟通页执行 oit_room_action 工具，安全校验门锁、钥匙、牵手与手部动作。"""
     if not actor_id:
         return {"ok": False, "error": "当前未选择人设"}
     args = args if isinstance(args, dict) else {}
     results = []
     cur_rid = store.occupants.get(actor_id) or persona_room_id(actor_id)
+    count_of = msg_count_of if callable(msg_count_of) else store.pair_msg_count
 
     move_to = str(args.get("move_to") or "").strip()
     if move_to and move_to != cur_rid:
-        err = store.enter_room(actor_id, move_to, actor_name, name_map=all_names)
+        err = store.walk_to(actor_id, move_to, actor_name, name_map=all_names)
         if err:
             results.append(f"移动失败：{err}")
         else:
@@ -1556,6 +2410,49 @@ def execute_room_tool(store: RoomStore, actor_id: str, actor_name: str,
     elif fol == "user":
         store.set_following(actor_id, "user", actor_name, all_names.get("user", "你"))
         results.append("已开始跟随用户")
+
+    hold = str(args.get("hold_hand") or "").strip()
+    if hold == "release":
+        released = []
+        for side in ("left", "right"):
+            if store.hand_state(actor_id, side) in ("holding", "held"):
+                store.release_hand(actor_id, side, all_names, actor_name)
+                released.append("左手" if side == "left" else "右手")
+        results.append("已松开" + "、".join(released) if released else "当前没有牵手")
+    elif hold in ("left", "right"):
+        target = str(args.get("hold_target") or "user").strip() or "user"
+        err = store.hold_hand(actor_id, hold, target, actor_name,
+                              all_names.get(target, target), msg_count=count_of(actor_id, target))
+        if err:
+            results.append(f"牵手失败：{err}")
+        else:
+            results.append(f"已用{'左手' if hold == 'left' else '右手'}牵住 {all_names.get(target, target)} 的手")
+
+    bind = str(args.get("bind_hands") or "").strip()
+    if bind in ("left", "right", "both", "release"):
+        target = str(args.get("bind_target") or "user").strip() or "user"
+        if bind == "release":
+            store.set_hand_bound(target, "both", False)
+            results.append(f"已放开 {all_names.get(target, target)} 的双手")
+        else:
+            store.set_hand_bound(target, bind, True, actor_name)
+            results.append(f"已束缚 {all_names.get(target, target)} 的双手")
+
+    acts = _parse_actor_actions(args.get("actions"), set(all_names.keys()))
+    if acts:
+        for a in acts:
+            a["target_name"] = all_names.get(a["target_id"], a["target_id"])
+            err = store.queue_hand_action(actor_id, a["hand"], a["target_id"], a["target_name"],
+                                          a["part"], a["text"], msg_count=count_of(actor_id, a["target_id"]),
+                                          secret=a["secret"])
+            if err:
+                results.append(f"动作未执行：{err}")
+        done = store.take_pending(actor_id, actor_name)
+        if done:
+            room_id = store.occupants.get(actor_id) or cur_rid
+            store.append_log(room_id, actor_id, actor_name, ["all"], "action", "", actions=done,
+                             pos=store.position_of(actor_id))
+            results.append(f"已做出 {len(done)} 个手部 / 目光动作")
 
     gk_room = str(args.get("give_key_room") or "").strip()
     if gk_room:
@@ -1581,5 +2478,7 @@ def execute_room_tool(store: RoomStore, actor_id: str, actor_name: str,
         "current_room": room.get("name", cur_rid),
         "current_room_id": cur_rid,
         "position": store.position_of(actor_id),
+        "hands": store.hands_brief(actor_id),
+        "user_hands": store.hands_brief("user"),
         "locked_inside": bool(room.get("locked_inside", False)),
     }

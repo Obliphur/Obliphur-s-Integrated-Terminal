@@ -13,24 +13,46 @@ import config
 import toast
 from comm.comm_persona import list_personas, persona_system, persona_title
 from comm.comm_room import (
+    ACTION_CHANNEL_LABELS,
+    ATTENTION_SUMMON,
     BODY_PARTS,
     CUSTOM_PART_MIN_MSGS,
     HOLD_HAND_MIN_MSGS,
     RoomStore,
+    VOLUMES,
+    auto_step_plan,
     build_actor_turn_prompt,
     build_map_generation_prompt,
     parse_actor_reply,
     parse_generated_room,
     part_allowed,
-    pick_auto_speaker,
     position_interactions_for,
     render_room_map,
+    summon_targets,
 )
 from config import COLORS
 from i18n import tr
 from .room_web import RoomWebServer
 from .webview2_host import WebView2Host, is_webview2_available
 from .widgets import Modal, cfg
+
+
+def apply_room_vt(comm, actor_id: str, actions: list[dict]):
+    """小屋动作的 V/T 结算：施动方与受动方各自记一次（用户没有 V/T 档案，只结算人设一侧）。"""
+    if not comm or not hasattr(comm, "apply_room_action_vt"):
+        return
+    acts = [a for a in (actions or []) if a.get("part") != "设施"]
+    if not acts:
+        return
+    if actor_id and actor_id != "user":
+        comm.apply_room_action_vt(actor_id, acts)
+    by_target: dict[str, list[dict]] = {}
+    for a in acts:
+        tid = str(a.get("target_id") or "")
+        if tid and tid not in ("user", actor_id):
+            by_target.setdefault(tid, []).append(a)
+    for tid, t_acts in by_target.items():
+        comm.apply_room_action_vt(tid, t_acts)
 
 
 class RoomPage(tk.Frame):
@@ -86,6 +108,7 @@ class RoomPage(tk.Frame):
         personas = list_personas(self.comm.personas)
         plist = [(p, persona_title(p)) for p in personas]
         self.store.sync_personas(plist)
+        self.store.attn_half_min = max(1, int(self.comm.cfg.get("room_npc_idle_min") or 15))
         names = {p: title for p, title in plist}
         status_map = self._schedule_status_map(personas)
         self.store.sync_schedule_locks(status_map, names)
@@ -113,6 +136,20 @@ class RoomPage(tk.Frame):
         """与该角色的总互动条数 = 沟通记录条数（含分条气泡） + 房间内互动条数。"""
         chat_n = self.comm.msg_total_for(actor_id) if (self.comm and hasattr(self.comm, "msg_total_for")) else 0
         return chat_n + self.store.room_msg_count(actor_id)
+
+    def pair_msgs(self, a: str, b: str) -> int:
+        """任意两个实体的互动条数：与用户之间算聊天 + 小屋，角色之间按小屋累计。"""
+        if not a or not b or a == b:
+            return 0
+        if "user" in (a, b):
+            return self.total_msgs_with(b if a == "user" else a)
+        return self.store.pair_msg_count(a, b)
+
+    def _hands_tag(self, actor_id: str) -> str:
+        """在场成员的手部状态标签（被牵着 / 束缚 / 握着别人时才有内容）。"""
+        if all(self.store.hand_state(actor_id, s) in ("free", "used") for s in ("left", "right")):
+            return ""
+        return self.store.hands_brief(actor_id)
 
     # ══════════════ WebView2 原生内嵌与本地服务 ══════════════
 
@@ -320,6 +357,7 @@ class RoomPage(tk.Frame):
         occupants_pairs = [(aid, names.get(aid, aid)) for aid in occ_ids]
         map_text, hotspots = render_room_map(room, occupants_pairs)
         self._hotspots = hotspots
+        self.store.name_map = names
 
         sched = self._schedule_status_map()
         occ_list = []
@@ -328,17 +366,19 @@ class RoomPage(tk.Frame):
             is_me = (aid == "user")
             pos_tag = self.store.position_of(aid)
             act_tag = "" if is_me else self.store.activity_label(aid, schedule_kind=sched.get(aid, ""))
-            extras = [x for x in (pos_tag, act_tag) if x and x != "房间中央"]
+            extras = [x for x in (pos_tag, act_tag, self._hands_tag(aid)) if x and x != "房间中央"]
             suffix = f" ({' · '.join(extras)})" if extras else ""
             occ_list.append({
                 "id": aid,
                 "name": name,
                 "is_me": is_me,
+                "hands": self.store.hands_brief(aid),
                 "chip_text": f"@{name}" + (" [我]" if is_me else "") + suffix,
             })
 
         rooms = self.store.room_list()
         self._room_ids = [r["id"] for r in rooms]
+        here_neighbors = set(self.store.neighbors(rid))
         rooms_ui = []
         rooms_overview = []
         shareable_rooms = []
@@ -349,6 +389,8 @@ class RoomPage(tk.Frame):
                 "id": r["id"],
                 "name": r["name"],
                 "label": f"{badge} {r['name']} ({cnt}人)",
+                "linked": r["id"] in here_neighbors or r["id"] == rid,
+                "deletable": (not r.get("builtin")) and r["id"] != "lounge",
             })
             occ_txt = "、".join(names.get(a, a) for a in self.store.occupants_in(r["id"])) or tr("空")
             if r.get("is_public"):
@@ -358,7 +400,8 @@ class RoomPage(tk.Frame):
                 if self.store.has_key("user", r["id"]):
                     shareable_rooms.append({"id": r["id"], "name": r["name"]})
             lock_txt = tr(" [已内部反锁]") if r.get("locked_inside") else ""
-            rooms_overview.append(f"{badge} {r['name']}{lock_txt} — {key_txt} | 在场：{occ_txt}")
+            door_txt = self.store.rooms_brief(r["id"])
+            rooms_overview.append(f"{badge} {r['name']}{lock_txt} — {key_txt} | 门通向：{door_txt} | 在场：{occ_txt}")
 
         personas_ui = []
         if self.comm:
@@ -370,7 +413,7 @@ class RoomPage(tk.Frame):
         prob = int(self.comm.cfg.get("room_npc_prob") or 30) if self.comm else 30
         idle_m = int(self.comm.cfg.get("room_npc_idle_min") or 15) if self.comm else 15
         auto_status_text = (
-            tr("● 自动行动已开 ({s}s/{p}% · {m}m静默)", s=interval, p=prob, m=idle_m)
+            tr("● 自动行动已开 ({s}s/{p}% · 注意力半衰期 {m}m)", s=interval, p=prob, m=idle_m)
             if npc_on else tr("○ 自动行动未开 (点此设置)")
         )
 
@@ -382,6 +425,10 @@ class RoomPage(tk.Frame):
                 tr("仅「{pos}」可听：{who}", pos=pos, who="、".join(listeners))
                 if listeners else tr("仅「{pos}」可听（附近暂无其他人）", pos=pos)
             )
+        elif vol == "shout":
+            nbs = "、".join((self.store.rooms.get(n) or {}).get("name", n) for n in self.store.neighbors(rid))
+            vol_hint = (tr("隔壁也能听见：{who}（会吵到正在看书 / 弹琴的人）", who=nbs) if nbs
+                        else tr("大声呼喊会吵到正在看书 / 弹琴的人"))
         else:
             vol_hint = tr("房间内所有人都能听见")
 
@@ -419,10 +466,11 @@ class RoomPage(tk.Frame):
             "hotspots": hotspots,
             "occupants": occ_list,
             "hands": {
-                "left": {"state": self.store.hands["left"]["state"], "label": self.store.hand_label("left")},
-                "right": {"state": self.store.hands["right"]["state"], "label": self.store.hand_label("right")},
+                side: {"state": h["state"], "note": h.get("note") or "",
+                       "label": self.store.hand_label("user", side)}
+                for side, h in self.store.hands_of("user").items()
             },
-            "pending_actions": list(self.store.pending_actions),
+            "pending_actions": self.store.pending_of("user"),
             "logs": self.store.user_display_logs(rid, names),
             "volume": vol,
             "vol_hint": vol_hint,
@@ -430,6 +478,9 @@ class RoomPage(tk.Frame):
             "auto_status_text": auto_status_text,
             "busy_text": busy_text,
             "generating_map": self._generating_map,
+            "links": [{"id": n, "name": (self.store.rooms.get(n) or {}).get("name", n),
+                       "locked": bool(self.store.door_between(rid, n).get("locked"))}
+                      for n in self.store.neighbors(rid)],
         }
 
     def _handle_web_action(self, body: dict) -> dict:
@@ -462,11 +513,18 @@ class RoomPage(tk.Frame):
             return {"ok": True, "toast": tr("联合行动入口暂不可用。")}
         if atype == "switch_room":
             rid = str(body.get("room_id") or "")
-            err = self.store.enter_room("user", rid, self._actor_name("user"), name_map=self._persona_names())
+            err = self.store.walk_to("user", rid, self._actor_name("user"), name_map=self._persona_names())
             st = self._build_web_state()
             if err:
                 return {"ok": False, "toast": err, "warn": True, "state": st}
             return {"ok": True, "state": st}
+        if atype == "delete_room":
+            rid = str(body.get("room_id") or "")
+            done = self.store.delete_room(rid, "user")
+            st = self._build_web_state()
+            if not done:
+                return {"ok": False, "toast": tr("内置房间或公共客厅不能删除。"), "warn": True, "state": st}
+            return {"ok": True, "toast": tr("房间已删除，里面的人回到了公共客厅。"), "state": st}
         if atype == "toggle_lock":
             room = self.store.current_room()
             err = self.store.set_room_lock(room["id"], "user", not room.get("locked_inside"), self._actor_name("user"))
@@ -492,16 +550,18 @@ class RoomPage(tk.Frame):
             return {"ok": True, "state": self._build_web_state()}
         if atype == "release_hand":
             side = str(body.get("side") or "")
-            if side in ("left", "right") and self.store.hands[side]["state"] == "holding":
-                self.store.release_hand(side, self._persona_names())
+            if side in ("left", "right") and self.store.hand_state("user", side) in ("holding", "held"):
+                self.store.release_hand("user", side, self._persona_names(), self._actor_name("user"))
+                self._notify_room_action_change()
             return {"ok": True, "state": self._build_web_state()}
         if atype == "actor_interact_info":
             actor_id = str(body.get("actor_id") or "")
-            msg_count = self.total_msgs_with(actor_id)
+            msg_count = self.pair_msgs("user", actor_id)
             user_pos = self.store.position_of("user")
             target_pos = self.store.position_of(actor_id)
             pos_opts = position_interactions_for(user_pos, target_pos)
-            holding_side = next((s for s in ("left", "right") if self.store.holding_hands.get(s) == actor_id), "")
+            holding_side = next((s for s in ("left", "right")
+                                 if self.store.holding_of("user", s) == actor_id), "")
             parts = []
             for _pid, plabel, req in BODY_PARTS:
                 ok, _ = part_allowed(plabel, msg_count)
@@ -517,11 +577,12 @@ class RoomPage(tk.Frame):
                     "user_pos": user_pos,
                     "target_pos": target_pos,
                     "holding_side": holding_side,
-                    "available_hands": self.store.available_hands(),
+                    "available_hands": self.store.available_hands("user"),
                     "hands": {
-                        "left": {"state": self.store.hands["left"]["state"]},
-                        "right": {"state": self.store.hands["right"]["state"]},
+                        side: {"state": h["state"]}
+                        for side, h in self.store.hands_of("user").items()
                     },
+                    "target_hands": self.store.hands_brief(actor_id),
                     "parts": parts,
                     "pos_parts": pos_parts,
                     "custom_ok": msg_count >= CUSTOM_PART_MIN_MSGS,
@@ -544,11 +605,11 @@ class RoomPage(tk.Frame):
                 text = str(item.get("text") or "").strip()
                 secret = bool(item.get("secret", False))
                 if item.get("is_facility") or part == "设施":
-                    err = self.store.queue_hand_action(hand, target_id, target_name, "设施", text)
+                    err = self.store.queue_hand_action("user", hand, target_id, target_name, "设施", text)
                 else:
-                    msg_count = self.total_msgs_with(target_id)
+                    msg_count = self.pair_msgs("user", target_id)
                     err = self.store.queue_hand_action(
-                        hand, target_id, target_name, part, text, msg_count=msg_count, secret=secret
+                        "user", hand, target_id, target_name, part, text, msg_count=msg_count, secret=secret
                     )
                 if err:
                     return {"ok": False, "toast": tr(err), "warn": True, "state": self._build_web_state()}
@@ -563,22 +624,22 @@ class RoomPage(tk.Frame):
             text = str(body.get("text") or "").strip()
             secret = bool(body.get("secret", False))
             if body.get("is_facility"):
-                err = self.store.queue_hand_action(hand, target_id, target_name, "设施", text)
+                err = self.store.queue_hand_action("user", hand, target_id, target_name, "设施", text)
             else:
-                msg_count = self.total_msgs_with(target_id)
+                msg_count = self.pair_msgs("user", target_id)
                 err = self.store.queue_hand_action(
-                    hand, target_id, target_name, part, text, msg_count=msg_count, secret=secret
+                    "user", hand, target_id, target_name, part, text, msg_count=msg_count, secret=secret
                 )
             if err:
                 return {"ok": False, "toast": tr(err), "warn": True}
             return {"ok": True, "state": self._build_web_state()}
         if atype == "remove_pending":
             idx = int(body.get("index", -1))
-            self.store.remove_pending_action(idx)
+            self.store.remove_pending_action("user", idx)
             return {"ok": True, "state": self._build_web_state()}
         if atype == "set_volume":
             vol = str(body.get("volume") or "normal")
-            if vol in ("normal", "whisper"):
+            if vol in VOLUMES:
                 self._var_volume.set(vol)
             return {"ok": True, "state": self._build_web_state()}
         if atype == "send":
@@ -741,6 +802,8 @@ class RoomPage(tk.Frame):
                         command=self._update_volume_hint).pack(side="left", padx=(2, 8))
         ttk.Radiobutton(vol_bar, text=tr("轻语"), value="whisper", variable=self._var_volume,
                         command=self._update_volume_hint).pack(side="left", padx=(0, 8))
+        ttk.Radiobutton(vol_bar, text=tr("大声呼喊"), value="shout", variable=self._var_volume,
+                        command=self._update_volume_hint).pack(side="left", padx=(0, 8))
         self.lbl_vol_hint = tk.Label(vol_bar, text="", bg=card, fg=COLORS["text_dim"],
                                      font=config.font("small"), anchor="w")
         self.lbl_vol_hint.pack(side="left", fill="x", expand=True)
@@ -877,7 +940,7 @@ class RoomPage(tk.Frame):
         prob = int(self.comm.cfg.get("room_npc_prob") or 30) if self.comm else 30
         idle_m = int(self.comm.cfg.get("room_npc_idle_min") or 15) if self.comm else 15
         if npc_on:
-            cfg(self.lbl_auto_status, text=tr("● 自动行动已开 ({s}s/{p}% · {m}m静默)", s=interval, p=prob, m=idle_m),
+            cfg(self.lbl_auto_status, text=tr("● 自动行动已开 ({s}s/{p}% · 注意力半衰期 {m}m)", s=interval, p=prob, m=idle_m),
                 fg=COLORS["accent"])
         else:
             cfg(self.lbl_auto_status, text=tr("○ 自动行动未开 (点此设置)"), fg=COLORS["text_dim"])
@@ -942,7 +1005,7 @@ class RoomPage(tk.Frame):
             is_me = (aid == "user")
             pos_tag = self.store.position_of(aid)
             act_tag = "" if is_me else self.store.activity_label(aid, schedule_kind=sched.get(aid, ""))
-            extras = [x for x in (pos_tag, act_tag) if x and x != "房间中央"]
+            extras = [x for x in (pos_tag, act_tag, self._hands_tag(aid)) if x and x != "房间中央"]
             suffix = f" ({' · '.join(extras)})" if extras else ""
             chip_text = f"@{name}" + (" [我]" if is_me else "") + suffix
             lbl = tk.Label(
@@ -970,23 +1033,27 @@ class RoomPage(tk.Frame):
                 hint = tr("仅「{pos}」可听：{who}", pos=pos, who="、".join(listeners))
             else:
                 hint = tr("仅「{pos}」可听（附近暂无其他人）", pos=pos)
+        elif vol == "shout":
+            nbs = "、".join((self.store.rooms.get(n) or {}).get("name", n) for n in self.store.neighbors(rid))
+            hint = (tr("隔壁也能听见：{who}（会吵到正在看书 / 弹琴的人）", who=nbs) if nbs
+                    else tr("大声呼喊会吵到正在看书 / 弹琴的人"))
         else:
             hint = tr("房间内所有人都能听见")
         cfg(self.lbl_vol_hint, text=hint)
 
     def _render_hands(self):
         for side, lbl in (("left", self.lbl_left_hand), ("right", self.lbl_right_hand)):
-            st = self.store.hands[side]["state"]
-            fg = "#ef4444" if st == "bound" else (COLORS["accent"] if st == "used" else COLORS["text"])
-            cfg(lbl, text=f"[{self.store.hand_label(side)}]", fg=fg)
+            st = self.store.hand_state("user", side)
+            fg = "#ef4444" if st in ("bound", "held") else (COLORS["accent"] if st in ("used", "holding") else COLORS["text"])
+            cfg(lbl, text=f"[{self.store.hand_label('user', side)}]", fg=fg)
 
         for child in self.pending_frame.winfo_children():
             child.destroy()
-        for idx, act in enumerate(self.store.pending_actions):
+        for idx, act in enumerate(self.store.pending_of("user")):
             row = tk.Frame(self.pending_frame, bg=COLORS["bg"], highlightthickness=1,
                            highlightbackground=COLORS["border"])
             row.pack(fill="x", pady=1)
-            hand_txt = "左手" if act["hand"] == "left" else "右手"
+            hand_txt = ACTION_CHANNEL_LABELS.get(act["hand"], "手部")
             sec_txt = "·隐秘" if act.get("secret") else ""
             txt = f"[{hand_txt}{sec_txt} → {act['target_name']}·{act['part']}] {act['text']}"
             tk.Label(row, text=txt, bg=COLORS["bg"], fg=COLORS["accent"],
@@ -997,18 +1064,18 @@ class RoomPage(tk.Frame):
             xbtn.bind("<Button-1>", lambda _e, i=idx: self._remove_pending(i))
 
     def _remove_pending(self, idx: int):
-        self.store.remove_pending_action(idx)
+        self.store.remove_pending_action("user", idx)
         self._render_hands()
 
     def _toggle_hand_bind(self, side: str):
-        st = self.store.hands[side]["state"]
-        if st == "holding":
-            self.store.release_hand(side, self._persona_names())
+        st = self.store.hand_state("user", side)
+        if st in ("holding", "held"):
+            self.store.release_hand("user", side, self._persona_names(), self._actor_name("user"))
             self.refresh()
             self._notify_room_action_change()
             return
         cur_bound = (st == "bound")
-        self.store.set_hand_bound(side, not cur_bound, note="束缚" if not cur_bound else "")
+        self.store.set_hand_bound("user", side, not cur_bound, note="束缚" if not cur_bound else "")
         self._render_hands()
 
     def _render_logs(self, room_id: str, names: dict[str, str]):
@@ -1028,11 +1095,15 @@ class RoomPage(tk.Frame):
                 tag = "who_me" if e.get("sender") == "user" else "who_npc"
                 if e.get("volume") == "whisper":
                     header = f"{e['sender_name']}（在「{e.get('pos') or '原处'}」轻语）：\n"
+                elif e.get("volume") == "shout":
+                    header = f"{e['sender_name']}（大声呼喊）：\n"
                 else:
                     header = f"{e['sender_name']}：\n"
+                if e.get("from_room"):
+                    header = f"[从「{e['from_room']}」隔墙传来] " + header
                 w.insert("end", header, tag)
                 for a in e.get("actions") or []:
-                    h = "左手" if a.get("hand") == "left" else "右手"
+                    h = ACTION_CHANNEL_LABELS.get(a.get("hand"), "手部")
                     sec = "·隐秘" if a.get("secret") else ""
                     w.insert("end", f"  [{h}{sec}→{a.get('target_name')}·{a.get('part')}] {a.get('text')}\n", "act")
                 if e.get("text"):
@@ -1134,7 +1205,7 @@ class RoomPage(tk.Frame):
             self._switch_user_room(self._room_ids[idx])
 
     def _switch_user_room(self, room_id: str):
-        err = self.store.enter_room("user", room_id, self._actor_name("user"), name_map=self._persona_names())
+        err = self.store.walk_to("user", room_id, self._actor_name("user"), name_map=self._persona_names())
         if err:
             toast.warn(err)
             self.refresh()
@@ -1144,12 +1215,12 @@ class RoomPage(tk.Frame):
     # ══════════════ 部位互动弹窗（按条数解锁） ══════════════
 
     def _open_actor_interact(self, actor_id: str, actor_name: str):
-        avail = self.store.available_hands()
-        msg_count = self.total_msgs_with(actor_id)
+        avail = self.store.available_hands("user")
+        msg_count = self.pair_msgs("user", actor_id)
         user_pos = self.store.position_of("user")
         target_pos = self.store.position_of(actor_id)
         pos_opts = position_interactions_for(user_pos, target_pos)
-        holding_side = next((s for s in ("left", "right") if self.store.holding_hands.get(s) == actor_id), "")
+        holding_side = next((s for s in ("left", "right") if self.store.holding_of("user", s) == actor_id), "")
         bg = COLORS["bg"]
         dlg = Modal(self.winfo_toplevel(), tr("与 {name} 互动", name=actor_name),
                     width=config.scaled(540), height=config.scaled(540 if pos_opts else 490))
@@ -1159,6 +1230,8 @@ class RoomPage(tk.Frame):
         tk.Label(top_info, text=tr("累计消息：{n} 条 | 位置：你在「{up}」· 对方在「{tp}」",
                                    n=msg_count, up=user_pos, tp=target_pos),
                  bg=bg, fg=COLORS["accent"], font=config.font("small"), anchor="w").pack(side="left", fill="x", expand=True)
+        tk.Label(top_info, text=f"（对方双手：{self.store.hands_brief(actor_id)}）",
+                 bg=bg, fg=COLORS["text_dim"], font=config.font("small"), anchor="w").pack(side="left", padx=(6, 0))
 
         if user_pos != target_pos:
             def move_near():
@@ -1174,15 +1247,23 @@ class RoomPage(tk.Frame):
                  font=config.font("body")).pack(side="left")
         var_hand = tk.StringVar(value=avail[0] if avail else "")
         for side, label in (("left", "左手"), ("right", "右手")):
-            st = self.store.hands[side]["state"]
-            suffix = "" if st == "free" else (" (已用)" if st == "used" else (" (牵手中)" if st == "holding" else " (被束缚)"))
+            h = self.store.hands_of("user")[side]
+            suffix = ""
+            if h["state"] == "held":
+                suffix = " (被牵着)"
+            elif h["state"] == "holding":
+                suffix = " (牵手中)"
+            elif h["state"] == "bound":
+                suffix = " (被束缚)"
+            elif h["state"] == "used":
+                suffix = " (刚用过)"
             rb = ttk.Radiobutton(hand_row, text=tr(label) + suffix, value=side, variable=var_hand)
-            if st != "free":
+            if side not in avail:
                 rb.state(["disabled"])
             rb.pack(side="left", padx=(8, 0))
 
         if not avail:
-            tk.Label(dlg.body, text=tr("当前没有空闲的手（已用/牵手中或被束缚），无法添加新的手部互动。"),
+            tk.Label(dlg.body, text=tr("当前没有空闲的手（被牵着或被束缚），无法添加新的手部互动。"),
                      bg=bg, fg="#ef4444", font=config.font("small"), anchor="w", wraplength=490).pack(
                 fill="x", pady=(0, 6))
 
@@ -1243,7 +1324,7 @@ class RoomPage(tk.Frame):
                 return
             part = (var_custom_part.get().strip() if custom_ok else "") or var_part.get()
             action_text = txt.get("1.0", "end").strip()
-            err = self.store.queue_hand_action(hand, actor_id, actor_name, part, action_text,
+            err = self.store.queue_hand_action("user", hand, actor_id, actor_name, part, action_text,
                                                msg_count=msg_count, secret=bool(var_secret.get()))
             if err:
                 toast.warn(err)
@@ -1257,7 +1338,7 @@ class RoomPage(tk.Frame):
         dlg.wait()
 
     def _open_custom_facility_interact(self, hs: dict):
-        avail = self.store.available_hands()
+        avail = self.store.available_hands("user")
         bg = COLORS["bg"]
         dlg = Modal(self.winfo_toplevel(), tr("互动设施：{name}", name=hs["label"]),
                     width=config.scaled(440), height=config.scaled(270))
@@ -1268,9 +1349,8 @@ class RoomPage(tk.Frame):
         hrow.pack(fill="x", pady=(0, 8))
         tk.Label(hrow, text=tr("使用手部："), bg=bg, fg=COLORS["text"], font=config.font("small")).pack(side="left")
         for side, label in (("left", "左手"), ("right", "右手")):
-            st = self.store.hands[side]["state"]
             rb = ttk.Radiobutton(hrow, text=tr(label), value=side, variable=var_hand)
-            if st != "free":
+            if side not in avail:
                 rb.state(["disabled"])
             rb.pack(side="left", padx=(8, 0))
 
@@ -1285,7 +1365,7 @@ class RoomPage(tk.Frame):
             if not hand:
                 toast.warn(tr("当前没有空闲的手。"))
                 return
-            err = self.store.queue_hand_action(hand, hs["id"], hs["label"], "设施", txt.get("1.0", "end").strip())
+            err = self.store.queue_hand_action("user", hand, hs["id"], hs["label"], "设施", txt.get("1.0", "end").strip())
             if err:
                 toast.warn(tr(err))
                 return
@@ -1350,12 +1430,30 @@ class RoomPage(tk.Frame):
             else:
                 key_txt = tr("钥匙持有：{k}", k="、".join(names.get(k, k) for k in (r.get("keys") or [])))
             lock_txt = tr(" [已内部反锁]") if r.get("locked_inside") else ""
-            tk.Label(dlg.body, text=f"{self._room_badge(r)} {r['name']}{lock_txt} — {key_txt} | 在场：{occ}",
-                     bg=bg, fg=COLORS["text_dim"], font=config.font("small"), anchor="w", wraplength=490).pack(
-                fill="x", pady=2)
+            row = tk.Frame(dlg.body, bg=bg)
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text=f"{self._room_badge(r)} {r['name']}{lock_txt} — {key_txt} | 门通向："
+                               f"{self.store.rooms_brief(r['id'])} | 在场：{occ}",
+                     bg=bg, fg=COLORS["text_dim"], font=config.font("small"), anchor="w", wraplength=420,
+                     justify="left").pack(side="left", fill="x", expand=True)
+            if not r.get("builtin") and r["id"] != "lounge":
+                ttk.Button(row, text=tr("删除"), width=6,
+                           command=lambda rid=r["id"], nm=r["name"]: self._confirm_delete_room(rid, nm, dlg)).pack(
+                    side="right", padx=(6, 0))
 
         ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right")
         dlg.wait()
+
+    def _confirm_delete_room(self, room_id: str, room_name: str, dlg=None):
+        """删除自建房间：门一起断掉，里面的人回到公共客厅。"""
+        ok = self.store.delete_room(room_id, "user")
+        if not ok:
+            toast.warn(tr("内置房间或公共客厅不能删除。"))
+            return
+        toast.info(tr("已删除「{name}」，里面的人回到了公共客厅。", name=room_name))
+        if dlg is not None:
+            dlg.finish(True)
+        self.refresh()
 
     def _open_create_room_dialog(self):
         if self._generating_map:
@@ -1431,7 +1529,7 @@ class RoomPage(tk.Frame):
             return
         saved = self.store.add_room(room, creator_id="user", is_public=is_public)
         self.store.enter_room("user", saved["id"], self._actor_name("user"))
-        toast.info(tr("已创建并进入新房间「{name}」", name=saved["name"]))
+        toast.info(tr("已创建并进入新房间「{name}」（门开在原来的房间）", name=saved["name"]))
         self.refresh()
 
     # ══════════════ 发送互动、回合推进与多角色回复 ══════════════
@@ -1451,35 +1549,45 @@ class RoomPage(tk.Frame):
 
     def _send(self):
         text = self.entry.get("1.0", "end").strip()
-        if not text and not self.store.pending_actions:
+        if not text and not self.store.pending_of("user"):
             return
         self.entry.delete("1.0", "end")
         self._send_text(text)
 
     def _send_text(self, text: str):
-        actions = list(self.store.pending_actions)
-        if not text and not actions:
-            return
         room_id = self.store.current_room_id()
         volume = self._var_volume.get() or "normal"
         targets = self.store.listeners_for_volume(room_id, "user", volume)
+        actions = self.store.take_pending("user", self._actor_name("user"))
+        if not text and not actions:
+            return
 
         self.store.append_log(room_id, "user", self._actor_name("user"), targets,
                               "action" if actions and not text else "say", text,
                               actions=actions, volume=volume, pos=self.store.position_of("user"))
-        self.store.reset_turn_hands(save=True)
-        if actions and self.comm and hasattr(self.comm, "apply_room_action_vt"):
-            by_target: dict[str, list[dict]] = {}
-            for a in actions:
-                tid = str(a.get("target_id") or "")
-                if tid and tid != "user" and a.get("part") != "设施":
-                    by_target.setdefault(tid, []).append(a)
-            for tid, t_acts in by_target.items():
-                self.comm.apply_room_action_vt(tid, t_acts)
+        self.store.reset_turn_hands("user", save=True)
+        apply_room_vt(self.comm, "user", actions)
         self.refresh()
 
         occ_npcs = [aid for aid in self.store.occupants_in(room_id) if aid != "user"]
-        if not occ_npcs:
+        names = self._persona_names()
+        sched = self._schedule_status_map()
+        blocked = {aid for aid, k in sched.items() if k in ("focus", "sleep")}
+        room_name = (self.store.rooms.get(room_id) or {}).get("name", "")
+
+        # 点名：被叫到名字的人无论在哪、是否还在「对话窗口」里都要听见；专注 / 睡眠时先记下来，之后补上
+        named_here, named_far = [], []
+        if text:
+            for aid in summon_targets(self.store, text, names):
+                if aid in blocked:
+                    self.store.add_heard(aid, text, room_name, names.get("user", "你"))
+                    continue
+                if aid in occ_npcs:
+                    self.store.raise_attention(aid, ATTENTION_SUMMON)
+                    named_here.append(aid)
+                else:
+                    named_far.append(aid)
+        if not occ_npcs and not named_far:
             return
         has_public_action = any(not a.get("secret") for a in actions)
         acted_targets = list(dict.fromkeys(a["target_id"] for a in actions if a.get("target_id") in occ_npcs))
@@ -1488,7 +1596,7 @@ class RoomPage(tk.Frame):
         direct = []
         if text:
             direct = list(occ_npcs) if "all" in targets else [a for a in targets if a in occ_npcs]
-        for aid in acted_targets:
+        for aid in acted_targets + named_here:
             if aid not in direct:
                 direct.append(aid)
         observers = [aid for aid in occ_npcs if aid not in direct] if has_public_action else []
@@ -1497,8 +1605,13 @@ class RoomPage(tk.Frame):
             self._trigger_actor_reply(room_id, aid, trigger_reason="user")
         for aid in observers[:2]:
             self._trigger_actor_reply(room_id, aid, trigger_reason="observe")
+        # 隔着房间也叫得动：过去看看，或干脆不过来
+        for aid in named_far[:2]:
+            self._trigger_actor_reply(self.store.occupants.get(aid) or room_id, aid,
+                                      trigger_reason="summon", heard=text)
 
-    def _trigger_actor_reply(self, room_id: str, actor_id: str, trigger_reason: str = "user"):
+    def _trigger_actor_reply(self, room_id: str, actor_id: str, trigger_reason: str = "user",
+                             heard: str = ""):
         if not self.comm or actor_id in self._busy_actors:
             return
         try:
@@ -1509,6 +1622,7 @@ class RoomPage(tk.Frame):
                 toast.warn(tr("请先在 设置 → 模型 中配置 AI 接口。"))
             return
 
+        room_id = self.store.occupants.get(actor_id) or room_id
         room = self.store.rooms.get(room_id)
         if not room:
             return
@@ -1521,27 +1635,46 @@ class RoomPage(tk.Frame):
             if (self.comm and hasattr(self.comm, "room_persona_context"))
             else ("", "")
         )
+        note = ""
+        if trigger_reason == "summon":
+            who = names.get("user", "你")
+            here = (self.store.rooms.get(self.store.current_room_id()) or {}).get("name", "")
+            note = (f"【有人在叫你】{who} 在「{here}」叫了你的名字，原话：「{heard}」。"
+                    f"你现在在「{room.get('name', '')}」。")
+        missed = self.store.take_heard(actor_id)
+        if missed:
+            lines = "\n".join(
+                f"- 在「{m.get('room') or '某处'}」{m.get('who') or '有人'}：{m.get('text') or ''}"
+                for m in missed
+            )
+            note = (note + "\n" if note else "") + f"【你当时没答上的呼唤】\n{lines}\n（现在可以补上。）"
+        aware = ""
+        if bool(self.comm.cfg.get("room_awareness", True)):
+            aware = self.store.awareness_brief(actor_id)
         system, msgs = build_actor_turn_prompt(
             psys, self.store, room, actor_id, names.get(actor_id, actor_id),
             names, visible, trigger_reason=trigger_reason,
-            memory_block=mem_block, phone_history=phone_hist,
+            memory_block=mem_block, phone_history=phone_hist, extra_note=note,
+            awareness=aware,
         )
 
         self._busy_actors.add(actor_id)
         self._update_busy_label(names)
+        summon = (trigger_reason == "summon")
 
         def work():
             try:
                 fn = self.comm.remote_chat if profile.get("kind") == "device" and callable(self.comm.remote_chat) else self.comm.chat_fn
                 reply = fn(profile, system, msgs, max_tokens=1200, temperature=0.85, timeout=90.0)
                 parsed = parse_actor_reply(reply, set(occ_ids), set(self.store.rooms.keys()), default_target="user")
-                self.after(0, lambda: self._finish_actor_reply(room_id, actor_id, parsed, ""))
+                self.after(0, lambda: self._finish_actor_reply(room_id, actor_id, parsed, "", summon=summon))
             except Exception as exc:
-                self.after(0, lambda e=exc: self._finish_actor_reply(room_id, actor_id, None, str(e)))
+                self.after(0, lambda e=exc: self._finish_actor_reply(room_id, actor_id, None, str(e), summon=summon))
 
         threading.Thread(target=work, daemon=True, name=f"oit-room-{actor_id}").start()
 
-    def _finish_actor_reply(self, room_id: str, actor_id: str, parsed: dict | None, err: str):
+    def _finish_actor_reply(self, room_id: str, actor_id: str, parsed: dict | None, err: str,
+                            summon: bool = False):
         self._busy_actors.discard(actor_id)
         if err or not parsed:
             self._update_busy_label(self._persona_names())
@@ -1549,54 +1682,79 @@ class RoomPage(tk.Frame):
 
         names = self._persona_names()
         actor_name = names.get(actor_id, actor_id)
+        room_id = self.store.occupants.get(actor_id) or room_id
 
-        # 1. 束缚/解除用户双手（仅当该角色与用户同房间）
-        if self.store.occupants.get("user") == room_id:
-            bind = parsed.get("bind_hands")
+        # 被隔房叫到名字：先走过去，之后说的话就落在走进去的那个房间里
+        if summon:
+            move_to = parsed.get("move_to")
+            if move_to and move_to != room_id and move_to in self.store.rooms:
+                bring = ["user"] if parsed.get("bring_user") else []
+                self.store.enter_room(actor_id, move_to, actor_name, bring_ids=bring, name_map=names)
+                room_id = self.store.occupants.get(actor_id) or room_id
+                parsed["move_to"] = None
+
+        # 1. 束缚/牵手：角色与用户是对等实体，动作按同一套规则结算
+        bind = parsed.get("bind_hands")
+        bind_target = str(parsed.get("bind_target") or "user")
+        if bind and self.store.occupants.get(bind_target) == self.store.occupants.get(actor_id):
             if bind == "release":
-                self.store.set_hand_bound("both", False)
+                self.store.set_hand_bound(bind_target, "both", False)
             elif bind in ("left", "right", "both"):
-                self.store.set_hand_bound(bind, True, note=actor_name)
-            hold = parsed.get("hold_hand")
-            if hold == "release":
-                for side in ("left", "right"):
-                    if self.store.holding_hands.get(side) == actor_id:
-                        self.store.release_hand(side, names)
-            elif hold in ("left", "right"):
-                err = self.store.hold_hand(hold, actor_id, actor_name,
-                                           msg_count=self.total_msgs_with(actor_id))
-                if not err and self.comm and hasattr(self.comm, "apply_room_action_vt"):
-                    self.comm.apply_room_action_vt(actor_id, [{"part": "牵手带走", "secret": False}])
+                self.store.set_hand_bound(bind_target, bind, True, note=actor_name)
+        hold = parsed.get("hold_hand")
+        if hold == "release":
+            for side in ("left", "right"):
+                if self.store.hand_state(actor_id, side) in ("holding", "held"):
+                    self.store.release_hand(actor_id, side, names, actor_name)
+        elif hold in ("left", "right"):
+            target_id = str(parsed.get("hold_target") or "user")
+            err = self.store.hold_hand(actor_id, hold, target_id, actor_name,
+                                       names.get(target_id, target_id),
+                                       msg_count=self.pair_msgs(actor_id, target_id))
+            if not err:
+                apply_room_vt(self.comm, actor_id, [{"hand": hold, "target_id": target_id,
+                                                     "part": "牵手带走", "secret": False}])
 
-        # 2. 更新室内位置
+        # 2. 手部 / 目光动作：与用户在界面里排的动作完全同一套校验与结算
+        for a in parsed.get("actions") or []:
+            target_id = str(a.get("target_id") or "")
+            self.store.queue_hand_action(actor_id, a.get("hand"), target_id,
+                                         names.get(target_id, target_id), a.get("part"), a.get("text"),
+                                         msg_count=self.pair_msgs(actor_id, target_id),
+                                         secret=bool(a.get("secret")))
+        acts = self.store.take_pending(actor_id, actor_name)
+
+        # 3. 更新室内位置
         pos = parsed.get("position")
         if pos:
             self.store.move_position(actor_id, pos, actor_name)
 
-        # 3. 更新跟随状态（言语请求跟随）
+        # 4. 更新跟随状态（言语请求跟随）
         fol = parsed.get("follow")
         if fol == "none":
             self.store.set_following(actor_id, None, actor_name)
         elif fol:
             self.store.set_following(actor_id, fol, actor_name, names.get(fol, fol))
 
-        # 4. 分发钥匙
+        # 5. 分发钥匙
         gk = parsed.get("give_key")
         if gk:
             to_id = str(gk.get("to") or "")
             self.store.grant_key(str(gk.get("room_id") or ""), actor_id, to_id,
                                  actor_name, names.get(to_id, to_id))
 
-        # 5. 发言（若 silent=True 且无动作则保持安静不刷屏；否则按音量 normal / whisper 自动决定听众）
+        # 6. 发言（若 silent=True 且无动作则保持安静不刷屏；否则按音量 normal / whisper 自动决定听众）
         is_silent = bool(parsed.get("silent", False))
         speech = "" if is_silent else (parsed.get("speech") or "")
         action = parsed.get("action") or ""
         combined = f"（{action}）{speech}".strip() if action and speech else (f"（{action}）" if action else speech)
-        if combined:
+        if combined or acts:
             vol = parsed.get("volume") or "normal"
             listeners = self.store.listeners_for_volume(room_id, actor_id, vol)
-            self.store.append_log(room_id, actor_id, actor_name, listeners, "say", combined,
-                                  volume=vol, pos=self.store.position_of(actor_id))
+            self.store.append_log(room_id, actor_id, actor_name, listeners,
+                                  "say" if combined else "action", combined,
+                                  actions=acts, volume=vol, pos=self.store.position_of(actor_id))
+            apply_room_vt(self.comm, actor_id, acts)
 
         # 6. 自主移动 / 拜访其他房间（bring_user=True 或牵手时可把用户一起带出去）
         move_to = parsed.get("move_to")
@@ -1632,17 +1790,17 @@ class RoomPage(tk.Frame):
         self._sync_persona_rooms()
         enabled = bool(self.comm.cfg.get("room_npc_chat", False))
         prob = int(self.comm.cfg.get("room_npc_prob") or 30)
-        idle_min = int(self.comm.cfg.get("room_npc_idle_min") or 15)
         sched = self._schedule_status_map()
         blocked = {aid for aid, k in sched.items() if k in ("focus", "sleep")}
         rid = self.store.current_room_id()
-        picked = pick_auto_speaker(self.store, rid, self._busy_actors, enabled, prob,
-                                   include_other_rooms=True, blocked_ids=blocked)
-        if picked:
-            speaker_id, speaker_room = picked
-            if self.store.is_recently_interacted(speaker_id, idle_min):
-                self._trigger_actor_reply(speaker_room, speaker_id, trigger_reason="auto")
+        plan = auto_step_plan(self.store, rid, self._busy_actors, enabled, prob,
+                             include_other_rooms=True, blocked_ids=blocked)
+        if plan:
+            kind, aid, actor_room = plan
+            if kind == "model":
+                self.store.spend_auto_budget(aid)
+                self._trigger_actor_reply(actor_room, aid, trigger_reason="auto")
             else:
-                self.store.perform_idle_system_step(speaker_id, self._actor_name(speaker_id))
+                self.store.perform_idle_system_step(aid, self._actor_name(aid))
                 self.refresh()
         self._schedule_auto_tick()

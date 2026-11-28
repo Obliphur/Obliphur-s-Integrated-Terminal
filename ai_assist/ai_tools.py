@@ -180,8 +180,32 @@ def _parse_response(data, protocol, plain_text):
         if not text.strip():
             raise AIError("format", "模型没有返回内容")
         return pack(_clean_leaked_reply(text))
-    if len(calls) != 1:
-        raise AIError("format", "每次只能调用一个 OIT 工具")
+    # Some OpenAI-compatible providers ignore parallel_tool_calls=false and
+    # return several calls anyway. Keep the first call in the native wire
+    # message; after its result the model gets another turn for the rest.
+    if len(calls) > 1:
+        if protocol == "anthropic":
+            selected = False
+            content = []
+            for block in wire.get("content", []):
+                if block.get("type") == "tool_use":
+                    if selected:
+                        continue
+                    selected = True
+                content.append(block)
+            wire = dict(wire, content=content)
+        elif protocol == "gemini":
+            selected = False
+            parts = []
+            for part in wire.get("parts", []):
+                if "functionCall" in part and not part.get("thought"):
+                    if selected:
+                        continue
+                    selected = True
+                parts.append(part)
+            wire = dict(wire, parts=parts)
+        else:
+            wire = dict(wire, tool_calls=wire.get("tool_calls", [])[:1])
     name, args = calls[0]
     try:
         if name not in BY_NAME:

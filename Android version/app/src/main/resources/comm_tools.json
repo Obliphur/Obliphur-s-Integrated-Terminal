@@ -582,7 +582,7 @@
   },
   {
     "name": "oit_room_action",
-    "description": "在手机沟通页面聊天时，同步执行情景小屋内的行动（移动到公共空间或持有钥匙且未反锁的房间、更换室内位置、从内部反锁/解锁当前房门、把持有钥匙的房间钥匙分给用户、或开启/取消跟随）。",
+    "description": "在手机沟通页面聊天时，同步执行情景小屋内的行动（沿相连的房间走动、更换室内位置、从里侧反锁/解锁当前房门、把持有钥匙的房间钥匙分给用户、开启/取消跟随、与人牵手或放手、束缚或放开对方双手，或对同房间同位置的成员做和用户一样的手部 / 目光动作）。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -608,6 +608,52 @@
         "follow": {
           "type": "string",
           "enum": ["user", "none"]
+        },
+        "hold_hand": {
+          "type": "string",
+          "enum": ["left", "right", "release"]
+        },
+        "hold_target": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "bind_hands": {
+          "type": "string",
+          "enum": ["left", "right", "both", "release"]
+        },
+        "bind_target": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "actions": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "hand": {
+                "type": "string",
+                "enum": ["left", "right", "gaze"]
+              },
+              "target": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "part": {
+                "type": "string",
+                "maxLength": 30
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "secret": {
+                "type": "boolean"
+              }
+            },
+            "required": ["hand", "part"],
+            "additionalProperties": false
+          }
         }
       },
       "required": [],

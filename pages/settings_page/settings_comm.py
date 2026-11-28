@@ -158,7 +158,7 @@ class CommSettingsMixin:
             fill="x", padx=12, pady=(0, 8))
 
         fr, _head = self._card(body, "🏠  情景房间 · 角色对话")
-        tk.Label(fr, text=tr("开启后，房间内的非玩家角色每隔 X 秒以设定概率自动行动一次；若 N 分钟内未与用户互动，则由系统随机移动或活动（不发言），否则由模型决定移动与发言。"),
+        tk.Label(fr, text=tr("开启后，房间内的非玩家角色每隔 X 秒以设定概率行动一次。角色有注意力：被叫到名字、说话、触碰或走进你所在的房间会抬起，离开房间或长时间没互动会衰减；注意力还在时由模型决定行动与发言，衰减下去后由系统随机活动（不发言、不调 API）。"),
                  bg=card, fg=COLORS["text_dim"], font=small, anchor="w", justify="left", wraplength=560).pack(
             fill="x", padx=12, pady=(0, 4))
         v = tk.BooleanVar(value=bool(c.cfg.get("room_npc_chat", False)))
@@ -187,13 +187,23 @@ class CommSettingsMixin:
 
         idle_row = tk.Frame(fr, bg=card)
         idle_row.pack(fill="x", padx=12, pady=(0, 10))
-        tk.Label(idle_row, text=tr("无互动转随机活动 N (分钟)"), bg=card, fg=COLORS["text"], font=small).pack(side="left")
+        tk.Label(idle_row, text=tr("注意力半衰期 N (分钟)"), bg=card, fg=COLORS["text"], font=small).pack(side="left")
         self.var_room_idle = tk.StringVar(value=str(int(c.cfg.get("room_npc_idle_min") or 15)))
         sb_idle = ttk.Spinbox(idle_row, from_=1, to=120, increment=1, textvariable=self.var_room_idle, width=6,
                               command=self._comm_room_npc_save)
         sb_idle.pack(side="left", padx=(6, 0))
         sb_idle.bind("<FocusOut>", lambda _e: self._comm_room_npc_save())
         sb_idle.bind("<Return>", lambda _e: self._comm_room_npc_save())
+
+        v = tk.BooleanVar(value=bool(c.cfg.get("room_awareness", True)))
+        self.comm_vars["room_awareness"] = v
+        self._track(tk.Checkbutton(fr, text=tr("让房间里的角色知道同房间与隔壁有谁、各音量是什么意思"),
+                                   variable=v, bg=card, fg=COLORS["text"],
+                                   selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
+                                   font=config.font("body"), anchor="w", wraplength=560, justify="left",
+                                   command=lambda: self._comm_flag("room_awareness")),
+                    "让房间里的角色知道同房间与隔壁有谁、各音量是什么意思").pack(
+            fill="x", padx=12, pady=(0, 10))
 
         fr, _head = self._card(body, "🖼  头像")
         v = tk.BooleanVar(value=bool(c.cfg.get("show_avatar")))
@@ -396,6 +406,10 @@ class CommSettingsMixin:
             want_npc = bool(c.cfg.get("room_npc_chat", False))
             if self.comm_vars["room_npc_chat"].get() != want_npc:
                 self.comm_vars["room_npc_chat"].set(want_npc)
+        if "room_awareness" in self.comm_vars:
+            want_aw = bool(c.cfg.get("room_awareness", True))
+            if self.comm_vars["room_awareness"].get() != want_aw:
+                self.comm_vars["room_awareness"].set(want_aw)
         if hasattr(self, "var_room_interval"):
             self.var_room_interval.set(str(int(c.cfg.get("room_npc_interval") or 30)))
         if hasattr(self, "var_room_prob"):

@@ -22,6 +22,19 @@ class ToolProtocolTest {
 
     private fun call(name: String, args: JSONObject, protocol: String = "openai"): String = ToolProtocol.parse(response(protocol, name, args), protocol) { "" }
 
+    private fun multiResponse(protocol: String): JSONObject {
+        val first = response(protocol, "oit_query", JSONObject().put("modules", JSONArray().put("timer")))
+        val second = response(protocol, "oit_reply", JSONObject().put("text", "已读取"))
+        when (protocol) {
+            "anthropic" -> first.getJSONArray("content").put(second.getJSONArray("content").getJSONObject(1))
+            "gemini" -> first.getJSONArray("candidates").getJSONObject(0).getJSONObject("content").getJSONArray("parts")
+                .put(second.getJSONArray("candidates").getJSONObject(0).getJSONObject("content").getJSONArray("parts").getJSONObject(0))
+            else -> first.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getJSONArray("tool_calls")
+                .put(second.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getJSONArray("tool_calls").getJSONObject(0))
+        }
+        return first
+    }
+
     @Test fun readingOfferAllowsEitherSourceQuote() {
         for (protocol in listOf("openai", "anthropic", "gemini")) {
             val direct = ToolProtocol.unpack(call("oit_reading_offer", JSONObject().put("request_statement", "我们现在一起读吧。"), protocol))!!.getJSONObject("arguments")
@@ -65,6 +78,24 @@ class ToolProtocolTest {
             assertTrue(CommText.infoTags(reply).isEmpty())
             assertNull(CommText.cutMinutes(reply))
             assertFalse(CommText.isRefusal(reply))
+        }
+    }
+
+    @Test fun providersReturningMultipleCallsAreSerialized() {
+        for (protocol in listOf("openai", "anthropic", "gemini")) {
+            val envelope = ToolProtocol.unpack(ToolProtocol.parse(multiResponse(protocol), protocol) { "" })!!
+            assertEquals("oit_query", envelope.getString("name"))
+            val wire = envelope.getJSONObject("wire")
+            when (protocol) {
+                "openai" -> assertEquals(1, wire.getJSONArray("tool_calls").length())
+                "anthropic" -> assertEquals(1, (0 until wire.getJSONArray("content").length()).count {
+                    wire.getJSONArray("content").getJSONObject(it).optString("type") == "tool_use"
+                })
+                else -> assertEquals(1, (0 until wire.getJSONArray("parts").length()).count {
+                    val p = wire.getJSONArray("parts").getJSONObject(it)
+                    p.has("functionCall") && !p.optBoolean("thought")
+                })
+            }
         }
     }
 

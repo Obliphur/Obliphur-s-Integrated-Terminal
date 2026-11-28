@@ -556,6 +556,7 @@ _ROOM_HTML = r"""<!DOCTYPE html>
         <span class="dim-tip">音量：</span>
         <label><input type="radio" name="vol" value="normal" checked /> 正常音量</label>
         <label><input type="radio" name="vol" value="whisper" /> 轻语</label>
+        <label><input type="radio" name="vol" value="shout" /> 大声呼喊</label>
         <div class="vol-hint" id="volHint"></div>
       </div>
       <div class="inp-row">
@@ -663,13 +664,14 @@ function applyState(st) {
   autoEl.textContent = st.auto_status_text;
   autoEl.className = "auto-status" + (st.npc_on ? " on" : "");
 
-  // 房间下拉
+  // 房间下拉：只列当前房间与有门相连的房间（只有互相连接的房间能走过去）
   const sel = document.getElementById("roomSelect");
-  const optsSig = st.rooms.map(r => r.id + "|" + r.label).join("\n");
+  const doorRooms = (st.rooms || []).filter(r => r.linked);
+  const optsSig = doorRooms.map(r => r.id + "|" + r.label).join("\n");
   if (sel.dataset.sig !== optsSig) {
     sel.dataset.sig = optsSig;
     sel.innerHTML = "";
-    for (const r of st.rooms) {
+    for (const r of doorRooms) {
       const opt = document.createElement("option");
       opt.value = r.id;
       opt.textContent = r.label;
@@ -759,12 +761,23 @@ function channelLabel(ch) {
   return "手部";
 }
 
+function handSuffix(state) {
+  if (state === "holding") return " (握住)";
+  if (state === "held") return " (被牵着)";
+  if (state === "bound") return " (被束缚)";
+  if (state === "used") return " (刚用过)";
+  return "";
+}
+
 function renderHands(hands, pending) {
   const setPill = (id, h) => {
     const el = document.getElementById(id);
     el.textContent = "[" + h.label + "]";
-    el.className = "hand-pill" + (h.state === "bound" ? " bound" : (h.state === "holding" ? " holding" : ""));
-    el.title = h.state === "holding" ? "点击松开握持" : "";
+    const cls = (h.state === "bound" || h.state === "held") ? " bound"
+      : (h.state === "holding" || h.state === "used" ? " holding" : "");
+    el.className = "hand-pill" + cls;
+    el.title = h.state === "holding" ? "点击松开握持"
+      : (h.state === "held" ? "点击把手抽回来" : "");
   };
   setPill("leftHand", hands.left);
   setPill("rightHand", hands.right);
@@ -812,9 +825,11 @@ function buildLogNode(e) {
   wrap.className = "log-msg";
   const hdr = document.createElement("div");
   hdr.className = e.sender === "user" ? "log-who-me" : "log-who-npc";
-  hdr.textContent = e.volume === "whisper"
-    ? `${e.sender_name}（在「${e.pos || "原处"}」轻语）：`
-    : `${e.sender_name}：`;
+  let volTag = "";
+  if (e.volume === "whisper") volTag = `（在「${e.pos || "原处"}」轻语）`;
+  else if (e.volume === "shout") volTag = "（大声呼喊）";
+  const fromTag = e.from_room ? `[从「${e.from_room}」隔墙传来] ` : "";
+  hdr.textContent = fromTag + `${e.sender_name}${volTag}：`;
   wrap.appendChild(hdr);
   const acts = e.actions || [];
   acts.forEach((a, idx) => {
@@ -1001,14 +1016,14 @@ mapBox.addEventListener("click", (e) => {
       label: locked ? "🔓 解除房门反锁" : "🔒 从内部反锁房门",
       onClick: () => doAction({ type: "toggle_lock" }),
     });
-    for (const r of (STATE ? STATE.rooms : [])) {
+    for (const r of (STATE ? STATE.rooms : []).filter(r => r.linked)) {
       const mark = r.id === STATE.room.id ? "✓ " : "";
       items.push({
         label: mark + r.label,
         onClick: () => doAction({ type: "switch_room", room_id: r.id }),
       });
     }
-    items.push({ label: "🔑 管理房间钥匙…", onClick: openKeysModal });
+    items.push({ label: "🔑 管理房间钥匙与连接…", onClick: openKeysModal });
     items.push({ label: "＋ 协商新建房间…", onClick: openCreateRoomModal });
     openMenu(e.clientX, e.clientY, items);
   } else {
@@ -1025,8 +1040,9 @@ async function openActorModal(actorId, actorName) {
   if (!res.ok || !res.info) return;
   const info = res.info;
   const samePos = info.user_pos === info.target_pos;
-  const leftBound = info.hands.left.state === "bound";
-  const rightBound = info.hands.right.state === "bound";
+  const handBusy = (st) => (st === "bound" || st === "held");
+  const leftBound = handBusy(info.hands.left.state);
+  const rightBound = handBusy(info.hands.right.state);
   const handsBlocked = !samePos || (leftBound && rightBound);
   let activeHand = (!samePos ? "" : (!leftBound ? "left" : (!rightBound ? "right" : "")));
   let gazeChecked = false;
@@ -1040,7 +1056,8 @@ async function openActorModal(actorId, actorName) {
     top.className = "row-between";
     const meta = document.createElement("div");
     meta.style.cssText = "font-size:12px;color:var(--accent);";
-    meta.textContent = `位置：你在「${info.user_pos}」· 对方在「${info.target_pos}」`;
+    meta.textContent = `位置：你在「${info.user_pos}」· 对方在「${info.target_pos}」`
+      + (info.target_hands ? ` · 对方双手：${info.target_hands}` : "");
     const btns = document.createElement("div");
     btns.style.cssText = "display:flex;gap:6px;";
     if (!samePos) {
@@ -1062,8 +1079,8 @@ async function openActorModal(actorId, actorName) {
     handRow.style.cssText = "display:flex;align-items:center;gap:12px;flex-wrap:wrap;";
     handRow.innerHTML = `<span class="field-label" style="margin:0;">当前设置：</span>`;
     const handDefs = [
-      { id: "left", label: "左手" + (info.hands.left.state === "holding" ? " (握住)" : (leftBound ? " (被束缚)" : "")), disabled: !samePos || leftBound },
-      { id: "right", label: "右手" + (info.hands.right.state === "holding" ? " (握住)" : (rightBound ? " (被束缚)" : "")), disabled: !samePos || rightBound },
+      { id: "left", label: "左手" + handSuffix(info.hands.left.state), disabled: !samePos || leftBound },
+      { id: "right", label: "右手" + handSuffix(info.hands.right.state), disabled: !samePos || rightBound },
     ];
     for (const ch of handDefs) {
       const lbl = document.createElement("label");
@@ -1266,8 +1283,9 @@ async function openActorModal(actorId, actorName) {
 /* 自定义设施互动弹窗（支持多选左手 / 右手） */
 function openFacilityModal(hs) {
   const hands = STATE ? STATE.hands : { left: { state: "free" }, right: { state: "free" } };
-  const leftBound = hands.left.state === "bound";
-  const rightBound = hands.right.state === "bound";
+  const handBusy = (st) => (st === "bound" || st === "held");
+  const leftBound = handBusy(hands.left.state);
+  const rightBound = handBusy(hands.right.state);
   const checkedHands = { left: !leftBound, right: false };
   if (leftBound && !rightBound) checkedHands.right = true;
   let textArea = null;
@@ -1287,8 +1305,8 @@ function openFacilityModal(hs) {
     const grid = document.createElement("div");
     grid.className = "part-table";
     const channels = [
-      { id: "left", label: "左手" + (hands.left.state === "holding" ? " (握住)" : (leftBound ? " (被束缚)" : "")), disabled: leftBound },
-      { id: "right", label: "右手" + (hands.right.state === "holding" ? " (握住)" : (rightBound ? " (被束缚)" : "")), disabled: rightBound },
+      { id: "left", label: "左手" + handSuffix(hands.left.state), disabled: leftBound },
+      { id: "right", label: "右手" + handSuffix(hands.right.state), disabled: rightBound },
     ];
     for (const ch of channels) {
       const row = document.createElement("label");
@@ -1322,7 +1340,7 @@ function openFacilityModal(hs) {
         const text = textArea.value.trim();
         const actions = [];
         for (const side of ["left", "right"]) {
-          if (checkedHands[side] && hands[side].state !== "bound") {
+          if (checkedHands[side] && !handBusy(hands[side].state)) {
             actions.push({
               hand: side,
               target_id: hs.id,
@@ -1397,6 +1415,33 @@ function openKeysModal() {
       line.textContent = r;
       body.appendChild(line);
     }
+
+    const delTitle = document.createElement("div");
+    delTitle.className = "field-label";
+    delTitle.textContent = "删除房间（只有自建房间能删；断开的子房间会自动清理）：";
+    body.appendChild(delTitle);
+    for (const r of (STATE.rooms || []).filter(x => x.deletable)) {
+      const row = document.createElement("div");
+      row.className = "row-between";
+      row.style.cssText = "gap:8px;margin-bottom:4px;";
+      const nameEl = document.createElement("span");
+      nameEl.textContent = r.name;
+      const del = document.createElement("button");
+      del.className = "btn";
+      del.textContent = "删除";
+      del.addEventListener("click", async () => {
+        if (!window.confirm(`确定删除「${r.name}」？里面的人会回到公共客厅。`)) return;
+        const res = await doAction({ type: "delete_room", room_id: r.id });
+        if (res.ok) closeModal();
+      });
+      row.append(nameEl, del);
+      body.appendChild(row);
+    }
+    const newBtn = document.createElement("button");
+    newBtn.className = "btn";
+    newBtn.textContent = "＋ 协商新建房间…";
+    newBtn.addEventListener("click", () => { closeModal(); openCreateRoomModal(); });
+    body.appendChild(newBtn);
   }, [{ label: "关闭", onClick: closeModal }]);
 }
 

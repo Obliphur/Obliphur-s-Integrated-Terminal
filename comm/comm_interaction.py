@@ -482,6 +482,11 @@ class InteractionMixin:
         special = self._interaction_special(status)
         if message and text.strip():
             d["pending"][message["uid"]] = special
+            if hasattr(self, "room_store"):
+                try:
+                    self.room_store.note_phone_contact(self.persona_name())
+                except Exception:
+                    pass
             from .comm_util import is_claudia
             if is_claudia(self.persona_name()) and status and status.get("kind") == "sleep":
                 d["pending_sleep"][message["uid"]] = True

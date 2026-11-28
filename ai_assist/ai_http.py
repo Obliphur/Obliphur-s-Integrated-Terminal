@@ -504,6 +504,7 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                 usage, finish = None, None
                 complete = False
                 tools = {}
+                first_tool_index = None
                 for line in resp:
                     line = line.decode("utf-8", "replace").strip()
                     if not line.startswith("data:"):
@@ -532,13 +533,15 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                             emit_plain(content)
                     for part in delta.get("tool_calls") or []:
                         i = part.get("index", 0)
+                        if first_tool_index is None:
+                            first_tool_index = i
                         tool = tools.setdefault(i, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}, "_sent": ""})
                         if part.get("id"):
                             tool["id"] = part["id"]
                         fn = part.get("function") or {}
                         tool["function"]["name"] += fn.get("name") or ""
                         tool["function"]["arguments"] += fn.get("arguments") or ""
-                        if tool["function"]["name"] == "oit_reply":
+                        if i == first_tool_index and tool["function"]["name"] == "oit_reply":
                             piece = _partial_json_text(tool["function"]["arguments"], tool["_sent"])
                             if piece:
                                 tool["_sent"] += piece
@@ -559,6 +562,7 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
             if protocol == "anthropic":
                 blocks, usage, stop_reason = {}, {}, None
                 complete = False
+                first_tool_block = None
                 event_name, data_lines = "", []
                 def anth_event():
                     nonlocal usage, stop_reason, complete
@@ -579,6 +583,8 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                         i, block = obj.get("index", 0), obj.get("content_block") or {}
                         blocks[i] = dict(block)
                         blocks[i]["_raw"] = ""
+                        if block.get("type") == "tool_use" and first_tool_block is None:
+                            first_tool_block = i
                         if block.get("type") == "text" and not request_body.get("tools"):
                             emit_plain(block.get("text") or "")
                     elif kind == "content_block_delta":
@@ -592,7 +598,7 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                         elif delta.get("type") == "input_json_delta":
                             raw = block.get("_raw", "") + (delta.get("partial_json") or "")
                             block["_raw"] = raw
-                            if block.get("name") == "oit_reply":
+                            if i == first_tool_block and block.get("name") == "oit_reply":
                                 piece = _partial_json_text(raw, block.get("_sent", ""))
                                 if piece:
                                     block["_sent"] = block.get("_sent", "") + piece
@@ -626,6 +632,7 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                     content.append(block)
                 return {"content": content, "usage": usage, "stop_reason": stop_reason}
             candidates, usage = {}, None
+            first_function_call_seen = False
             for line in resp:
                 line = line.decode("utf-8", "replace").strip()
                 if not line.startswith("data:"):
@@ -653,7 +660,11 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                         elif "functionCall" in incoming:
                             parts.append(dict(incoming))
                             call = incoming["functionCall"]
-                            if call.get("name") == "oit_reply":
+                            if incoming.get("thought"):
+                                continue
+                            is_first = not first_function_call_seen
+                            first_function_call_seen = True
+                            if is_first and call.get("name") == "oit_reply":
                                 text = (call.get("args") or {}).get("text")
                                 if isinstance(text, str):
                                     prev = saved.get("_sent", "")
