@@ -150,6 +150,11 @@ def _selftest():
     shifted.set_shifts([(_date(2026, 3, 1), 450)])
     shifted_plan = day_plan(shifted, _date(2026, 3, 1), seed)
     assert shifted_plan[-1]["start"] == datetime(2026, 3, 2, 0, 30), "平移一小时后固定边界跨午夜"
+    delayed = parse("初始起点:6:30\n60min:学习\n")
+    delayed.set_sleep_delays([(_date(2026, 3, 1), 30)])
+    delayed_plan = day_plan(delayed, _date(2026, 3, 1), seed, fluct=False)
+    assert delayed_plan[-2]["kind"] == "idle" and delayed_plan[-2]["gap"] and (delayed_plan[-2]["end"] - delayed_plan[-2]["start"]).total_seconds() == 1800
+    assert wake_at(delayed, _date(2026, 3, 2), seed).minute == 37 and wake_at(delayed, _date(2026, 3, 2), seed).second == 30
     # 声明时长与波动不影响半小时特殊空闲，跨午夜也与睡眠无缝衔接。
     for declared, jitter in (("5min", "[5,5]"), ("2h", "[-5,-5]")):
         fixed = parse(routine_text.replace("30min:特殊空闲", declared + ":特殊空闲").replace("循环末尾休息结束时间波动:[0,5]", "循环末尾休息结束时间波动:" + jitter))

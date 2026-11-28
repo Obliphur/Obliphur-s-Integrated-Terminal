@@ -28,6 +28,7 @@ class Routine:
         self.focus_label = ""
         self.start = None             # 初始起点 (从 0:00 起的分钟)
         self.shifts = []              # 起点平移 (1.0.402): [(日期, 分钟)] 按日期排, 从那一天起起点换成这个分钟数; 记在聊天状态里, 不改日程文件
+        self.sleep_delays = []        # 睡眠延迟: [(日期, 分钟)]，记录哪一天的睡眠段
         self.items = []               # {"type": "block", "dur", "label"} / {"type": "loop", "dur", "focus"}
         self.fluct = {k: (0, 0) for k, _n in _FLUCT_KEYS}
         self.lists = {}               # 列表名 → [item]
@@ -57,6 +58,21 @@ class Routine:
         if sh == self.shifts:
             return False
         self.shifts = sh
+        self.__dict__.pop("_plans", None)
+        self.__dict__.pop("_reward_plans", None)
+        return True
+
+    def sleep_delay_for(self, d: _date) -> int:
+        for day, mins in self.sleep_delays:
+            if day == d:
+                return max(0, min(30, int(mins)))
+        return 0
+
+    def set_sleep_delays(self, delays) -> bool:
+        clean = sorted((d, max(0, min(30, int(m)))) for d, m in delays)
+        if clean == self.sleep_delays:
+            return False
+        self.sleep_delays = clean
         self.__dict__.pop("_plans", None)
         self.__dict__.pop("_reward_plans", None)
         return True

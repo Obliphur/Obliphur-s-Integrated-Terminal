@@ -48,6 +48,8 @@ class SchedMixin:
             hit = self._bg_seg[name] = (sig, [] if rt else schedule_entries(text), persona_probs(text), rt)
         if hit[3]:
             hit[3].set_shifts(shift_pairs(self._state_of(pid_of(name)).get("shift")))       # 起点平移 (1.0.402)
+            from comm.comm_persona import sleep_delay_pairs
+            hit[3].set_sleep_delays(sleep_delay_pairs(self._state_of(pid_of(name)).get("sleep_delay")))
         return hit[1], hit[2], hit[3]
 
     def _bg_check(self, now, snap: dict):
@@ -207,6 +209,8 @@ class SchedMixin:
             self._pro_cache = persona_probs(text)
         if self._rt:
             self._rt.set_shifts(shift_pairs(self.cfg.get("shift")))       # 起点平移 (1.0.402): 换了记录, 之前算好的日程作废
+            from comm.comm_persona import sleep_delay_pairs
+            self._rt.set_sleep_delays(sleep_delay_pairs(self.cfg.get("sleep_delay")))
         return self._seg_cache
 
     def _companion_sig(self, name: str) -> tuple:

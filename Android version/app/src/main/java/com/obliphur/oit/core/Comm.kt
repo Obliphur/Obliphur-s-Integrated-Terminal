@@ -2163,6 +2163,20 @@ data class ShiftRec(val ts: Long, val d: String, val s: Int, val f: Int) {
     fun json(): JSONObject = JSONObject().put("ts", ts).put("d", d).put("s", s).put("f", f)
 }
 
+data class SleepDelayRec(val ts: Long, val d: String, val m: Int) {
+    fun json(): JSONObject = JSONObject().put("ts", ts).put("d", d).put("m", m)
+}
+object SleepDelay {
+    const val KEEP = 30
+    fun norm(v: List<SleepDelayRec>): List<SleepDelayRec> = v.filter { it.m in 0..30 && runCatching { LocalDate.parse(it.d) }.isSuccess }
+        .distinctBy { it.ts }.sortedBy { it.ts }.takeLast(KEEP)
+    fun parse(a: JSONArray?): List<SleepDelayRec> = norm((0 until (a?.length() ?: 0)).mapNotNull { i ->
+        a?.optJSONObject(i)?.let { SleepDelayRec(it.optLong("ts"), it.optString("d"), it.optInt("m", -1)) }
+    })
+    fun json(v: List<SleepDelayRec>): JSONArray = JSONArray().also { a -> norm(v).forEach { a.put(it.json()) } }
+    fun pairs(v: List<SleepDelayRec>): List<Pair<LocalDate, Int>> = norm(v).map { LocalDate.parse(it.d) to it.m }
+}
+
 object CommShift {
     const val LO = 0                 // 存档只校验合法钟点；新请求的范围由人设模板决定
     const val HI = 24 * 60 - 1
@@ -2613,6 +2627,7 @@ class Comm(
     private var msgGone = 0
     /** 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件): 见 CommShift. */
     private var shift: List<ShiftRec> = emptyList()
+    private var sleepDelay: List<SleepDelayRec> = emptyList()
     private var loveKey = ""
     /** 开发者模式下不受 [cut off] 限制 (Core 接上). */
     var cutExempt: () -> Boolean = { false }
@@ -2663,6 +2678,7 @@ class Comm(
         var interaction = CommInteraction()
         var msgGone = 0
         var shift: List<ShiftRec> = emptyList()
+        var sleepDelay: List<SleepDelayRec> = emptyList()
     }
     private data class MemoryEdit(val action: String, val target: String, val text: String)
     private data class ToolOutcome(val plan: JointPlan?, val reply: String, val musicId: String, val memoryEdit: MemoryEdit?, val musicAction: JSONObject? = null, val coreadQuote: String = "", val coreadEnd: String = "")
@@ -2807,6 +2823,7 @@ class Comm(
         st.love = Love.parse(o?.optJSONObject("love"))
         st.msgGone = o?.optInt("msg_gone", 0) ?: 0
         st.shift = CommShift.parse(o?.optJSONArray("shift"))
+        st.sleepDelay = SleepDelay.parse(o?.optJSONArray("sleep_delay"))
         st.interaction = CommInteraction.parse(o?.optJSONObject("interaction"))
         return st
     }
@@ -2829,7 +2846,7 @@ class Comm(
             .put("mem_auto", st.memAuto).put("mem_live", st.memLive).put("mem_upto", st.memUpto).put("mem_ts", st.memTs)
             .put("mem_auto_ts", st.memAutoTs).put("mem_live_ts", st.memLiveTs).put("cut_until", st.cutUntil)
             .put("mem_fixed", JSONArray(messageMilestones(st)))
-            .put("love", st.love.json()).put("msg_gone", st.msgGone).put("shift", CommShift.json(st.shift))
+            .put("love", st.love.json()).put("msg_gone", st.msgGone).put("shift", CommShift.json(st.shift)).put("sleep_delay", SleepDelay.json(st.sleepDelay))
     }
 
     private fun writeState(p: String, st: ChatState) {
@@ -2841,7 +2858,7 @@ class Comm(
     private fun loadState(st: ChatState) {
         messages.clear(); messages.addAll(st.messages)
         clearTs = st.clearTs; retryAt = st.retryAt; retryN = st.retryN; proKey = st.proKey
-        memAuto = st.memAuto; memLive = st.memLive; memUpto = st.memUpto; memTs = st.memTs; memAutoTs = st.memAutoTs; memLiveTs = st.memLiveTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone; shift = st.shift
+        memAuto = st.memAuto; memLive = st.memLive; memUpto = st.memUpto; memTs = st.memTs; memAutoTs = st.memAutoTs; memLiveTs = st.memLiveTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone; shift = st.shift; sleepDelay = st.sleepDelay
         interaction = st.interaction
         memFixed = messageMilestones(st)
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
@@ -2850,7 +2867,7 @@ class Comm(
 
     private fun activeState() = ChatState().also {
         it.messages.addAll(messages); it.clearTs = clearTs; it.retryAt = retryAt; it.retryN = retryN; it.proKey = proKey
-        it.memAuto = memAuto; it.memLive = memLive; it.memUpto = memUpto; it.memTs = memTs; it.memAutoTs = memAutoTs; it.memLiveTs = memLiveTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone; it.shift = shift
+        it.memAuto = memAuto; it.memLive = memLive; it.memUpto = memUpto; it.memTs = memTs; it.memAutoTs = memAutoTs; it.memLiveTs = memLiveTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone; it.shift = shift; it.sleepDelay = sleepDelay
         it.interaction = interaction
         it.memFixed = memFixed
     }
@@ -3277,6 +3294,7 @@ class Comm(
             if (st.cutUntil > nowMs()) doc["cut:$p"] = st.cutUntil
             if (st.love.ts != 0L) doc["love:$p"] = st.love.json()                       // 亲密关系 / 告白: 后改的为准
             if (st.shift.isNotEmpty()) doc["shift:$p"] = CommShift.json(st.shift)       // 起点平移记录: 两边合起来 (按记下的时刻去重)
+            if (st.sleepDelay.isNotEmpty()) doc["sleep_delay:$p"] = SleepDelay.json(st.sleepDelay)
             val memT = maxOf(st.memTs, st.memAutoTs, st.memLiveTs)
             if (memT > 0L)
                 doc["mem:$p"] = JSONObject()
@@ -3451,6 +3469,11 @@ class Comm(
                     val tc = touch(rest)
                     val merged = CommShift.norm(tc.st.shift + CommShift.parse(v))
                     if (merged != CommShift.norm(tc.st.shift)) { tc.st.shift = merged; tc.dirty = true }
+                }
+                kind == "sleep_delay" && v is JSONArray -> {
+                    val tc = touch(rest)
+                    val merged = SleepDelay.norm(tc.st.sleepDelay + SleepDelay.parse(v))
+                    if (merged != SleepDelay.norm(tc.st.sleepDelay)) { tc.st.sleepDelay = merged; tc.dirty = true }
                 }
                 kind == "retry" -> {
                     val o = v as? JSONObject
@@ -4498,6 +4521,19 @@ class Comm(
     private var shiftAskTo = 0
 
     fun shifts(): List<ShiftRec> = CommShift.norm(shift)
+    fun sleepDelays(): List<SleepDelayRec> = SleepDelay.norm(sleepDelay)
+
+    @Synchronized
+    fun applySleepDelay(minutes: Int): String {
+        if (minutes !in 0..30) return "睡眠延迟最多 30 分钟"
+        loadSchedule()
+        if (rt == null) return "没有持续时间日程，不能修改睡眠时间"
+        val day = otherStatus()?.second?.toLocalDate() ?: now().toLocalDate()
+        val rec = SleepDelayRec(maxOf(nowMs(), sleepDelays().maxOfOrNull { it.ts } ?: 0L) + 1, day.toString(), minutes)
+        sleepDelay = SleepDelay.norm(sleepDelays() + rec)
+        loadSchedule(); saveChat(); changed(); push()
+        return ""
+    }
 
     /** d (默认明天) 这一天对方的初始起点 (分钟); 没有日程文件 = null. */
     fun shiftStart(d: LocalDate? = null): Int? {
@@ -7438,6 +7474,10 @@ class Comm(
             val alreadyShown = r.batch?.messages?.filter { it.pendingReply == null }.orEmpty()
             val m = replyComplete(text, r.batch) ?: run { saveChat(); changed(); return }
             activeReplyAfter = 0L
+            if (ToolProtocol.unpack(r.reply) != null && ToolProtocol.args(r.reply).has("sleep_delay_minutes")) {
+                val delayErr = applySleepDelay(ToolProtocol.args(r.reply).optInt("sleep_delay_minutes", -1))
+                if (delayErr.isNotEmpty()) log("SLEEP_DELAY rejected: $delayErr")
+            }
             r.op?.let { opApply(it, m) }
             if (r.coreadQuote.isNotEmpty()) coreadOfferApply(r.coreadQuote, m)
             if (r.coreadEnd.isNotEmpty()) coreadEndApply(r.coreadEnd, m)
@@ -7590,6 +7630,7 @@ class Comm(
             proCache = CommText.personaProbs(text)
         }
         rt?.setShifts(CommShift.pairs(shift))                  // 起点平移 (1.0.402): 换了记录, 之前算好的日程作废
+        rt?.setSleepDelays(SleepDelay.pairs(sleepDelay))
         return segCache
     }
 
@@ -7861,6 +7902,7 @@ class Comm(
         val rtHit = bgRt[name]?.takeIf { it.first == sig } ?: (sig to Routine.parse(readRoutine(name))).also { bgRt[name] = it }
         val spec = rtHit.second
         spec?.setShifts(CommShift.pairs(stateOf(pidOf(name)).shift))       // 起点平移 (1.0.402)
+        spec?.setSleepDelays(SleepDelay.pairs(stateOf(pidOf(name)).sleepDelay))
         val hit = bgSeg[name]?.takeIf { it.first == sig } ?: run {
             val text = readPersonaFull(name)
             Triple(sig, if (spec != null) emptyList() else CommText.scheduleEntries(text), CommText.personaProbs(text)).also { bgSeg[name] = it }

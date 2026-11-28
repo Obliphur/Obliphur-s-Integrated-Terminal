@@ -52,7 +52,7 @@ from .comm_builtin import (
 )
 from .comm_persona import is_profile_name, profile_files, other_profiles_text
 from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, MENTAL_WORDS, mental_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
-from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, room_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, read_persona_rules, read_persona_prompt, import_persona
+from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, room_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, read_persona_rules, read_persona_prompt, import_persona, sleep_delay_norm, sleep_delay_pairs
 
 from .comm_const import *
 from .comm_rules import typing_delay_rules
@@ -710,6 +710,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 doc[f"love:{pid}"] = love_norm(st.get("love"))      # 亲密关系 / 告白: 后改的为准
             if shift_norm(st.get("shift")):
                 doc[f"shift:{pid}"] = shift_norm(st.get("shift"))   # 起点平移记录: 两边合起来 (按记下的时刻去重)
+            if sleep_delay_norm(st.get("sleep_delay")):
+                doc[f"sleep_delay:{pid}"] = sleep_delay_norm(st.get("sleep_delay"))
             mem_t = max(int(st.get("mem_ts") or 0), int(st.get("mem_auto_ts") or 0), int(st.get("mem_live_ts") or 0))
             if mem_t > 0:
                 doc[f"mem:{pid}"] = {
@@ -1004,6 +1006,13 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 merged = shift_norm(have + shift_norm(val))
                 if merged != have:
                     st["shift"] = merged
+                    touched[rest][1] = True
+            elif kind == "sleep_delay" and isinstance(val, list):
+                st = st_of(rest)[0]
+                have = sleep_delay_norm(st.get("sleep_delay"))
+                merged = sleep_delay_norm(have + sleep_delay_norm(val))
+                if merged != have:
+                    st["sleep_delay"] = merged
                     touched[rest][1] = True
             elif kind == "retry":
                 st_of(rest)[0]["retry"] = dict(val) if isinstance(val, dict) else {}
@@ -1838,6 +1847,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self.save_chat()
                 self._changed()
                 return
+            delay_arg = args_of(reply).get("sleep_delay_minutes") if unpack(reply) is not None else None
+            if delay_arg is not None:
+                err_delay = self.apply_sleep_delay(delay_arg)
+                if err_delay:
+                    self.log("SLEEP_DELAY rejected: " + err_delay)
             pending_image = self._answer_image_pending
             self._answer_image_pending = None
             if pending_image and m.get("role") == "ai":

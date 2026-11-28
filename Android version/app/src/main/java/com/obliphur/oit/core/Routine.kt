@@ -40,6 +40,8 @@ class RoutineSpec {
     /** 起点平移 (1.0.402): (生效日期, 分钟) 按日期排, 从那一天起起点换成这个分钟数; 记在聊天状态里, 不改日程文件. */
     var shifts: List<Pair<LocalDate, Int>> = emptyList()
         private set
+    var sleepDelays: List<Pair<LocalDate, Int>> = emptyList()
+        private set
     fun ok() = start != null && items.isNotEmpty()
 
     /** d 这一天的初始起点 (从 0:00 起的分钟): 日程文件里写的, 被平移过的话是最近一次生效的平移 (生效日期 <= d). */
@@ -56,6 +58,15 @@ class RoutineSpec {
         shifts = sh
         plans.clear()
         restPlans.clear()
+        return true
+    }
+
+    fun sleepDelayFor(d: LocalDate): Int = sleepDelays.firstOrNull { it.first == d }?.second?.coerceIn(0, 30) ?: 0
+    fun setSleepDelays(v: List<Pair<LocalDate, Int>>): Boolean {
+        val clean = v.map { it.first to it.second.coerceIn(0, 30) }.sortedBy { it.first }
+        if (clean == sleepDelays) return false
+        sleepDelays = clean
+        plans.clear(); restPlans.clear()
         return true
     }
 }
@@ -226,7 +237,8 @@ object Routine {
     fun wakeAt(r: RoutineSpec, d: LocalDate, seed: String): LocalDateTime {
         // 起床后首段就是特殊空闲时，也完整保留固定半小时。
         val (lo, hi) = if (r.items.firstOrNull()?.let { !it.isLoop && specialLabel(it.label) } == true) (0.0 to 0.0) else r.fluct.getValue("sleep_end")
-        return d.atStartOfDay().plusMinutes((r.startFor(d) + rint("$seed|wake|$d", lo, hi)).toLong())
+        val delay = r.sleepDelayFor(d.minusDays(1))
+        return d.atStartOfDay().plusSeconds(((r.startFor(d) + rint("$seed|wake|$d", lo, hi)) * 60L) + delay * 15L)
     }
 
     /** [a, b] 里对方起床的时刻 (按时间排) = 每天睡眠段的结束 (wakeAt). 共时闹钟 (1.0.359) 据此响铃; 同 routine.wake_times. */
@@ -304,7 +316,9 @@ object Routine {
         val out = ArrayList<RtSeg>()
         for ((i, s) in segs.withIndex()) out.add(s.copy(start = ns[i], end = ne[i]))
         val nxt = wakeAt(r, d.plusDays(1), seed)
-        val sleepStart = c
+        val sleepDelay = r.sleepDelayFor(d)
+        val sleepStart = c.plusMinutes(sleepDelay.toLong())
+        if (sleepDelay > 0) out.add(RtSeg("idle", c, sleepStart, "睡眠延后", gap = true))
         if (sleepStart.isBefore(nxt)) out.add(RtSeg("sleep", sleepStart, nxt, "睡眠"))
         return out.sortedBy { it.start }
     }

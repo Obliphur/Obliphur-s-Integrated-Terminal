@@ -288,6 +288,12 @@
           "minimum": 0.01,
           "maximum": 1440
         },
+        "sleep_delay_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30,
+          "description": "被用户明确要求时，你可以自行决定是否把下一次睡眠延后；最多 30 分钟。次日起床只延后该值的四分之一。"
+        },
         "cut_minutes": {
           "type": "number",
           "minimum": 1,
@@ -582,7 +588,7 @@
   },
   {
     "name": "oit_room_action",
-    "description": "在手机沟通页面聊天时，同步执行情景小屋内的行动（沿相连的房间走动、更换室内位置、从里侧反锁/解锁当前房门、把持有钥匙的房间钥匙分给用户、开启/取消跟随、与人牵手或放手、束缚或放开对方双手，或对同房间同位置的成员做和用户一样的手部 / 目光动作）。",
+    "description": "在手机沟通页面聊天时，同步执行情景小屋内的行动（沿相连的房间走动、更换室内位置、从里侧反锁/解锁当前房门、把持有钥匙的房间钥匙分给用户、开启/取消跟随、与人牵手或放手、束缚或放开对方双手、对同房间同位置的成员做动作，或更新你对其他角色的印象）。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -653,6 +659,14 @@
             },
             "required": ["hand", "part"],
             "additionalProperties": false
+          }
+        },
+        "impressions": {
+          "type": "object",
+          "description": "按角色 id 提交你对同房间其他角色的完整印象；只在有新互动依据时更新，空字符串删除旧印象。不要包含用户或自己。",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 240
           }
         }
       },

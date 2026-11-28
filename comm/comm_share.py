@@ -28,13 +28,38 @@ from comm.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET
 from comm.comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
 from comm.comm_prompt import (REFUSE, SHIFT_TAG, MSGS_TAG, CONSENT_TUTORIAL, THINK_LONG, THINK_WORDS,
                               THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt)
-from comm.comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, read_persona_rules, import_persona
+from comm.comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, read_persona_rules, import_persona, sleep_delay_norm
 from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 
 
 class ShareMixin:
+    def apply_sleep_delay(self, minutes: int | float) -> str:
+        """按角色自己的判断，把下一次睡眠最多延后 30 分钟；次日起床由日程引擎按四分之一计算。"""
+        try:
+            mins = int(minutes)
+        except (TypeError, ValueError):
+            return "睡眠延迟必须是整数分钟"
+        if mins < 0 or mins > 30:
+            return "睡眠延迟最多 30 分钟"
+        self._load_schedule()
+        if not self._rt:
+            return "没有持续时间日程，不能修改睡眠时间"
+        status = self.other_status()
+        day = (status.get("begin") or self.now()).date() if status.get("kind") == "sleep" else self.now().date()
+        current = sleep_delay_norm(self.cfg.get("sleep_delay"))
+        rec = {"ts": max(self._ms(), max([e["ts"] for e in current] + [0]) + 1),
+               "d": f"{day:%Y-%m-%d}", "m": mins}
+        merged = sleep_delay_norm(current + [rec])
+        if merged == current:
+            return ""
+        self.cfg["sleep_delay"] = merged
+        self._load_schedule()
+        self.save_chat()
+        self._changed()
+        self._push()
+        return ""
     @staticmethod
     def _share_fresh() -> dict:
         return {"on": False, "started": False, "view": "me", "page": "", "pending": "", "last": 0, "pages": []}

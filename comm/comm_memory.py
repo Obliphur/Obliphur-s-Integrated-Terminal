@@ -15,6 +15,7 @@ from comm.comm_persona import MEM_MAX
 # 从发给模型的 System Prompt 中剥离可显著减少上下文噪声，且不改变任何规则解析行为。
 MACHINE_TEMPLATE_BLOCKS = (
     "shift",
+    "sleep_delay",
     "condition",
     "condition:strict",
     "tension",

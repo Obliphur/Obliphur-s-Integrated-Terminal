@@ -95,7 +95,8 @@ def wake_at(r: Routine, d: _date, seed: str) -> datetime:
     lo, hi = r.fluct["sleep_end"]
     if r.items and r.items[0]["type"] == "block" and special_label(r.items[0]["label"]):
         lo, hi = 0, 0                 # 起床后首段就是特殊空闲时，也完整保留固定半小时。
-    return datetime.combine(d, datetime.min.time()) + timedelta(minutes=r.start_for(d) + rint(f"{seed}|wake|{d}", lo, hi))
+    delay = r.sleep_delay_for(d - timedelta(days=1))
+    return datetime.combine(d, datetime.min.time()) + timedelta(minutes=r.start_for(d) + rint(f"{seed}|wake|{d}", lo, hi) + delay * 0.25)
 
 
 def wake_times(r: Routine, a: datetime, b: datetime, seed: str) -> list:
@@ -181,7 +182,10 @@ def _day_plan(r: Routine, d: _date, seed: str, fluct: bool) -> list:
     for i, s in enumerate(segs):
         out.append(dict(s, start=ns[i], end=ne[i]))
     nxt = wake_at(r, d + timedelta(days=1), seed)
-    sleep_start = c
+    sleep_delay = r.sleep_delay_for(d)
+    sleep_start = c + timedelta(minutes=sleep_delay)
+    if sleep_delay:
+        out.append(seg("idle", c, sleep_start, "睡眠延后", gap=True))
     if sleep_start < nxt:
         out.append(seg("sleep", sleep_start, nxt, "睡眠"))
     out.sort(key=lambda s: s["start"])

@@ -13,6 +13,7 @@ from .persona_codec import MAX_PERSONA, read_file, write_file, migrate_file
 
 SHIFT_LO, SHIFT_HI = 0, 24 * 60 - 1   # 存档只校验合法钟点；新请求的范围由人设模板决定
 SHIFT_KEEP = 30                       # 每个聊天对象最多留多少条平移记录
+SLEEP_DELAY_KEEP = 30                 # 每个聊天对象最多留多少条睡眠延迟记录
 MEM_MAX = 2000                        # 记忆卡最多多少字
 PERSONA_EXT = (".txt", ".md")
 
@@ -77,6 +78,38 @@ def shift_pairs(v) -> list:
     return [(datetime.strptime(d, "%Y-%m-%d").date(), e["s"]) for d, e in sorted(best.items())]
 
 
+def sleep_delay_norm(v) -> list:
+    """睡眠延迟记录 [{ts, d, m}]：d 为哪一天的睡眠段，m 为 0~30 分钟。"""
+    out, seen = [], set()
+    for e in (v if isinstance(v, (list, tuple)) else []):
+        try:
+            ts, mins = int(e["ts"]), int(e["m"])
+            day = datetime.strptime(str(e["d"]), "%Y-%m-%d").strftime("%Y-%m-%d")
+        except (TypeError, ValueError, KeyError, AttributeError):
+            continue
+        if ts in seen or not 0 <= mins <= 30:
+            continue
+        seen.add(ts)
+        out.append({"ts": ts, "d": day, "m": mins})
+    out.sort(key=lambda e: e["ts"])
+    return out[-SLEEP_DELAY_KEEP:]
+
+
+def sleep_delay_pairs(v) -> list:
+    best = {}
+    for e in sleep_delay_norm(v):
+        best[e["d"]] = e
+    return [(datetime.strptime(d, "%Y-%m-%d").date(), e["m"]) for d, e in sorted(best.items())]
+
+
+def sleep_delay_line(st) -> str:
+    pairs = sleep_delay_pairs((st or {}).get("sleep_delay"))
+    if not pairs:
+        return ""
+    day, mins = pairs[-1]
+    return f"- 【系统记录】{day:%Y-%m-%d} 的睡眠延后 {mins} 分钟，次日起床相应延后 {mins * 0.25:g} 分钟。"
+
+
 def hm_text(mins: int) -> str:
     return f"{int(mins) // 60}:{int(mins) % 60:02d}"
 
@@ -130,6 +163,7 @@ def mem_fields(d) -> dict:
             "cut_until": int(d.get("cut_until") or 0),      # 对方切断谈话到什么时候 (毫秒时间戳; 0 = 没有)
             "love": love_norm(d.get("love")),               # 亲密关系 / 告白 (1.0.397)
             "shift": shift_norm(d.get("shift")),            # 起点平移记录 (1.0.402)
+            "sleep_delay": sleep_delay_norm(d.get("sleep_delay")),
             "msg_gone": max(0, int(d.get("msg_gone") or 0)),
             "subagents": agents}      # 短期子代理上下文, 每个会话最多五轮
 

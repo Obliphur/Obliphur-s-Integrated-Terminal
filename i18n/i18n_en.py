@@ -2,6 +2,9 @@
 
 
 EN = {
+    "睡眠延迟最多 30 分钟": "Sleep can be delayed by at most 30 minutes",
+    "睡眠延迟必须是整数分钟": "Sleep delay must be a whole number of minutes",
+    "没有持续时间日程，不能修改睡眠时间": "There is no duration-based schedule, so sleep time cannot be changed",
     "对方的左手": "Their left hand",
     "对方的右手": "Their right hand",
     "请提供 Project Gutenberg 或 Standard Ebooks 的官方书目地址。": "Provide an official Project Gutenberg or Standard Ebooks book page URL.",

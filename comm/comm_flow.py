@@ -166,6 +166,8 @@ class FlowMixin:
         auto = str(st.get("mem_auto") or "").strip()[:MEM_MAX]
         live = str(st.get("mem_live") or "").strip()[:MEM_MAX] if include_live else ""
         rel = love_line(st)                                  # 亲密关系由 OIT 记录, 总是写在最前面 (不管模型有没有整理过)
+        from comm.comm_persona import sleep_delay_line
+        sleep_delay = sleep_delay_line(st)
         shf = shift_line(st)                                 # 起点平移 (1.0.402) 同理
         from .comm_offenses import offenses_line
         offenses = offenses_line(st.get("interaction"))
@@ -173,9 +175,9 @@ class FlowMixin:
                           for n in mem_fields(st)["mem_fixed"])
         target_pid = pid or (self.pid if st is self._active_state() or not pid else "")
         arch = archive_summary_line(self.dir, target_pid) if (include_live and target_pid) else ""
-        if not auto and not live and not rel and not shf and not fixed and not offenses and not arch:
+        if not auto and not live and not rel and not shf and not sleep_delay and not fixed and not offenses and not arch:
             return ""
-        return "\n\n以下是关于用户的长期记忆(自动整理摘要可能不精确；实时事件由你通过记忆工具维护，条目带 [#E*] 编号可直接按编号修改或移除；标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + "\n".join(x for x in (rel, shf, fixed, offenses, auto, live, arch) if x)
+        return "\n\n以下是关于用户的长期记忆(自动整理摘要可能不精确；实时事件由你通过记忆工具维护，条目带 [#E*] 编号可直接按编号修改或移除；标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + "\n".join(x for x in (rel, shf, sleep_delay, fixed, offenses, auto, live, arch) if x)
 
     def memory_block(self) -> str:
         return self.memory_block_of(self._active_state(), pid=self.pid)
