@@ -124,7 +124,7 @@ DEFAULTS = {"persona": "", "show_avatar": True, "coread_link": {}, "coread_offer
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "", "example_base": "", "profile_base": "", "builtin_bases": {},
             "legacy_done": False, "joint_last": [], "user_profile": "", "user_adult": False, "user_adult_ts": 0,
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {}, "sched_follow": False, "pro_lang": "",
-            "room_npc_chat": False, "room_npc_interval": 30, "room_npc_prob": 30, "room_npc_idle_min": 15,
+            "room_npc_chat": False, "room_npc_always_api": True, "room_npc_interval": 30, "room_npc_prob": 30, "room_npc_idle_min": 15,
             "room_awareness": True,                         # 旧配置兼容：房间状态说明始终开启
             "room_auto_enter": True,                        # 从沟通入口默认进入小屋
             "answer_images": True,                          # 学科子代理回答是否生成可滑动长图

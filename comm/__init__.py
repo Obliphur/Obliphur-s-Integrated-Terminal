@@ -551,7 +551,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._changed()
         if ("think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw
                 or "sched_follow" in kw or "pro_lang" in kw or "answer_images" in kw
-                or "room_auto_enter" in kw):
+                or "room_auto_enter" in kw or "room_npc_always_api" in kw):
             self._push()
 
     def _changed(self):
@@ -651,6 +651,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         doc["avatar"] = bool(self.cfg.get("show_avatar"))      # 显示头像: 设置页的开关也同步
         doc["answer_images"] = self.answer_images_on()
         doc["room_auto_enter"] = bool(self.cfg.get("room_auto_enter", True))
+        doc["room_npc_always_api"] = bool(self.cfg.get("room_npc_always_api", True))
         rec = self.cfg.get("idle_use") or {}
         if rec.get("d"):
             doc["idle"] = {"d": rec["d"], "s": float(rec.get("s") or 0)}      # 两台设备共用一份额度 (各自累计的取大的)
@@ -948,6 +949,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             elif key == "room_auto_enter" and isinstance(val, bool):
                 if val != bool(self.cfg.get("room_auto_enter", True)):
                     self.cfg["room_auto_enter"] = val
+                    self.save_cfg()
+                    self._changed()
+            elif key == "room_npc_always_api" and isinstance(val, bool):
+                if val != bool(self.cfg.get("room_npc_always_api", True)):
+                    self.cfg["room_npc_always_api"] = val
                     self.save_cfg()
                     self._changed()
             elif key == "profile":
@@ -1984,7 +1990,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 prob = int(self.cfg.get("room_npc_prob") or 30)
                 plan = auto_step_plan(self.room_store, self.room_store.current_room_id(),
                                       set(), True, prob, include_other_rooms=True, blocked_ids=blocked,
-                                      always_model=True)
+                                      always_model=bool(self.cfg.get("room_npc_always_api", True)))
                 # 房间页开着时由页面调模型；这里只管人物不在眼前时的生活模拟
                 if plan and plan[0] == "system":
                     if self.room_store.perform_idle_system_step(plan[1], persona_title(plan[1])):

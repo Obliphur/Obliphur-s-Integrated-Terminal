@@ -1892,7 +1892,7 @@ class RoomPage(tk.Frame):
         rid = self.store.current_room_id()
         plan = auto_step_plan(self.store, rid, self._busy_actors, enabled, prob,
                              include_other_rooms=True, blocked_ids=blocked,
-                             always_model=True)
+                             always_model=bool(self.comm.cfg.get("room_npc_always_api", True)))
         if plan:
             kind, aid, actor_room = plan
             if kind == "model":

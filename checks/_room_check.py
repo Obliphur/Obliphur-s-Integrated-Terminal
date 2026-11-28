@@ -344,6 +344,9 @@ def main():
         plan = auto_step_plan(store, c_rid, set(), True, 100, rng=random.Random(1),
                               include_other_rooms=True, blocked_ids=blocked_ids)
         assert plan is not None and plan[0] == "system", "注意力低于阈值时由系统接管"
+        plan = auto_step_plan(store, c_rid, set(), True, 100, rng=random.Random(1),
+                              include_other_rooms=True, blocked_ids=blocked_ids, always_model=True)
+        assert plan is not None and plan[0] == "model", "开启每次调用 API 后应跳过注意力与额度转系统"
 
         # 7.5 房间连接、门的内外侧、音量传播与断开房间的自动清理
         s2 = RoomStore(os.path.join(tmp, "rooms2"))

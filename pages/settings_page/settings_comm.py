@@ -158,7 +158,7 @@ class CommSettingsMixin:
             fill="x", padx=12, pady=(0, 8))
 
         fr, _head = self._card(body, "🏠  情景房间 · 角色对话")
-        tk.Label(fr, text=tr("开启后，房间内的非玩家角色每隔 X 秒以设定概率行动一次；每次行动都调用 API，由角色自己决定移动、活动或发言。"),
+        tk.Label(fr, text=tr("开启后，房间内的非玩家角色每隔 X 秒以设定概率行动一次；是否每次调用 API 可单独设置。"),
                  bg=card, fg=COLORS["text_dim"], font=small, anchor="w", justify="left", wraplength=560).pack(
             fill="x", padx=12, pady=(0, 4))
         v = tk.BooleanVar(value=bool(c.cfg.get("room_npc_chat", False)))
@@ -168,6 +168,13 @@ class CommSettingsMixin:
                                    font=config.font("body"), anchor="w",
                                    command=lambda: self._comm_flag("room_npc_chat")), "允许非玩家角色自动行动 / 对话").pack(
             fill="x", padx=12, pady=(0, 4))
+        v = tk.BooleanVar(value=bool(c.cfg.get("room_npc_always_api", True)))
+        self.comm_vars["room_npc_always_api"] = v
+        self._track(tk.Checkbutton(fr, text=tr("每次行动都调用 API"), variable=v, bg=card, fg=COLORS["text"],
+                                   selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
+                                   font=config.font("body"), anchor="w",
+                                   command=lambda: self._comm_flag("room_npc_always_api")),
+                    "每次行动都调用 API").pack(fill="x", padx=12, pady=(0, 4))
         v = tk.BooleanVar(value=bool(c.cfg.get("room_auto_enter", True)))
         self.comm_vars["room_auto_enter"] = v
         self._track(tk.Checkbutton(fr, text=tr("自动进入小屋"), variable=v, bg=card, fg=COLORS["text"],
@@ -403,6 +410,10 @@ class CommSettingsMixin:
             want_npc = bool(c.cfg.get("room_npc_chat", False))
             if self.comm_vars["room_npc_chat"].get() != want_npc:
                 self.comm_vars["room_npc_chat"].set(want_npc)
+        if "room_npc_always_api" in self.comm_vars:
+            want_always = bool(c.cfg.get("room_npc_always_api", True))
+            if self.comm_vars["room_npc_always_api"].get() != want_always:
+                self.comm_vars["room_npc_always_api"].set(want_always)
         if "room_auto_enter" in self.comm_vars:
             want_auto = bool(c.cfg.get("room_auto_enter", True))
             if self.comm_vars["room_auto_enter"].get() != want_auto:
