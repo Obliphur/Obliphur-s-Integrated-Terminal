@@ -433,6 +433,10 @@ def main():
         personas_dir = os.path.join(tmp, "personas")
         os.makedirs(personas_dir, exist_ok=True)
         c = comm_mod.Comm(tmp, personas_dir)
+        memory_before = c._state_of(c.pid).get("mem_live", "")
+        c.room_store.add_room({"name": "记忆测试房", "theme": "测试", "ascii_map": ["┌─[门]─┐", "└─────┘"]})
+        memory_after = c._state_of(c.pid).get("mem_live", "")
+        assert "【房间地图】" in memory_after and memory_after != memory_before
         assert c.msg_total_for("Claudia.txt") >= 0
         assert int(c.cfg.get("room_npc_idle_min")) == 15
         note = c.room_status_note()

@@ -1530,7 +1530,7 @@ class RoomPage(tk.Frame):
         if not self.comm:
             return
         try:
-            profile = self.comm.profile()
+            profile = self.comm.main_profile() if hasattr(self.comm, "main_profile") else self.comm.profile("")
             ai_assist.check_profile(profile)
         except Exception as exc:
             toast.warn(tr("AI 模型未配置：{err}", err=exc))
@@ -1589,7 +1589,8 @@ class RoomPage(tk.Frame):
         if self._generating_map or not self.comm:
             return
         try:
-            profile = self.comm.profile(); ai_assist.check_profile(profile)
+            profile = self.comm.main_profile() if hasattr(self.comm, "main_profile") else self.comm.profile("")
+            ai_assist.check_profile(profile)
         except Exception as exc:
             toast.warn(tr("AI 模型未配置：{err}", err=exc)); return
         old = self.store.rooms.get(room_id)

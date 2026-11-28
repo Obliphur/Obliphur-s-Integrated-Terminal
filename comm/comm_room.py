@@ -2144,14 +2144,14 @@ def build_map_generation_prompt(theme: str, desc: str, old_map: str = "", topolo
         '  "theme": "场景主题",\n'
         '  "ambience": "一句话氛围描写(不超过60字)",\n'
         '  "ascii_map": ["第一行", "第二行", ...],\n'
-        '  "facilities": [{"token": "[设施名]", "label": "设施名", "action": "piano|bookshelf|desk|board|door|position|custom", "desc": "简短说明"}],\n'
+        '  "facilities": [{"token": "[设施名]", "label": "设施名", "action": "piano|bookshelf|desk|board|door|position|timer|contract|knowledge|music|coread|joint|custom", "desc": "简短说明"}],\n'
         '  "map_note": "用自然语言说明本地图中各个空间、门和相邻房间的连接关系"\n'
         "}\n"
         "要求：\n"
         "1. ascii_map 使用 Unicode 框线字符（┌ ─ ┐ │ └ ┘）绘制一个 8~12 行整齐的房间，内部尽量包含 [椅子] 和 [墙边] 等位置节点。\n"
         "2. 所有可点击设施与位置必须用半角方括号包裹，如 [钢琴]、[书架]、[书桌]、[椅子]、[墙边]、[门]。\n"
         "3. 地图底部必须包含 [门]（action 为 door），方便玩家进出房间。\n"
-        "4. action 映射：钢琴/乐器用 piano，书架用 bookshelf，书桌用 desk，布告板用 board，门用 door，椅子/墙边/沙发/窗台等位置用 position，其他用 custom。\n"
+        "4. action 映射：钢琴/乐器用 piano，书架用 bookshelf，书桌用 desk，布告板用 board，门用 door；计时/合约/知识库/音乐/共读/联合行动分别用 timer/contract/knowledge/music/coread/joint；椅子/墙边/沙发/窗台等位置用 position，其他用 custom。\n"
         "5. 如果提供了旧地图，必须在其基础上修改而不是忽略；保留合理的既有空间与设施，并落实用户的新要求。"
     )
     user_msg = f"主题：{theme.strip()}\n场景设定与细节：{desc.strip() or '按主题自由发挥，富有复古文字游戏质感。'}"
