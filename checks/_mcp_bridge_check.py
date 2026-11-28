@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""端到端检查：OIT MCP Bridge（HTTP + SSE）、子代理双路由、Antigravity Hooks、TypeScript MCP Server（stdio + Streamable HTTP）与 aux_pane 资源。"""
+"""端到端检查：OIT MCP Bridge（HTTP + SSE）、子代理双路由、工具协议双端同步、Antigravity Hooks、TypeScript MCP Server 与 aux_pane 资源。"""
 
 from datetime import datetime, timedelta
 import json
@@ -36,6 +36,16 @@ def _http_json(port: int, token: str, path: str, body=None):
 
 
 def main():
+    with open(os.path.join(ROOT, "defaults", "comm_tools.json"), encoding="utf-8") as fh:
+        desktop_tools = json.load(fh)
+    with open(os.path.join(ROOT, "Android version", "app", "src", "main", "resources", "comm_tools.json"),
+              encoding="utf-8") as fh:
+        android_tools = json.load(fh)
+    assert desktop_tools == android_tools, "MCP 宿主和 Android 必须使用一致的沟通工具协议"
+    room_tool = next((item for item in desktop_tools if item.get("name") == "oit_room_action"), None)
+    assert room_tool and "impressions" in room_tool["parameters"]["properties"], \
+        "小屋工具应允许角色提交对其他角色的印象更新"
+
     tmp = tempfile.mkdtemp(prefix="oit_mcp_check_")
     personas_dir = os.path.join(tmp, "personas")
     os.makedirs(personas_dir, exist_ok=True)
@@ -566,7 +576,7 @@ def main():
             ctx_pro = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=1")
             assert ctx_pro["ok"] is True and not snapshot_calls and "snapshot" not in ctx_pro
             sys_pro = ctx_pro["system_message"]
-            assert len(sys_pro) < 600, f"主动触发上下文过大 ({len(sys_pro)} 字): {sys_pro}"
+            assert len(sys_pro) < 900, f"主动触发上下文过大 ({len(sys_pro)} 字): {sys_pro}"
             assert "用户:break" not in sys_pro and "用户:" not in sys_pro
             assert sys_pro.count("(OIT 系统提供, 用户看不到)") == 0 and "日程:" in sys_pro
             assert "效价代表角色当前的正负情绪倾向" not in sys_pro

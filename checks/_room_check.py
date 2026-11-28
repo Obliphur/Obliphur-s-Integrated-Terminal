@@ -20,6 +20,7 @@ from comm.comm_room import (
     RoomStore,
     auto_step_plan,
     display_width,
+    execute_room_tool,
     parse_actor_reply,
     parse_generated_room,
     part_allowed,
@@ -264,6 +265,32 @@ def main():
         assert [a["hand"] for a in act_parsed["actions"]] == ["left", "gaze"], "无效手部与越界目标应被丢掉"
         assert act_parsed["actions"][1]["part"] == "目光注视"
         assert parse_actor_reply('{"actions":[]}', {"user"})["actions"] == []
+        impression_reply = parse_actor_reply(
+            '{"impressions":{"Gemina.txt":"起初谨慎，如今愿意主动分享想法。","user":"错误目标",'
+            '"Claudia.txt":"自我印象不应保存","unknown":"越界"}}',
+            {"user", "Claudia.txt", "Gemina.txt"},
+        )
+        assert set(impression_reply["impressions"]) == {"Gemina.txt", "Claudia.txt"}
+        assert store.update_impressions("Claudia.txt", impression_reply["impressions"],
+                                        {"Claudia.txt", "Gemina.txt", "user"}) == 1
+        assert store.impressions["Claudia.txt"] == {"Gemina.txt": "起初谨慎，如今愿意主动分享想法。"}
+        assert store.update_impressions("Claudia.txt", {"user": "不得记录", "unknown": "越界"},
+                                        {"Claudia.txt", "Gemina.txt", "user"}) == 0
+        reloaded = RoomStore(tmp)
+        assert reloaded.impressions["Claudia.txt"]["Gemina.txt"] == "起初谨慎，如今愿意主动分享想法。"
+        tool_store = RoomStore(os.path.join(tmp, "impression_tool"))
+        tool_store.sync_personas([("Claudia.txt", "Claudia"), ("Gemina.txt", "Gemina")])
+        for aid, title in (("Claudia.txt", "Claudia"), ("Gemina.txt", "Gemina")):
+            assert tool_store.enter_room(aid, "lounge", title, force=True) == ""
+        tool_result = execute_room_tool(
+            tool_store, "Claudia.txt", "Claudia",
+            {"impressions": {"Gemina.txt": "她会认真听完不同意见。", "user": "禁止"}},
+            {"Claudia.txt": "Claudia", "Gemina.txt": "Gemina", "user": "我"},
+        )
+        assert "已更新对 1 位角色的印象" in tool_result["results"]
+        assert tool_store.impressions["Claudia.txt"] == {"Gemina.txt": "她会认真听完不同意见。"}
+        reloaded.clear_logs()
+        assert RoomStore(tmp).impressions["Claudia.txt"]["Gemina.txt"] == "起初谨慎，如今愿意主动分享想法。"
 
         # 7. 专注/睡眠自动反锁自己的房间、空闲系统随机活动（不发言）与注意力调度
         assert store.enter_room("user", "lounge", "我") == ""

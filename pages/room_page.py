@@ -1780,6 +1780,8 @@ class RoomPage(tk.Frame):
         names = self._persona_names()
         actor_name = names.get(actor_id, actor_id)
         room_id = self.store.occupants.get(actor_id) or room_id
+        self.store.update_impressions(actor_id, parsed.get("impressions"),
+                                      set(self.store.occupants_in(room_id)))
 
         # 被隔房叫到名字：先走过去，之后说的话就落在走进去的那个房间里
         if summon:

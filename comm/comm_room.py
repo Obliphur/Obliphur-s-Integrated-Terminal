@@ -581,6 +581,7 @@ class RoomStore:
         self.holding: dict[str, dict] = {}          # actor_id -> {"left"/"right": target_id}（这只手握住了谁）
         self.pending: dict[str, list[dict]] = {}    # actor_id -> 待发动作（下一句话一起发出的手部/目光动作）
         self.moods: dict[str, dict] = {}            # actor_id -> {label, until, reason}（被打扰等短暂情绪）
+        self.impressions: dict[str, dict[str, str]] = {}  # observer_id -> target_id -> lasting impression
         self.name_map: dict[str, str] = {}          # 运行时由界面写入，给系统日志用
         self.logs: list[dict] = []
         self.on_map_changed = None
@@ -698,6 +699,9 @@ class RoomStore:
             self.heard.pop(aid, None)
             self.auto_turns.pop(aid, None)
             self.moods.pop(aid, None)
+            self.impressions.pop(aid, None)
+            for impressions in self.impressions.values():
+                impressions.pop(aid, None)
             changed = True
         for room in self.rooms.values():
             keys = list(room.get("keys") or [])
@@ -780,6 +784,7 @@ class RoomStore:
         self.heard = {}
         self.auto_turns = {}
         self.moods = {}
+        self.impressions = {}
         self.logs = []
         if os.path.isfile(self.path):
             try:
@@ -905,6 +910,19 @@ class RoomStore:
                                 self.moods[aid] = {"label": str(val.get("label") or "")[:20],
                                                    "until": until,
                                                    "reason": str(val.get("reason") or "")[:30]}
+                    impressions = data.get("impressions") or {}
+                    if isinstance(impressions, dict):
+                        for observer, targets in impressions.items():
+                            if not isinstance(observer, str) or not isinstance(targets, dict):
+                                continue
+                            clean = {
+                                str(target): str(value).strip()[:240]
+                                for target, value in targets.items()
+                                if isinstance(target, str) and target != observer and target != "user"
+                                and isinstance(value, str) and value.strip()
+                            }
+                            if clean:
+                                self.impressions[observer] = clean
                     hands = data.get("hands") or {}
                     if isinstance(hands, dict):
                         if any(k in ("left", "right") for k in hands):
@@ -956,6 +974,7 @@ class RoomStore:
             "heard": self.heard,
             "auto_turns": self.auto_turns,
             "moods": self.moods,
+            "impressions": self.impressions,
             "hands": self.hands,
             "logs": self.logs[-MAX_ROOM_LOGS:],
         }
@@ -1671,6 +1690,41 @@ class RoomStore:
             lines.append("- 最近的发言（含音量）：\n  " + "\n  ".join(recent[-4:]))
         return "\n".join(lines)
 
+    def impression_brief(self, actor_id: str, names: dict[str, str] = None) -> str:
+        """Return this character's private, lasting impressions of other characters."""
+        known = self.impressions.get(actor_id) or {}
+        return "\n".join(
+            f"- {(names or {}).get(target, target)}：{text}"
+            for target, text in known.items() if text
+        )
+
+    def update_impressions(self, observer_id: str, updates, allowed_ids=None) -> int:
+        """Replace or remove impressions for other characters, never for the user."""
+        if not observer_id or observer_id == "user" or not isinstance(updates, dict):
+            return 0
+        allowed = set(allowed_ids or self.occupants.keys())
+        current = self.impressions.setdefault(observer_id, {})
+        changed = 0
+        for target, value in updates.items():
+            target = str(target or "").strip()
+            if target == observer_id or target == "user" or target not in allowed:
+                continue
+            if not isinstance(value, str):
+                continue
+            text = value.strip()[:240]
+            if text:
+                if current.get(target) != text:
+                    current[target] = text
+                    changed += 1
+            elif target in current:
+                current.pop(target, None)
+                changed += 1
+        if not current:
+            self.impressions.pop(observer_id, None)
+        if changed:
+            self.save()
+        return changed
+
     def perform_idle_system_step(self, actor_id: str, actor_name: str,
                                  now_ms: int = None, rng=None) -> str:
         """超过 N 分钟未与用户互动：由系统随机移动或开展持续活动（弹琴/看书/休息等），不调用模型也不发言。"""
@@ -2220,11 +2274,15 @@ def build_actor_turn_prompt(persona_sys: str, store: RoomStore, room: dict, acto
         f"7. 你和房间里每个人都是平等的实体，可以用 actions 数组对任何一个同房间同位置的成员（包括用户）做手部或目光动作，与用户能做的动作完全一样。每项格式：{{\"hand\": \"left|right|gaze\", \"target\": \"成员 id\", \"part\": \"部位\", \"text\": \"动作描写\", \"secret\": false}}。可用部位：{part_desc}；part 写“设施”表示触碰设施而不针对人。left/right 的手必须能自由活动（被束缚或被别人牵着的手不行）；部位门槛按你与该成员累计互动条数计算，未达门槛的动作会被系统拒绝。最多三项，每个手/目光各占一个槽位。\n"
         "8. 当用户明确提出牵手、拉着一起走/带走，或你按当前关系与情境自然决定牵住某人时，用 hold_hand 填 left 或 right（默认牵用户，可加 hold_target 指定同房间同位置的其他成员），按用户要求松开时填 release；没有牵手意图时必须为 null。只能选择双方当前可用且未被束缚的手，且需同室同位置、互动累计达到牵手门槛。这个字段就是牵手带走的唯一触发方式，不要要求用户点击按钮。\n"
         "9. 若不想被打扰可将 lock_door 设为 true 从内部反锁（false 解锁，null 不变）；分钥匙可填 give_key: {\"room_id\": \"...\", \"to\": \"user\"}；把某人的双手束缚/放开可填 bind_hands（left / right / both / release，默认对象是用户，可加 bind_target 指定）。\n"
-        "10. 请严格只输出一个 JSON 对象，保持你原本的人设语气：\n"
+        "10. 你会逐渐形成对其他角色的个人印象。根据你亲历或听见的新互动，按需修订 impressions 中对应角色的完整印象；没有新依据就留空，不要猜测，也不要记录对用户的印象。每项键为角色 id，值为不超过 240 字的完整印象；空字符串表示删除过时印象。\n"
+        "11. 请严格只输出一个 JSON 对象，保持你原本的人设语气：\n"
         '{"silent": false, "volume": "normal", "action": "简短动作描写(可为空)", "speech": "你的台词(可为空)", '
-        '"actions": [], "position": null, "bind_hands": null, "bind_target": null, "hold_hand": null, "hold_target": null, "follow": null, "move_to": null, "bring_user": false, "lock_door": null, "give_key": null}'
+        '"actions": [], "impressions": {}, "position": null, "bind_hands": null, "bind_target": null, "hold_hand": null, "hold_target": null, "follow": null, "move_to": null, "bring_user": false, "lock_door": null, "give_key": null}'
     )
     system = (persona_sys or f"你正在扮演 {actor_name}。") + (memory_block or "") + room_guide
+    existing = store.impression_brief(actor_id, all_names)
+    if existing:
+        system += "\n\n【你对其他角色的既有印象（仅供你自己参考）】\n" + existing
     if str(awareness or "").strip():
         system += "\n\n" + awareness.strip()
 
@@ -2356,6 +2414,12 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
             "action": str(obj.get("action") or "").strip()[:240],
             "speech": "" if silent else str(obj.get("speech") or "").strip()[:1200],
             "actions": _parse_actor_actions(obj.get("actions"), valid_ids, default_target),
+            "impressions": {
+                str(target): str(value).strip()[:240]
+                for target, value in obj.get("impressions", {}).items()
+                if str(target) in valid_ids and str(target) not in (default_target, "user")
+                and isinstance(value, str)
+            } if isinstance(obj.get("impressions"), dict) else {},
             "position": position,
             "bind_hands": bind,
             "bind_target": bind_target or None,
@@ -2373,6 +2437,7 @@ def parse_actor_reply(reply_text: str, valid_ids: set[str], valid_rooms: set[str
         "action": "",
         "speech": str(reply_text or "").strip()[:1200],
         "actions": [],
+        "impressions": {},
         "position": None,
         "bind_hands": None,
         "bind_target": None,
@@ -2513,16 +2578,20 @@ def phone_room_status_note(store: RoomStore, actor_id: str, actor_name: str,
         who = "你" if aid == actor_id else "用户"
         hands_bits.append(f"{who}双手：{store.hands_brief(aid)}")
     hands_block = ("　".join(hands_bits) + "\n") if hands_bits else ""
+    impression_text = store.impression_brief(actor_id, all_names)
+    impression_block = ("你对其他角色的既有印象（仅供你自己参考）：\n" + impression_text + "\n"
+                       if impression_text else "")
     return (
         "[OIT 小屋状态（手机聊天联动）]\n"
         f"你当前在小屋的「{my_room['name']}」(id={my_rid}，位置：{store.position_of(actor_id)}，"
         f"门锁：{'已从内部反锁' if my_room.get('locked_inside') else '未反锁'})；"
         f"用户当前在「{u_room['name']}」(id={u_rid}，位置：{store.position_of('user')})。\n"
         f"{hands_block}"
+        f"{impression_block}"
         f"小屋房间：{'；'.join(rooms_brief)}。"
         f"{recent_block}\n"
         "你此刻正通过手机与用户聊天；如果需要同时在小屋中移动房间、换室内位置、反锁/解锁房门、把你持有钥匙的房间钥匙分给用户、跟随用户、"
-        "牵手或放开（hold_hand）、束缚用户的双手（bind_hands），或对同房间同位置的成员做和用户一样的手部 / 目光动作（actions），可调用 oit_room_action 工具。"
+        "牵手或放开（hold_hand）、束缚用户的双手（bind_hands）、对同房间同位置的成员做手部 / 目光动作（actions），或根据你亲历的新互动更新对同房间其他角色的完整印象（impressions；按角色 id 填写，不含自己和用户），可调用 oit_room_action 工具。"
     )
 
 
@@ -2601,6 +2670,13 @@ def execute_room_tool(store: RoomStore, actor_id: str, actor_name: str,
             store.append_log(room_id, actor_id, actor_name, ["all"], "action", "", actions=done,
                              pos=store.position_of(actor_id))
             results.append(f"已做出 {len(done)} 个手部 / 目光动作")
+
+    impression_updates = args.get("impressions")
+    if isinstance(impression_updates, dict):
+        room_ids = set(store.occupants_in(cur_rid))
+        updated = store.update_impressions(actor_id, impression_updates, room_ids)
+        if updated:
+            results.append(f"已更新对 {updated} 位角色的印象")
 
     gk_room = str(args.get("give_key_room") or "").strip()
     if gk_room:
