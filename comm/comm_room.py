@@ -599,6 +599,17 @@ class RoomStore:
             lines.append(f"{line} {note}".strip())
         return " ".join(lines)
 
+    def map_snapshot(self) -> str:
+        """Compact machine-readable snapshot used when generating or renovating maps."""
+        chunks = []
+        for room in self.rooms.values():
+            chunks.append(
+                f"房间「{room.get('name', room['id'])}」主题：{room.get('theme', '')}\n"
+                + "\n".join(room.get("ascii_map") or [])
+                + f"\n门连接：{', '.join((self.rooms.get(n) or {}).get('name', n) for n in self.neighbors(room['id'])) or '无'}"
+            )
+        return "\n\n".join(chunks)
+
     def _map_changed(self):
         callback = self.on_map_changed
         if callable(callback):
