@@ -543,7 +543,10 @@ _ROOM_HTML = r"""<!DOCTYPE html>
     <div class="panel">
       <div class="log-head">
         <div class="log-title">📜 房间记录（即时）</div>
-        <div class="busy-lbl" id="busyLbl"></div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="busy-lbl" id="busyLbl"></div>
+          <button class="btn" id="btnClearLogs" type="button" title="清空记录">🗑</button>
+        </div>
       </div>
       <div class="log-box" id="logBox"></div>
       <div class="hand-bar">
@@ -686,6 +689,13 @@ function applyState(st) {
   renderLogs(st.room.id, st.logs);
 
   document.getElementById("busyLbl").textContent = st.busy_text || "";
+  const clearLogs = document.getElementById("btnClearLogs");
+  clearLogs.title = st.clear_logs_label || "清空记录";
+  clearLogs.setAttribute("aria-label", clearLogs.title);
+  clearLogs.onclick = async () => {
+    if (!window.confirm(st.clear_logs_confirm || "清空所有小屋聊天记录？")) return;
+    await doAction({ type: "clear_room_logs" });
+  };
   document.getElementById("volHint").textContent = st.vol_hint || "";
   const volRadios = document.querySelectorAll('input[name="vol"]');
   volRadios.forEach(rad => { rad.checked = (rad.value === st.volume); });

@@ -407,6 +407,19 @@ def main():
         assert "【听觉与空间】" in brief and "隔壁房间" in brief and "大声呼喊" in brief
         assert "轻语" in brief and "正常音量" in brief
 
+        # 清空小屋聊天记录重置互动计数，但保留空间与实体状态。
+        s2.room_counts["Claudia.txt"] = 4
+        s2.last_user_interact["Claudia.txt"] = 123
+        s2.set_following("Claudia.txt", "user", "Claudia", "我")
+        s2.hands["user"] = {"left": {"state": "bound", "note": "测试", "link": "", "ts": 1}}
+        before_room_ids = set(s2.rooms)
+        before_occupants = dict(s2.occupants)
+        removed = s2.clear_logs()
+        assert removed > 0 and not s2.logs and not s2.room_counts and not s2.last_user_interact
+        assert set(s2.rooms) == before_room_ids and s2.occupants == before_occupants
+        assert s2.hand_state("user", "left") == "bound" and s2.following.get("Claudia.txt") == "user"
+        assert not RoomStore(os.path.join(tmp, "rooms2")).logs, "清空结果必须落盘"
+
         personas_dir = os.path.join(tmp, "personas")
         os.makedirs(personas_dir, exist_ok=True)
         c = comm_mod.Comm(tmp, personas_dir)
@@ -457,6 +470,15 @@ def main():
             assert not hasattr(page, "btn_lock"), "反锁房门已移入 [门] 菜单，不应占顶栏按钮"
             st_web = page._build_web_state()
             assert set(st_web["hands"]) == {"left", "right"} and "label" in st_web["hands"]["left"]
+            assert st_web["clear_logs_label"] and st_web["clear_logs_confirm"]
+            page._room_log_generation = 1
+            page._busy_actors.add("Claudia.txt")
+            page._actor_request_generation["Claudia.txt"] = 1
+            page._finish_actor_reply(page.store.occupants["Claudia.txt"], "Claudia.txt", {}, "",
+                                     generation=0)
+            assert "Claudia.txt" in page._busy_actors, "过期回复不能解除新一轮的忙碌状态"
+            page._busy_actors.clear()
+            page._actor_request_generation.clear()
             assert isinstance(st_web["pending_actions"], list)
             assert all("hands" in o for o in st_web["occupants"]), "网页状态里每个在场实体都要带双手状态"
             piano_hs = next(h for h in page._hotspots if h["action"] == "piano")
@@ -511,6 +533,10 @@ def main():
                 assert "err" not in res_box, f"WebView2 服务请求失败: {res_box.get('err')}"
                 assert res_box["state"]["ok"] and res_box["state"]["state"]["map_text"]
                 assert res_box["action"]["ok"] and res_box["action"]["state"]["volume"] == "whisper"
+
+                page.store.append_log(page.store.current_room_id(), "user", "我", ["all"], "say", "待清空")
+                cleared = page._handle_web_action({"type": "clear_room_logs"})
+                assert cleared["ok"] and not page.store.logs and cleared["state"]["logs"] == []
         finally:
             root.destroy()
 

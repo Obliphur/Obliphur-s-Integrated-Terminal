@@ -1838,6 +1838,15 @@ class RoomStore:
         self.save()
         return entry
 
+    def clear_logs(self) -> int:
+        """清空小屋聊天历史与由这些互动记录累计的部位解锁计数。"""
+        removed = len(self.logs)
+        self.logs = []
+        self.room_counts = {}
+        self.last_user_interact = {}
+        self.save()
+        return removed
+
     def _annoy_quiet_ones(self, room_id: str, sender: str, sender_name: str):
         """大声喊到正在看书 / 弹琴 / 休息的人：记一段不快，并留一句话。"""
         now = _ms_now()

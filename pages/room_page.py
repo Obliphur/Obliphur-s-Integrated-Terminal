@@ -6,7 +6,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 import ai_assist
 import config
@@ -79,6 +79,8 @@ class RoomPage(tk.Frame):
         self._destroyed = False
         self._auto_job = None
         self._busy_actors: set[str] = set()
+        self._actor_request_generation: dict[str, int] = {}
+        self._room_log_generation = 0
         self._generating_map = False
         self._hotspots: list[dict] = []
         self._var_volume = tk.StringVar(value="normal")
@@ -472,6 +474,9 @@ class RoomPage(tk.Frame):
             },
             "pending_actions": self.store.pending_of("user"),
             "logs": self.store.user_display_logs(rid, names),
+            "clear_logs_label": tr("清空记录"),
+            "clear_logs_confirm": tr("清空所有小屋聊天记录？房间与当前状态会保留。"),
+            "clear_logs_done": tr("小屋聊天记录已清空。"),
             "volume": vol,
             "vol_hint": vol_hint,
             "npc_on": npc_on,
@@ -525,6 +530,13 @@ class RoomPage(tk.Frame):
             if not done:
                 return {"ok": False, "toast": tr("内置房间或公共客厅不能删除。"), "warn": True, "state": st}
             return {"ok": True, "toast": tr("房间已删除，里面的人回到了公共客厅。"), "state": st}
+        if atype == "clear_room_logs":
+            self._room_log_generation += 1
+            self._busy_actors.clear()
+            self._actor_request_generation.clear()
+            self.store.clear_logs()
+            self.refresh()
+            return {"ok": True, "toast": tr("小屋聊天记录已清空。"), "state": self._build_web_state()}
         if atype == "toggle_lock":
             room = self.store.current_room()
             err = self.store.set_room_lock(room["id"], "user", not room.get("locked_inside"), self._actor_name("user"))
@@ -754,6 +766,8 @@ class RoomPage(tk.Frame):
         self.lbl_log_title.pack(side="left")
         self.lbl_busy = tk.Label(log_head, text="", bg=card, fg=COLORS["accent"], font=config.font("small"))
         self.lbl_busy.pack(side="right")
+        ttk.Button(log_head, text=tr("🗑 清空记录"), command=self._clear_room_logs).pack(
+            side="right", padx=(8, 0))
 
         log_wrap = tk.Frame(right, bg=card)
         log_wrap.pack(fill="both", expand=True, padx=12, pady=(0, 6))
@@ -879,6 +893,13 @@ class RoomPage(tk.Frame):
     def _go_back(self):
         if callable(self.on_back):
             self.on_back()
+
+    def _clear_room_logs(self):
+        if not messagebox.askyesno(tr("清空记录"), tr("清空所有小屋聊天记录？房间与当前状态会保留。"),
+                                   parent=self.winfo_toplevel()):
+            return
+        self._handle_web_action({"type": "clear_room_logs"})
+        toast.info(tr("小屋聊天记录已清空。"))
 
     def _open_comm_settings(self):
         if callable(self.on_open_settings):
@@ -1659,6 +1680,8 @@ class RoomPage(tk.Frame):
         )
 
         self._busy_actors.add(actor_id)
+        generation = self._room_log_generation
+        self._actor_request_generation[actor_id] = generation
         self._update_busy_label(names)
         summon = (trigger_reason == "summon")
 
@@ -1667,14 +1690,23 @@ class RoomPage(tk.Frame):
                 fn = self.comm.remote_chat if profile.get("kind") == "device" and callable(self.comm.remote_chat) else self.comm.chat_fn
                 reply = fn(profile, system, msgs, max_tokens=1200, temperature=0.85, timeout=90.0)
                 parsed = parse_actor_reply(reply, set(occ_ids), set(self.store.rooms.keys()), default_target="user")
-                self.after(0, lambda: self._finish_actor_reply(room_id, actor_id, parsed, "", summon=summon))
+                self.after(0, lambda: self._finish_actor_reply(
+                    room_id, actor_id, parsed, "", summon=summon, generation=generation))
             except Exception as exc:
-                self.after(0, lambda e=exc: self._finish_actor_reply(room_id, actor_id, None, str(e), summon=summon))
+                self.after(0, lambda e=exc: self._finish_actor_reply(
+                    room_id, actor_id, None, str(e), summon=summon, generation=generation))
 
         threading.Thread(target=work, daemon=True, name=f"oit-room-{actor_id}").start()
 
     def _finish_actor_reply(self, room_id: str, actor_id: str, parsed: dict | None, err: str,
-                            summon: bool = False):
+                            summon: bool = False, generation: int | None = None):
+        if generation is not None and generation != self._room_log_generation:
+            if self._actor_request_generation.get(actor_id) == generation:
+                self._actor_request_generation.pop(actor_id, None)
+                self._busy_actors.discard(actor_id)
+            self.refresh()
+            return
+        self._actor_request_generation.pop(actor_id, None)
         self._busy_actors.discard(actor_id)
         if err or not parsed:
             self._update_busy_label(self._persona_names())
