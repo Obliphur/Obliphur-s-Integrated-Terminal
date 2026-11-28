@@ -591,7 +591,8 @@ class WindowMixin(SidebarMixin):
         self.nav_btns = {}
         self._apply_geometry()
         self._build_layout(self.root, cover)
-        key = self.current_page if self.current_page in self.pages else "timer"
+        key = self.current_page if self.current_page in self.pages else (
+            "room" if self.comm.cfg.get("room_auto_enter", True) else "comm")
         self.show_page(key)
         self.ach_popups.close_all_windows()       # 达成提示按新的主题 / 语言重新画
         self.ach_popups.sync()
@@ -689,6 +690,8 @@ class WindowMixin(SidebarMixin):
         if key == "room":
             self._comm_in_room = True
         elif key == "comm" and getattr(self, "_comm_in_room", False):
+            key = "room"
+        elif key == "comm" and self.comm.cfg.get("room_auto_enter", True) and getattr(self, "current_page", "") != "room":
             key = "room"
         # 合约 · 黑雾 (软规则): 要切到计时器以外的页面记一次, 一个钟点里满 50 次算一次违反 (MECHANICS 18.3)
         if key != "timer" and key != getattr(self, "current_page", None) and not getattr(self, "_page_from_sync", False):

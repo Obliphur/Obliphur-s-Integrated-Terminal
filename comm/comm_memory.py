@@ -128,6 +128,23 @@ def format_live_entries(entries: list[tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
+ROOM_MAP_MARKER = "- 【房间地图】"
+
+
+def upsert_room_map_memory(mem_live: str, description: str, max_chars: int = MEM_MAX) -> str:
+    """Replace the generated room-map entry while preserving other live memories."""
+    rows = []
+    for raw in str(mem_live or "").splitlines():
+        if raw.strip().startswith(ROOM_MAP_MARKER):
+            continue
+        if raw.strip():
+            rows.append(raw.strip())
+    text = str(description or "").strip().replace("\r", " ").replace("\n", " ")
+    if text:
+        rows.insert(0, f"{ROOM_MAP_MARKER}{text}")
+    return "\n".join(rows)[:max_chars]
+
+
 def _next_live_id(entries: list[tuple[str, str]]) -> str:
     used = {eid.upper() for eid, _ in entries if eid}
     max_n = 0

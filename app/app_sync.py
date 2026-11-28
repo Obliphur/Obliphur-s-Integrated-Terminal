@@ -41,17 +41,22 @@ class SyncMixin:
         """后台线程交过来的改动在这里 (界面线程) 执行."""
         if self.shutting_down:
             return
-        self.sync_runner.pump()
         try:
+            self.sync_runner.pump()
             states = self.sync.device_states()
             summary = tuple(sorted((str(d.get("id") or ""), str(d.get("name") or ""))
                                    for d in states))
             if summary != getattr(self, "_device_summary", None):
                 self.comm.ai.refresh_devices(states)
                 self._device_summary = summary
-        except Exception:
-            pass
-        self.sync_job = self.root.after(100, self._pump_sync)
+        except Exception as e:
+            self._log_window(f"ERROR    sync pump {type(e).__name__}: {e}")
+        finally:
+            if not self.shutting_down:
+                try:
+                    self.sync_job = self.root.after(100, self._pump_sync)
+                except Exception:
+                    pass
 
     # ---- 设备同步: 计时器此刻的状态 (MECHANICS 15.2) ----
 

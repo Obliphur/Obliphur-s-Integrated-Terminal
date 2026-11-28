@@ -446,6 +446,21 @@ class NetMixin:
             self._restart_for_update()
 
     def _net_tick(self):
+        """每秒驱动联网与后台检查; 单次异常不能让后续 tick 永久停止."""
+        if self.shutting_down:
+            return
+        try:
+            self._net_tick_body()
+        except Exception as e:
+            self._log_window(f"ERROR    net tick {type(e).__name__}: {e}")
+        finally:
+            if not self.shutting_down:
+                try:
+                    self.net_job = self.root.after(1000, self._net_tick)
+                except Exception:
+                    pass
+
+    def _net_tick_body(self):
         if self.shutting_down:
             return
         now = time.monotonic()
@@ -528,8 +543,6 @@ class NetMixin:
         if self.current_page == "timer" and hasattr(self, "lbl_peers"):
             text, off = self._peer_line()
             cfg(self.lbl_peers, text=text, fg=COLORS["warn"] if off else COLORS["text_dim"])
-        self.net_job = self.root.after(1000, self._net_tick)
-
         if event:
             self._refresh_if_visible("stats")
         if event == "started":

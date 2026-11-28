@@ -63,6 +63,12 @@ FACILITY_ACTIONS = {
     "door": "切换房间 / 离开",
     "position": "移动到此位置",
     "custom": "设施互动",
+    "timer": "打开专注计时器",
+    "contract": "打开合约页",
+    "knowledge": "打开知识库",
+    "music": "打开音乐演奏",
+    "coread": "打开共读",
+    "joint": "发起联合行动",
 }
 
 # (part_id, display_label, min_messages)
@@ -376,6 +382,18 @@ def _infer_action(label: str) -> str:
         return "board"
     if any(k in low for k in ("门", "出口", "走廊", "door")):
         return "door"
+    if any(k in low for k in ("计时", "专注", "timer")):
+        return "timer"
+    if any(k in low for k in ("合约", "contract")):
+        return "contract"
+    if any(k in low for k in ("知识", "knowledge")):
+        return "knowledge"
+    if any(k in low for k in ("音乐", "演奏", "music")):
+        return "music"
+    if any(k in low for k in ("共读", "书库", "coread")):
+        return "coread"
+    if any(k in low for k in ("联合", "joint")):
+        return "joint"
     if any(k in low for k in ("墙", "椅", "沙发", "窗", "茶几", "床", "wall", "chair", "sofa")):
         return "position"
     return "custom"
@@ -387,6 +405,7 @@ def normalize_room(raw: dict) -> dict:
     name = str(raw.get("name") or "未命名房间").strip()[:40]
     theme = str(raw.get("theme") or "自定义场景").strip()[:60]
     ambience = str(raw.get("ambience") or "").strip()[:240]
+    map_note = str(raw.get("map_note") or "").strip()[:500]
     owner = str(raw.get("owner") or "").strip()
     is_public = bool(raw.get("is_public", rid == "lounge" or not owner))
     raw_keys = raw.get("keys")
@@ -446,6 +465,7 @@ def normalize_room(raw: dict) -> dict:
         "name": name,
         "theme": theme,
         "ambience": ambience,
+        "map_note": map_note,
         "builtin": bool(raw.get("builtin", False)),
         "owner": owner,
         "is_public": is_public,
@@ -563,7 +583,29 @@ class RoomStore:
         self.moods: dict[str, dict] = {}            # actor_id -> {label, until, reason}（被打扰等短暂情绪）
         self.name_map: dict[str, str] = {}          # 运行时由界面写入，给系统日志用
         self.logs: list[dict] = []
+        self.on_map_changed = None
         self.load()
+
+    def map_description(self) -> str:
+        """Human-readable current map topology for prompts and persona memory."""
+        lines = []
+        for room in self.rooms.values():
+            neighbors = [self.rooms.get(n, {}).get("name", n) for n in self.neighbors(room["id"])]
+            note = str(room.get("map_note") or "").strip()
+            if neighbors:
+                line = f"「{room.get('name', room['id'])}」通过房门连接到「{'、'.join(neighbors)}」。"
+            else:
+                line = f"「{room.get('name', room['id'])}」目前没有可通行的房门连接。"
+            lines.append(f"{line} {note}".strip())
+        return " ".join(lines)
+
+    def _map_changed(self):
+        callback = self.on_map_changed
+        if callable(callback):
+            try:
+                callback(self.map_description())
+            except Exception:
+                pass
 
     def _ensure_builtins(self):
         self.rooms.pop("partner_home", None)
@@ -630,6 +672,52 @@ class RoomStore:
     def sync_personas(self, personas: list[tuple[str, str]]) -> bool:
         """为每个人设（含新建人设）确保专属房间存在，并默认让未就位的人设待在自己的房间里。"""
         changed = False
+        active_ids = {str(pid) for pid, _title in personas if pid}
+        for aid in list(self.occupants):
+            if aid == "user" or aid in active_ids:
+                continue
+            self.occupants.pop(aid, None)
+            self.positions.pop(aid, None)
+            self.following.pop(aid, None)
+            self.hands.pop(aid, None)
+            self.holding.pop(aid, None)
+            self.pending.pop(aid, None)
+            self.attention.pop(aid, None)
+            self.attention_ts.pop(aid, None)
+            self.heard.pop(aid, None)
+            self.auto_turns.pop(aid, None)
+            self.moods.pop(aid, None)
+            changed = True
+        for room in self.rooms.values():
+            keys = list(room.get("keys") or [])
+            clean_keys = [key for key in keys if key == "user" or key in active_ids]
+            if clean_keys != keys:
+                room["keys"] = clean_keys
+                changed = True
+        # Assistant、被禁止主动发言的人设以及已删除的人设不属于小屋；旧版本留下的专属房间和占位一并回收。
+        for rid, room in list(self.rooms.items()):
+            owner = str(room.get("owner") or "")
+            if (room.get("builtin") and owner and rid == persona_room_id(owner)
+                    and owner not in active_ids):
+                self.rooms.pop(rid, None)
+                for other in self.rooms.values():
+                    (other.get("doors") or {}).pop(rid, None)
+                    self._sync_lock_summary(other)
+                for aid, cur in list(self.occupants.items()):
+                    if cur == rid:
+                        self.occupants.pop(aid, None)
+                        self.positions.pop(aid, None)
+                        self.following.pop(aid, None)
+                        self.hands.pop(aid, None)
+                        self.holding.pop(aid, None)
+                        self.pending.pop(aid, None)
+                        self.attention.pop(aid, None)
+                        self.attention_ts.pop(aid, None)
+                        self.heard.pop(aid, None)
+                        self.auto_turns.pop(aid, None)
+                        self.moods.pop(aid, None)
+                self.logs = [entry for entry in self.logs if entry.get("room_id") != rid]
+                changed = True
         for pid, title in personas:
             if not pid:
                 continue
@@ -1016,6 +1104,8 @@ class RoomStore:
                 changed = True
         if changed and save:
             self.save()
+        if changed:
+            self._map_changed()
         return changed
 
     def unlink_rooms(self, a: str, b: str, save: bool = True) -> bool:
@@ -1028,6 +1118,8 @@ class RoomStore:
                 changed = True
         if changed and save:
             self.save()
+        if changed:
+            self._map_changed()
         return changed
 
     def path_between(self, a: str, b: str) -> list[str]:
@@ -1086,6 +1178,7 @@ class RoomStore:
             for other in self.rooms.values():
                 self._sync_lock_summary(other)
             self.save()
+            self._map_changed()
         return dropped
 
     def current_room_id(self) -> str:
@@ -1117,6 +1210,7 @@ class RoomStore:
         if anchor and anchor != room["id"]:
             self.link_rooms(anchor, room["id"], save=False)
         self.save()
+        self._map_changed()
         return room
 
     def delete_room(self, room_id: str, actor_id: str = "user") -> bool:
@@ -1139,7 +1233,31 @@ class RoomStore:
                 self.positions[aid] = "门边"
         self.logs = [e for e in self.logs if e.get("room_id") != room_id]
         self.save()
+        self._map_changed()
         return True
+
+    def renovate_room(self, room_id: str, raw: dict) -> dict | None:
+        """Apply an AI renovation while retaining identity, ownership and doors."""
+        old = self.rooms.get(room_id)
+        if not old:
+            return None
+        data = dict(raw or {})
+        data.update({
+            "id": room_id,
+            "builtin": old.get("builtin", False),
+            "owner": old.get("owner", ""),
+            "is_public": old.get("is_public", False),
+            "keys": list(old.get("keys") or []),
+            "doors": copy.deepcopy(old.get("doors") or {}),
+            "locked_inside": old.get("locked_inside", False),
+            "locked_by": old.get("locked_by", ""),
+            "locked_reason": old.get("locked_reason", ""),
+        })
+        room = normalize_room(data)
+        self.rooms[room_id] = room
+        self.save()
+        self._map_changed()
+        return room
 
     def rooms_brief(self, room_id: str) -> str:
         """给模型看的一句话：这间房通向哪里、门锁着没有。"""
@@ -2006,35 +2124,41 @@ def _extract_json(text: str) -> dict | None:
         return None
 
 
-def build_map_generation_prompt(theme: str, desc: str) -> tuple[str, list[dict]]:
+def build_map_generation_prompt(theme: str, desc: str, old_map: str = "", topology: str = "") -> tuple[str, list[dict]]:
     system = (
-        "你是古早文字冒险游戏的场景地图设计师。请根据用户协商的主题与场景描述，生成一个字符画房间地图。\n"
+        "你是古早文字冒险游戏的场景地图设计师。请根据用户协商的主题与场景描述，生成或装修一个字符画房间地图。\n"
         "严格只输出一个 JSON 对象，不要附加任何解释或多余文字，字段如下：\n"
         "{\n"
         '  "name": "房间名称(不超过12字)",\n'
         '  "theme": "场景主题",\n'
         '  "ambience": "一句话氛围描写(不超过60字)",\n'
         '  "ascii_map": ["第一行", "第二行", ...],\n'
-        '  "facilities": [{"token": "[设施名]", "label": "设施名", "action": "piano|bookshelf|desk|board|door|position|custom", "desc": "简短说明"}]\n'
+        '  "facilities": [{"token": "[设施名]", "label": "设施名", "action": "piano|bookshelf|desk|board|door|position|custom", "desc": "简短说明"}],\n'
+        '  "map_note": "用自然语言说明本地图中各个空间、门和相邻房间的连接关系"\n'
         "}\n"
         "要求：\n"
         "1. ascii_map 使用 Unicode 框线字符（┌ ─ ┐ │ └ ┘）绘制一个 8~12 行整齐的房间，内部尽量包含 [椅子] 和 [墙边] 等位置节点。\n"
         "2. 所有可点击设施与位置必须用半角方括号包裹，如 [钢琴]、[书架]、[书桌]、[椅子]、[墙边]、[门]。\n"
         "3. 地图底部必须包含 [门]（action 为 door），方便玩家进出房间。\n"
-        "4. action 映射：钢琴/乐器用 piano，书架用 bookshelf，书桌用 desk，布告板用 board，门用 door，椅子/墙边/沙发/窗台等位置用 position，其他用 custom。"
+        "4. action 映射：钢琴/乐器用 piano，书架用 bookshelf，书桌用 desk，布告板用 board，门用 door，椅子/墙边/沙发/窗台等位置用 position，其他用 custom。\n"
+        "5. 如果提供了旧地图，必须在其基础上修改而不是忽略；保留合理的既有空间与设施，并落实用户的新要求。"
     )
     user_msg = f"主题：{theme.strip()}\n场景设定与细节：{desc.strip() or '按主题自由发挥，富有复古文字游戏质感。'}"
+    if old_map:
+        user_msg += f"\n\n旧地图（请参考并修改）：\n{old_map}"
+    if topology:
+        user_msg += f"\n\n当前世界房间连接（请用 map_note 自然语言复述相关连接）：\n{topology}"
     return system, [{"role": "user", "content": user_msg}]
 
 
-def parse_generated_room(reply_text: str, fallback_theme: str = "自定义场景") -> dict | None:
+def parse_generated_room(reply_text: str, fallback_theme: str = "自定义场景", room_id: str = "") -> dict | None:
     obj = _extract_json(reply_text)
     if not obj or not obj.get("ascii_map"):
         return None
     obj = dict(obj)
     obj["builtin"] = False
     obj.setdefault("theme", fallback_theme)
-    obj["id"] = f"custom_{uuid.uuid4().hex[:8]}"
+    obj["id"] = room_id or f"custom_{uuid.uuid4().hex[:8]}"
     return normalize_room(obj)
 
 
@@ -2256,7 +2380,8 @@ def auto_step_plan(store: RoomStore, room_id: str, busy_ids: set[str],
                    include_other_rooms: bool = False,
                    blocked_ids: set[str] = None,
                    now_ms: int = None,
-                   per_hour: int = None) -> tuple[str, str, str] | None:
+                   per_hour: int = None,
+                   always_model: bool = False) -> tuple[str, str, str] | None:
     """一次自动触发该走哪条路：("model", 实体, 房间) 让模型接管，或 ("system", 实体, 房间) 系统打理生活。
 
     注意力在阈值之上且这一小时还有自主额度的人才让模型说话；否则由系统随机活动，不调 API。
@@ -2274,6 +2399,9 @@ def auto_step_plan(store: RoomStore, room_id: str, busy_ids: set[str],
         candidates = [(aid, room_id) for aid in store.occupants_in(room_id) if aid != "user" and aid not in skip]
     if not candidates:
         return None
+    if always_model:
+        aid, rid = r.choice(candidates)
+        return "model", aid, rid
     awake = [c for c in candidates
              if store.awake(c[0], now_ms) and store.auto_budget_left(c[0], now_ms, per_hour) > 0]
     if awake:

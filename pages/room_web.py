@@ -522,9 +522,8 @@ _ROOM_HTML = r"""<!DOCTYPE html>
       <div class="room-theme" id="roomTheme"></div>
     </div>
     <div class="hdr-right">
-      <div class="auto-status" id="autoStatus"></div>
       <select class="select" id="roomSelect"></select>
-      <button class="btn" id="btnKeys">🔑 钥匙管理</button>
+      <button class="btn" id="btnRenovate">🛠 装修</button>
       <button class="btn" id="btnCreate">＋ 协商建房</button>
     </div>
   </div>
@@ -663,9 +662,6 @@ function applyState(st) {
   themeEl.className = "room-theme" + (st.room.locked_inside ? " locked" : "");
   document.getElementById("ambience").textContent = st.room.ambience || "安静的文字空间。";
 
-  const autoEl = document.getElementById("autoStatus");
-  autoEl.textContent = st.auto_status_text;
-  autoEl.className = "auto-status" + (st.npc_on ? " on" : "");
 
   // 房间下拉：只列当前房间与有门相连的房间（只有互相连接的房间能走过去）
   const sel = document.getElementById("roomSelect");
@@ -1019,6 +1015,14 @@ mapBox.addEventListener("click", (e) => {
     ]);
   } else if (act === "position") {
     doAction({ type: "move_position", label: hs.label, hs });
+  } else if (["timer", "contract", "knowledge"].includes(act)) {
+    doAction({ type: "open_page", page: act });
+  } else if (act === "music") {
+    doAction({ type: "open_music" });
+  } else if (act === "coread") {
+    doAction({ type: "open_coread" });
+  } else if (act === "joint") {
+    doAction({ type: "open_joint" });
   } else if (act === "door") {
     const items = [moveOpt];
     const locked = STATE && STATE.room && STATE.room.locked_inside;
@@ -1455,6 +1459,27 @@ function openKeysModal() {
   }, [{ label: "关闭", onClick: closeModal }]);
 }
 
+function openRenovateModal() {
+  if (STATE && STATE.generating_map) { showToast("正在生成地图，请稍候…"); return; }
+  let txt = null;
+  openModal("装修当前房间", (body) => {
+    const tip = document.createElement("div"); tip.className = "dim-tip";
+    tip.textContent = "AI 会参考旧地图与世界房间连接，按你的要求修改地形或接入设施。";
+    body.appendChild(tip);
+    const lab = document.createElement("div"); lab.className = "field-label"; lab.textContent = "装修要求：";
+    txt = document.createElement("textarea"); txt.className = "textarea";
+    body.append(lab, txt); setTimeout(() => txt.focus(), 30);
+  }, [
+    { label: "取消", onClick: closeModal },
+    { label: "由 AI 装修", accent: true, onClick: async () => {
+      const desc = (txt.value || "").trim();
+      if (!desc) { showToast("请先输入装修要求", true); return; }
+      const r = await doAction({ type: "renovate_room", desc });
+      if (r.ok) closeModal();
+    } },
+  ]);
+}
+
 /* 协商建房弹窗 */
 function openCreateRoomModal() {
   if (STATE && STATE.generating_map) {
@@ -1510,11 +1535,10 @@ function openCreateRoomModal() {
 
 /* 顶栏与基础控件事件 */
 document.getElementById("btnBack").addEventListener("click", () => doAction({ type: "back" }));
-document.getElementById("autoStatus").addEventListener("click", () => doAction({ type: "open_settings" }));
 document.getElementById("roomSelect").addEventListener("change", (e) => {
   doAction({ type: "switch_room", room_id: e.target.value });
 });
-document.getElementById("btnKeys").addEventListener("click", openKeysModal);
+document.getElementById("btnRenovate").addEventListener("click", openRenovateModal);
 document.getElementById("btnCreate").addEventListener("click", openCreateRoomModal);
 document.getElementById("leftHand").addEventListener("click", () => {
   if (STATE && STATE.hands && STATE.hands.left.state === "holding") {

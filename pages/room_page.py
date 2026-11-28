@@ -11,7 +11,7 @@ from tkinter import messagebox, ttk
 import ai_assist
 import config
 import toast
-from comm.comm_persona import list_personas, persona_system, persona_title
+from comm.comm_persona import room_personas, persona_system, persona_title
 from comm.comm_room import (
     ACTION_CHANNEL_LABELS,
     ATTENTION_SUMMON,
@@ -107,7 +107,7 @@ class RoomPage(tk.Frame):
         """确保所有人设（含新建人设）都拥有专属房间，且专注/睡眠期间自动锁在自己房间里。"""
         if not self.comm:
             return
-        personas = list_personas(self.comm.personas)
+        personas = room_personas(self.comm.personas, self.comm.cfg.get("mute_pro"))
         plist = [(p, persona_title(p)) for p in personas]
         self.store.sync_personas(plist)
         self.store.attn_half_min = max(1, int(self.comm.cfg.get("room_npc_idle_min") or 15))
@@ -118,13 +118,13 @@ class RoomPage(tk.Frame):
     def _schedule_status_map(self, personas: list[str] = None) -> dict[str, str]:
         if not self.comm or not hasattr(self.comm, "persona_status_kind"):
             return {}
-        ps = personas if personas is not None else list_personas(self.comm.personas)
+        ps = personas if personas is not None else room_personas(self.comm.personas, self.comm.cfg.get("mute_pro"))
         return {p: self.comm.persona_status_kind(p) for p in ps}
 
     def _persona_names(self) -> dict[str, str]:
         names = {"user": (self.username() or "你").strip() or "你"}
         if self.comm:
-            for p in list_personas(self.comm.personas):
+            for p in room_personas(self.comm.personas, self.comm.cfg.get("mute_pro")):
                 names[p] = persona_title(p)
         for aid in self.store.occupants:
             if aid not in names:
@@ -407,7 +407,7 @@ class RoomPage(tk.Frame):
 
         personas_ui = []
         if self.comm:
-            for p in list_personas(self.comm.personas):
+            for p in room_personas(self.comm.personas, self.comm.cfg.get("mute_pro")):
                 personas_ui.append({"id": p, "name": names.get(p, p)})
 
         npc_on = bool(self.comm.cfg.get("room_npc_chat", False)) if self.comm else False
@@ -680,6 +680,12 @@ class RoomPage(tk.Frame):
                 return {"ok": False, "toast": tr("请先输入房间主题"), "warn": True}
             self._generate_room_async(theme, desc, is_pub)
             return {"ok": True, "state": self._build_web_state()}
+        if atype == "renovate_room":
+            desc = str(body.get("desc") or "").strip()
+            if not desc:
+                return {"ok": False, "toast": tr("请先输入装修要求"), "warn": True}
+            self._renovate_room_async(self.store.current_room_id(), desc)
+            return {"ok": True, "state": self._build_web_state()}
         return {"ok": False, "error": f"unknown_action:{atype}"}
 
     # ══════════════ Tk 降级界面构建（无 WebView2 时使用） ══════════════
@@ -702,16 +708,12 @@ class RoomPage(tk.Frame):
         self.lbl_room_theme.pack(side="left")
 
         ttk.Button(hdr, text=tr("＋ 协商建房"), command=self._open_create_room_dialog).pack(side="right", padx=(6, 0))
-        ttk.Button(hdr, text=tr("🔑 钥匙管理"), command=self._open_keys_dialog).pack(side="right", padx=(6, 0))
+        ttk.Button(hdr, text=tr("🛠 装修"), command=self._open_renovate_room_dialog).pack(side="right", padx=(6, 0))
         self.var_room = tk.StringVar()
         self.cb_room = ttk.Combobox(hdr, textvariable=self.var_room, state="readonly", width=24)
         self.cb_room.pack(side="right", padx=(6, 0))
         self.cb_room.bind("<<ComboboxSelected>>", lambda _e: self._pick_room())
 
-        self.lbl_auto_status = tk.Label(hdr, text="", bg=bg, fg=COLORS["text_dim"],
-                                        font=config.font("small"), cursor="hand2")
-        self.lbl_auto_status.pack(side="right", padx=(0, 10))
-        self.lbl_auto_status.bind("<Button-1>", lambda _e: self._open_comm_settings())
 
         # 主体双栏（左：复古字符画地图，右：事件日志与行动区）
         main = tk.Frame(self, bg=bg)
@@ -960,11 +962,6 @@ class RoomPage(tk.Frame):
         interval = int(self.comm.cfg.get("room_npc_interval") or 30) if self.comm else 30
         prob = int(self.comm.cfg.get("room_npc_prob") or 30) if self.comm else 30
         idle_m = int(self.comm.cfg.get("room_npc_idle_min") or 15) if self.comm else 15
-        if npc_on:
-            cfg(self.lbl_auto_status, text=tr("● 自动行动已开 ({s}s/{p}% · 注意力半衰期 {m}m)", s=interval, p=prob, m=idle_m),
-                fg=COLORS["accent"])
-        else:
-            cfg(self.lbl_auto_status, text=tr("○ 自动行动未开 (点此设置)"), fg=COLORS["text_dim"])
 
         self._render_map(room, names)
         self._render_occupant_chips(rid, names)
@@ -1188,6 +1185,18 @@ class RoomPage(tk.Frame):
                 (tr("📚 打开知识库"), lambda: self.on_open_page("knowledge") if callable(self.on_open_page) else None),
                 (tr("✋ 与「{label}」互动…", label=hs["label"]), lambda: self._open_custom_facility_interact(hs)),
             ])
+        elif action == "timer":
+            if callable(self.on_open_page): self.on_open_page("timer")
+        elif action == "contract":
+            if callable(self.on_open_page): self.on_open_page("contract")
+        elif action == "knowledge":
+            if callable(self.on_open_page): self.on_open_page("knowledge")
+        elif action == "music":
+            if callable(self.on_music): self.on_music()
+        elif action == "coread":
+            if callable(self.on_coread): self.on_coread()
+        elif action == "joint":
+            if callable(self.on_joint): self.on_joint()
         elif action == "position":
             if self.store.move_position("user", hs["label"], self._actor_name("user")):
                 toast.info(tr("你移动到了「{pos}」，现在点击人物可触发相关位置互动。", pos=hs["label"]))
@@ -1403,7 +1412,7 @@ class RoomPage(tk.Frame):
     def _open_keys_dialog(self):
         bg = COLORS["bg"]
         names = self._persona_names()
-        personas = [p for p in (list_personas(self.comm.personas) if self.comm else [])]
+        personas = [p for p in (room_personas(self.comm.personas, self.comm.cfg.get("mute_pro")) if self.comm else [])]
         dlg = Modal(self.winfo_toplevel(), tr("🔑 钥匙与门禁管理"),
                     width=config.scaled(540), height=config.scaled(430))
         tk.Label(dlg.body, text=tr("每个人默认拥有自己房间的钥匙，公共空间无需钥匙。你可以把手里拥有的钥匙分发给其他人；门从内部反锁后即使有钥匙也打不开。"),
@@ -1529,7 +1538,8 @@ class RoomPage(tk.Frame):
 
         self._generating_map = True
         self._update_busy_label(self._persona_names())
-        system, msgs = build_map_generation_prompt(theme, desc)
+        topology = self.store.map_description()
+        system, msgs = build_map_generation_prompt(theme, desc, old_map=topology, topology=topology)
 
         def work():
             try:
@@ -1552,6 +1562,62 @@ class RoomPage(tk.Frame):
         self.store.enter_room("user", saved["id"], self._actor_name("user"))
         toast.info(tr("已创建并进入新房间「{name}」（门开在原来的房间）", name=saved["name"]))
         self.refresh()
+
+    def _open_renovate_room_dialog(self):
+        room = self.store.current_room()
+        dlg = Modal(self.winfo_toplevel(), tr("装修当前房间"), width=config.scaled(480), height=config.scaled(300))
+        tk.Label(dlg.body, text=tr("AI 会参考旧地图与世界房间连接，按你的要求修改地形或接入设施。"),
+                 bg=COLORS["bg"], fg=COLORS["text_dim"], font=config.font("small"), anchor="w",
+                 wraplength=430).pack(fill="x", pady=(0, 8))
+        tk.Label(dlg.body, text=tr("装修要求："), bg=COLORS["bg"], fg=COLORS["text"],
+                 font=config.font("body"), anchor="w").pack(fill="x")
+        txt = tk.Text(dlg.body, height=6, wrap="word", font=config.font("body"), bg=COLORS["bg_card"],
+                      fg=COLORS["text"], insertbackground=COLORS["text"], relief="flat",
+                      highlightthickness=1, highlightbackground=COLORS["border"])
+        txt.pack(fill="both", expand=True, pady=(2, 6))
+        def submit():
+            desc = txt.get("1.0", "end").strip()
+            if not desc:
+                toast.warn(tr("请先输入装修要求")); return
+            dlg.finish(True)
+            self._renovate_room_async(room["id"], desc)
+        ttk.Button(dlg.buttons, text=tr("由 AI 装修"), style="Accent.TButton", command=submit).pack(side="right")
+        ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
+        dlg.wait()
+
+    def _renovate_room_async(self, room_id: str, desc: str):
+        if self._generating_map or not self.comm:
+            return
+        try:
+            profile = self.comm.profile(); ai_assist.check_profile(profile)
+        except Exception as exc:
+            toast.warn(tr("AI 模型未配置：{err}", err=exc)); return
+        old = self.store.rooms.get(room_id)
+        if not old:
+            toast.warn(tr("当前房间不存在。")); return
+        self._generating_map = True; self._update_busy_label(self._persona_names())
+        old_text = "\n".join(old.get("ascii_map") or [])
+        system, msgs = build_map_generation_prompt(old.get("theme") or old.get("name") or "装修房间", desc,
+                                                   old_text, self.store.map_description())
+        def work():
+            try:
+                fn = self.comm.remote_chat if profile.get("kind") == "device" and callable(self.comm.remote_chat) else self.comm.chat_fn
+                reply = fn(profile, system, msgs, max_tokens=1600, temperature=0.8, timeout=90.0)
+                room = parse_generated_room(reply, fallback_theme=old.get("theme") or "自定义场景", room_id=room_id)
+                self.after(0, lambda: self._finish_renovate_room(room, room_id, ""))
+            except Exception as exc:
+                self.after(0, lambda e=exc: self._finish_renovate_room(None, room_id, str(e)))
+        threading.Thread(target=work, daemon=True, name="oit-room-renovate").start()
+
+    def _finish_renovate_room(self, room: dict | None, room_id: str, err: str):
+        self._generating_map = False
+        if err or not room:
+            toast.warn(tr("装修房间失败：{err}", err=err or "返回格式无效"))
+        else:
+            saved = self.store.renovate_room(room_id, room)
+            if saved:
+                toast.info(tr("已完成房间装修：{name}", name=saved["name"]))
+        self._update_busy_label(self._persona_names()); self.refresh()
 
     # ══════════════ 发送互动、回合推进与多角色回复 ══════════════
 
@@ -1669,9 +1735,7 @@ class RoomPage(tk.Frame):
                 for m in missed
             )
             note = (note + "\n" if note else "") + f"【你当时没答上的呼唤】\n{lines}\n（现在可以补上。）"
-        aware = ""
-        if bool(self.comm.cfg.get("room_awareness", True)):
-            aware = self.store.awareness_brief(actor_id)
+        aware = self.store.awareness_brief(actor_id)
         system, msgs = build_actor_turn_prompt(
             psys, self.store, room, actor_id, names.get(actor_id, actor_id),
             names, visible, trigger_reason=trigger_reason,
@@ -1826,7 +1890,8 @@ class RoomPage(tk.Frame):
         blocked = {aid for aid, k in sched.items() if k in ("focus", "sleep")}
         rid = self.store.current_room_id()
         plan = auto_step_plan(self.store, rid, self._busy_actors, enabled, prob,
-                             include_other_rooms=True, blocked_ids=blocked)
+                             include_other_rooms=True, blocked_ids=blocked,
+                             always_model=True)
         if plan:
             kind, aid, actor_room = plan
             if kind == "model":

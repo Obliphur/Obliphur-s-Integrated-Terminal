@@ -52,7 +52,7 @@ from .comm_builtin import (
 )
 from .comm_persona import is_profile_name, profile_files, other_profiles_text
 from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, MENTAL_WORDS, mental_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
-from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, read_persona_rules, read_persona_prompt, import_persona
+from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, room_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, read_persona_rules, read_persona_prompt, import_persona
 
 from .comm_const import *
 from .comm_rules import typing_delay_rules
@@ -128,6 +128,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.on_room_changed = None
         from .comm_room import RoomStore
         self.room_store = RoomStore(data_dir)
+        self.room_store.on_map_changed = self._room_map_changed
         self._room_sync_at = 0.0
         self._room_idle_at = 0.0
         self.reading_mode = False
@@ -265,6 +266,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             # 上次关程序时还没收到回复: 1 分钟后让 (最后操作的) 设备再试一次
             self.cfg["retry"] = {"at": self._ms() - RETRY_GAP * 1000 + 60000, "n": int(rt.get("n") or 0)}
         self.reload_schedule("启动")
+        self._room_map_changed(self.room_store.map_description())
 
     # ---- 存取 ----
     # 每个聊天对象 (人设) 的聊天记录分开存: comm_chat_<人设文件名的 crc>.json = 消息 + 清空的时刻 + 重试状态 + 主动消息的标记.
@@ -542,7 +544,9 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
-        if "think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw or "sched_follow" in kw or "pro_lang" in kw or "answer_images" in kw:
+        if ("think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw
+                or "sched_follow" in kw or "pro_lang" in kw or "answer_images" in kw
+                or "room_auto_enter" in kw):
             self._push()
 
     def _changed(self):
@@ -641,6 +645,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         doc["prolang"] = self.pro_lang()                # 主动谈话语言: 调用 AI 的是主端, 两台设备要一致
         doc["avatar"] = bool(self.cfg.get("show_avatar"))      # 显示头像: 设置页的开关也同步
         doc["answer_images"] = self.answer_images_on()
+        doc["room_auto_enter"] = bool(self.cfg.get("room_auto_enter", True))
         rec = self.cfg.get("idle_use") or {}
         if rec.get("d"):
             doc["idle"] = {"d": rec["d"], "s": float(rec.get("s") or 0)}      # 两台设备共用一份额度 (各自累计的取大的)
@@ -933,6 +938,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             elif key == "answer_images" and isinstance(val, bool):
                 if val != self.answer_images_on():
                     self.cfg["answer_images"] = val
+                    self.save_cfg()
+                    self._changed()
+            elif key == "room_auto_enter" and isinstance(val, bool):
+                if val != bool(self.cfg.get("room_auto_enter", True)):
+                    self.cfg["room_auto_enter"] = val
                     self.save_cfg()
                     self._changed()
             elif key == "profile":
@@ -1907,12 +1917,36 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
     # ---- 小屋后台运转与手机聊天联动 ----
     def _room_all_names(self) -> dict:
         names = {"user": "你"}
-        for p in list_personas(self.personas):
+        for p in room_personas(self.personas, self.cfg.get("mute_pro")):
             names[p] = persona_title(p)
         return names
 
+    def _room_map_changed(self, description: str = ""):
+        """Keep every persona's live memory aligned with the current room topology."""
+        from .comm_memory import upsert_room_map_memory
+        text = str(description or self.room_store.map_description()).strip()
+        if not text:
+            return
+        now_ms = self._ms()
+        changed = False
+        for pid in set(self.chat_pids()) | {pid_of(p) for p in room_personas(self.personas, self.cfg.get("mute_pro"))}:
+            if not pid:
+                continue
+            st = self._state_of(pid)
+            old = str(st.get("mem_live") or "")
+            new = upsert_room_map_memory(old, text)
+            if new == old:
+                continue
+            st["mem_live"] = new
+            st["mem_live_ts"] = max(now_ms, int(st.get("mem_live_ts") or 0) + 1)
+            st["mem_ts"] = max(now_ms, int(st.get("mem_ts") or 0), st["mem_live_ts"])
+            self._store(pid, st)
+            changed = True
+        if changed:
+            self._changed()
+
     def _room_sync(self):
-        personas = list_personas(self.personas)
+        personas = room_personas(self.personas, self.cfg.get("mute_pro"))
         plist = [(p, persona_title(p)) for p in personas]
         changed = self.room_store.sync_personas(plist)
         self.room_store.attn_half_min = max(1, int(self.cfg.get("room_npc_idle_min") or 15))
@@ -1944,7 +1978,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 blocked = {aid for aid, k in status_map.items() if k in ("focus", "sleep")}
                 prob = int(self.cfg.get("room_npc_prob") or 30)
                 plan = auto_step_plan(self.room_store, self.room_store.current_room_id(),
-                                      set(), True, prob, include_other_rooms=True, blocked_ids=blocked)
+                                      set(), True, prob, include_other_rooms=True, blocked_ids=blocked,
+                                      always_model=True)
                 # 房间页开着时由页面调模型；这里只管人物不在眼前时的生活模拟
                 if plan and plan[0] == "system":
                     if self.room_store.perform_idle_system_step(plan[1], persona_title(plan[1])):

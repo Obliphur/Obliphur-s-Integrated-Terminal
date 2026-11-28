@@ -60,20 +60,29 @@ class GuardMixin:
     def _schedule_apply_check(self):
         if self.shutting_down:
             return
-        self.check_pending_settings()
-        self._check_rule_changes()
-        self._check_close_pending()
-        self._check_focus()
-        self._keep_awake()
-        self._check_dev_follow()
-        self._maybe_relay()
-        self._check_idle_nudge()
-        self._check_sleep()
-        self._check_setup_period()
-        self._check_unbind()
-        self._check_offline_chime()
-        self.check_achievements()
-        self.apply_job = self.root.after(5000, self._schedule_apply_check)
+        try:
+            self.check_pending_settings()
+            self._check_rule_changes()
+            self._check_close_pending()
+            self._check_focus()
+            self._keep_awake()
+            self._check_dev_follow()
+            self._maybe_relay()
+            self._check_idle_nudge()
+            self._check_sleep()
+            self._check_setup_period()
+            self._check_unbind()
+            self._check_offline_chime()
+            self.check_achievements()
+        except Exception as e:
+            # Tk.after 回调一旦异常退出, 这条 5 秒心跳就不会再被安排, 看起来像程序卡死.
+            self._log_window(f"ERROR    apply check {type(e).__name__}: {e}")
+        finally:
+            if not self.shutting_down:
+                try:
+                    self.apply_job = self.root.after(5000, self._schedule_apply_check)
+                except Exception:
+                    pass
 
     # ---- 任务栏窗口数上限 (window_guard.py) ----
 
@@ -84,14 +93,19 @@ class GuardMixin:
     def _schedule_window_guard(self):
         if self.shutting_down:
             return
-        ws = self._aged_windows()
-        # 同一个程序的多个窗口算一个, 浏览器的每个窗口各算一个 (窗口数上限和通道阻塞一样, MECHANICS 12)
-        self._check_windows(None if ws is None else window_guard.channel_count(ws, contract_mod.BROWSER_EXES))
         try:
+            ws = self._aged_windows()
+            # 同一个程序的多个窗口算一个, 浏览器的每个窗口各算一个 (窗口数上限和通道阻塞一样, MECHANICS 12)
+            self._check_windows(None if ws is None else window_guard.channel_count(ws, contract_mod.BROWSER_EXES))
             self._check_contract_windows(ws)
         except Exception as e:
             self._log_window(f"ERROR    contract windows {type(e).__name__}: {e}")
-        self.window_job = self.root.after(self._window_check_ms(), self._schedule_window_guard)
+        finally:
+            if not self.shutting_down:
+                try:
+                    self.window_job = self.root.after(self._window_check_ms(), self._schedule_window_guard)
+                except Exception:
+                    pass
 
     def _aged_windows(self):
         """任务栏上开着超过 WINDOW_MIN_AGE 秒的窗口 (MECHANICS 12); 数不出来时 None.
@@ -345,13 +359,41 @@ class GuardMixin:
         开发者模式下不管 (和网络限制一样解除)."""
         if self.dm.resetting or self.net.dev_mode or self.net.net_mode != "proxy":
             return
+        if getattr(self, "_app_rules_probe_pending", False):
+            return
         rules = self.net.proxy.rules
         mode = getattr(config, "FILTER_MODE", "blacklist")
         rest = self.state == ON_BREAK              # 只管专注 / 空闲, 休息中全部放行; 和联不联网无关 (4.1)
-        hit = window_guard.check_focus_rules(lambda exe: rules.app_allowed(exe, rest, mode))
-        if not hit:
+        self._app_rules_probe_pending = True
+
+        def probe():
+            hit, error = None, None
+            try:
+                # 前台窗口 / 进程信息可能被无响应的目标程序拖住, 不要在 Tk 线程里查.
+                hit = window_guard.check_focus_rules(lambda exe: rules.app_allowed(exe, rest, mode))
+            except Exception as e:
+                error = e
+            finally:
+                self._app_rules_probe_pending = False
+            try:
+                if error is not None:
+                    self.root.after(0, lambda e=error: self._log_window(
+                        f"ERROR    app rules {type(e).__name__}: {e}"))
+                elif hit:
+                    self.root.after(0, lambda h=hit: self._apply_app_rule_hit(h))
+            except Exception:
+                pass
+
+        threading.Thread(target=probe, name="oit-app-rules", daemon=True).start()
+
+    def _apply_app_rule_hit(self, hit):
+        """把后台窗口探测的结果应用到业务状态和界面 (必须回到 Tk 线程)."""
+        if self.shutting_down or self.dm.resetting:
             return
-        exe, title, why = hit
+        try:
+            exe, title, why = hit
+        except (TypeError, ValueError):
+            return
         self._log_window(f"RULES    {why}  {exe}  {title}")
         try:
             self.net.proxy._on_event(f"🪟 {title[:40]}", exe, False, why)
@@ -385,18 +427,22 @@ class GuardMixin:
         try:
             if getattr(config, "WINDOW_FOCUS_ENABLED", 0) and not self.dm.resetting:
                 seconds = self._window_focus_sec()
+                if not getattr(self, "_window_focus_probe_pending", False):
+                    self._window_focus_probe_pending = True
 
-                def probe():
-                    try:
-                        program = window_guard.foreground_program()
-                    except Exception:
-                        program = ""
-                    try:
-                        self.root.after(0, lambda: self._record_window_focus(program, seconds))
-                    except Exception:
-                        pass
+                    def probe():
+                        try:
+                            program = window_guard.foreground_program()
+                        except Exception:
+                            program = ""
+                        finally:
+                            self._window_focus_probe_pending = False
+                        try:
+                            self.root.after(0, lambda: self._record_window_focus(program, seconds))
+                        except Exception:
+                            pass
 
-                threading.Thread(target=probe, name="oit-window-focus", daemon=True).start()
+                    threading.Thread(target=probe, name="oit-window-focus", daemon=True).start()
         except Exception as e:
             self._log_window(f"ERROR    focus {type(e).__name__}: {e}")
         self.window_focus_job = self.root.after(self._window_focus_ms(), self._window_focus_tick)

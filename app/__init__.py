@@ -169,7 +169,9 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         self.prestart_job = None
         self.window_focus_job = None  # 窗口使用时间统计: 每隔几秒看一次前台程序
         self._window_focus_ticks = 0
+        self._window_focus_probe_pending = False
         self.app_rules_job = None     # Rules 页的应用名单: 每秒看一次前台窗口
+        self._app_rules_probe_pending = False
         # 设备同步 (MECHANICS 15): 计时器此刻的状态是几台设备共用的
         self.timer_owner = ""         # 最后改动计时器状态的设备 (空 = 本机)
         self.sleep_since = None       # 睡眠 (MECHANICS 23): 开始睡眠的时刻; None = 醒着
@@ -178,7 +180,7 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         self.last_op = time.time() * 1000   # 本机最后一次有人操作的时刻 (毫秒)
         self._app_rules_toast = {}    # exe -> 上次提示的时刻 (同一个程序 5 秒内只提示一次)
         self.next_hour = None
-        self.current_page = "timer"
+        self.current_page = "room"
 
 
 
@@ -343,7 +345,7 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         cover = LoadingCover(root, tr("正在加载…"), "", steps=self.LAYOUT_STEPS).show()
         try:
             self._build_layout(root, cover)
-            self.show_page("timer")
+            self.show_page("room" if self.comm.cfg.get("room_auto_enter", True) else "comm")
             self.refresh_display()
             self.update_log_badge()
             self.update_settings_badge()

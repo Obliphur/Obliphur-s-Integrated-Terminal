@@ -352,6 +352,16 @@ def main():
         assert s2.neighbors(c_rid) == ["lounge"], "卧室默认只通向客厅"
         assert s2.enter_room("user", c_rid, "我") != "", "没有门连着的地方走不过去"
         assert s2.path_between("my_home", c_rid) == ["my_home", "lounge", c_rid], "隔着客厅的房间要经过客厅"
+        map_updates = []
+        s2.on_map_changed = lambda text: map_updates.append(text)
+        custom_room = s2.add_room({"name": "可装修房", "theme": "旧主题", "ascii_map": ["┌─[门]─┐", "└─────┘"]})
+        renovated = s2.renovate_room(custom_room["id"], {
+            "name": "新主题房", "theme": "新主题", "map_note": "门后有一条短廊。",
+            "ascii_map": ["┌─[门]─┐", "│ [钢琴]│", "└─────┘"],
+            "facilities": [{"token": "[钢琴]", "label": "钢琴", "action": "piano"}],
+        })
+        assert renovated and renovated["doors"] == custom_room["doors"] and map_updates
+        assert "门后有一条短廊" in s2.map_description()
         s2.link_rooms("my_home", c_rid)
         assert c_rid in s2.neighbors("my_home") and "my_home" in s2.neighbors(c_rid), "连接一定是双向的"
         s2.unlink_rooms("my_home", c_rid)
