@@ -443,6 +443,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             prof["_session_key"] = f"{persona}:{cid}"
         return prof
 
+    def main_profile(self) -> dict:
+        """Return the global main model selected in settings, without persona overrides."""
+        cid = self.ai.config_for("")
+        return self.ai.profile(cid)
+
     def config_options(self) -> list:
         """沟通页下拉框: [{"id", "name", "model"}]."""
         return self.ai.configs()
