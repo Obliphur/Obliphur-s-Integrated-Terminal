@@ -1539,7 +1539,7 @@ class RoomPage(tk.Frame):
         self._generating_map = True
         self._update_busy_label(self._persona_names())
         topology = self.store.map_description()
-        system, msgs = build_map_generation_prompt(theme, desc, old_map=topology, topology=topology)
+        system, msgs = build_map_generation_prompt(theme, desc, old_map=self.store.map_snapshot(), topology=topology)
 
         def work():
             try:
@@ -1596,7 +1596,7 @@ class RoomPage(tk.Frame):
         if not old:
             toast.warn(tr("当前房间不存在。")); return
         self._generating_map = True; self._update_busy_label(self._persona_names())
-        old_text = "\n".join(old.get("ascii_map") or [])
+        old_text = self.store.map_snapshot()
         system, msgs = build_map_generation_prompt(old.get("theme") or old.get("name") or "装修房间", desc,
                                                    old_text, self.store.map_description())
         def work():
